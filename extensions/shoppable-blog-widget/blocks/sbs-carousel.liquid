@@ -3,11 +3,24 @@
   Displays embedded products as a responsive carousel on blog articles.
 {% endcomment %}
 
+{% liquid
+  assign sbs_app_url = '/apps/shoppable-blog-seo'
+  assign sbs_article_id = ''
+  if article
+    assign article_id_string = article.id | append: ''
+    if article_id_string contains 'gid://'
+      assign sbs_article_id = article_id_string
+    else
+      assign sbs_article_id = article_id_string | prepend: 'gid://shopify/Article/'
+    endif
+  endif
+%}
+
 <div
   class="bp-widget bp-carousel"
-  data-article-id="{{ article.id | prepend: 'gid://shopify/Article/' }}"
+  data-article-id="{{ sbs_article_id }}"
   data-shop="{{ shop.permanent_domain }}"
-  data-app-url="{{ block.settings.app_url }}"
+  data-app-url="{{ sbs_app_url }}"
   data-style="carousel"
   id="bp-widget-{{ block.id }}"
 >
@@ -69,10 +82,8 @@
       "default": "Handpicked products mentioned in this article"
     },
     {
-      "type": "url",
-      "id": "app_url",
-      "label": "App URL",
-      "info": "Your app's URL for fetching product data. Set during deployment."
+      "type": "paragraph",
+      "content": "Product data is loaded automatically through the app proxy."
     }
   ]
 }

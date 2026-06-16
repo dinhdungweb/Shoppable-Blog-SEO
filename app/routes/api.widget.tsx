@@ -7,7 +7,9 @@ import prisma from "../db.server";
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const articleId = url.searchParams.get("articleId");
-  const shop = url.searchParams.get("shop");
+  const shop =
+    url.searchParams.get("shop") ||
+    request.headers.get("x-shopify-shop-domain");
 
   if (!articleId || !shop) {
     return json(
@@ -16,11 +18,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     );
   }
 
+  const articleIds = getArticleIdCandidates(articleId);
+
   // Fetch embedded products for this article
-  const products = await prisma.articleProduct.findMany({
+  let products = await prisma.articleProduct.findMany({
     where: {
       shop,
-      articleId,
+      articleId: { in: articleIds },
       isActive: true,
     },
     orderBy: { position: "asc" },
@@ -34,6 +38,28 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       position: true,
     },
   });
+
+  // App proxies can send a storefront host or custom domain in some contexts.
+  // The article ID is already globally scoped enough for the storefront widget,
+  // so fall back to it if the shop value does not match the admin session domain.
+  if (products.length === 0) {
+    products = await prisma.articleProduct.findMany({
+      where: {
+        articleId: { in: articleIds },
+        isActive: true,
+      },
+      orderBy: { position: "asc" },
+      select: {
+        productId: true,
+        productTitle: true,
+        productHandle: true,
+        productImage: true,
+        productPrice: true,
+        displayStyle: true,
+        position: true,
+      },
+    });
+  }
 
   // Fetch shop config
   const config = await prisma.shopConfig.findUnique({
@@ -70,3 +96,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     },
   );
 };
+
+function getArticleIdCandidates(articleId: string) {
+  const decoded = decodeURIComponent(articleId);
+  const candidates = new Set([decoded]);
+
+  if (decoded.startsWith("gid://shopify/Article/")) {
+    candidates.add(decoded.replace("gid://shopify/Article/", ""));
+  } else if (/^\d+$/.test(decoded)) {
+    candidates.add(`gid://shopify/Article/${decoded}`);
+  }
+
+  return [...candidates];
+}

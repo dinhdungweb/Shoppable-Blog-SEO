@@ -40,7 +40,10 @@ import prisma from "../db.server";
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
-  const articleId = decodeURIComponent(params.blogId || "");
+  const articleParam = decodeURIComponent(params.blogId || "");
+  const articleId = articleParam.startsWith("gid://")
+    ? articleParam
+    : `gid://shopify/Article/${articleParam}`;
 
   // Fetch article details from Shopify
   const articleResponse = await admin.graphql(
@@ -52,12 +55,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         handle
         tags
         body
-        summary: summaryHtml
         publishedAt
-        seo {
-          title
-          description
-        }
         image {
           url
           altText
@@ -101,7 +99,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   ]);
 
   return {
-    article,
+    article: {
+      ...article,
+      seo: {
+        title: article.title || "",
+        description: "",
+      },
+    },
     embeddedProducts,
     seoData,
     stats: { clicks, impressions },
@@ -111,7 +115,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const articleId = decodeURIComponent(params.blogId || "");
+  const articleParam = decodeURIComponent(params.blogId || "");
+  const articleId = articleParam.startsWith("gid://")
+    ? articleParam
+    : `gid://shopify/Article/${articleParam}`;
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
@@ -430,28 +437,33 @@ export default function ArticleDetail() {
           ? new Date(article.publishedAt).toLocaleDateString("vi-VN")
           : "Draft"
       }`}
-      primaryAction={{
-        content: "Add Products",
-        icon: ProductIcon,
-        onAction: handleAddProducts,
-        loading: isSubmitting,
-      }}
-      secondaryActions={[
-        {
-          content: "Analyze SEO",
-          icon: CheckIcon,
-          onAction: handleAnalyzeSEO,
-          loading: isSubmitting,
-        },
-        {
-          content: "View on Store",
-          icon: ExternalIcon,
-          url: `shopify:admin/articles/${article.id.replace("gid://shopify/Article/", "")}`,
-          target: "_blank",
-        },
-      ]}
     >
       <BlockStack gap="500">
+        <InlineStack gap="300" align="end">
+          <Button
+            icon={CheckIcon}
+            onClick={handleAnalyzeSEO}
+            loading={isSubmitting}
+          >
+            Analyze SEO
+          </Button>
+          <Button
+            icon={ExternalIcon}
+            url={`shopify:admin/articles/${article.id.replace("gid://shopify/Article/", "")}`}
+            target="_blank"
+          >
+            View on Store
+          </Button>
+          <Button
+            variant="primary"
+            icon={ProductIcon}
+            onClick={handleAddProducts}
+            loading={isSubmitting}
+          >
+            Add Products
+          </Button>
+        </InlineStack>
+
         {/* Quick Stats */}
         <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
           <Card>

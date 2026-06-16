@@ -1,6 +1,12 @@
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import {
+  Link,
+  Outlet,
+  useLoaderData,
+  useNavigate,
+  useParams,
+} from "@remix-run/react";
 import {
   Page,
   Card,
@@ -15,6 +21,7 @@ import {
   useIndexResourceState,
   Filters,
   ChoiceList,
+  Banner,
 } from "@shopify/polaris";
 import { ImageIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -26,38 +33,47 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = session.shop;
 
   // Fetch blogs from Shopify
-  const response = await admin.graphql(
-    `#graphql
-    query GetBlogs {
-      blogs(first: 50) {
-        nodes {
-          id
-          title
-          handle
-          articles(first: 100) {
-            nodes {
-              id
-              title
-              handle
-              tags
-              publishedAt
-              image {
-                url
-                altText
-              }
-              blog {
+  let blogs: any[] = [];
+  let shopifyError: string | null = null;
+
+  try {
+    const response = await admin.graphql(
+      `#graphql
+      query GetBlogs {
+        blogs(first: 50) {
+          nodes {
+            id
+            title
+            handle
+            articles(first: 100) {
+              nodes {
                 id
                 title
+                handle
+                tags
+                publishedAt
+                image {
+                  url
+                  altText
+                }
+                blog {
+                  id
+                  title
+                }
               }
             }
           }
         }
-      }
-    }`,
-  );
+      }`,
+    );
 
-  const responseJson = await response.json();
-  const blogs = responseJson.data?.blogs?.nodes || [];
+    const responseJson = await response.json();
+    blogs = responseJson.data?.blogs?.nodes || [];
+  } catch (error) {
+    console.error("Failed to fetch Shopify blogs", error);
+    shopifyError =
+      "Could not load blog articles from Shopify. Check your app URL, API secret, network connection, and Shopify dev tunnel.";
+  }
 
   // Get all articles with flat structure
   const articles = blogs.flatMap((blog: any) =>
@@ -103,14 +119,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     blogs: blogs.map((b: any) => ({ id: b.id, title: b.title })),
     articles: articlesWithMeta,
+    shopifyError,
   };
 };
 
 export default function BlogManager() {
-  const { blogs, articles } = useLoaderData<typeof loader>();
+  const { blogs, articles, shopifyError } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const params = useParams();
+  const [isClient, setIsClient] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBlog, setSelectedBlog] = useState<string[]>([]);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   const filteredArticles = articles.filter((article: any) => {
     const matchesSearch =
@@ -129,13 +152,9 @@ export default function BlogManager() {
   const { selectedResources, allResourcesSelected, handleSelectionChange } =
     useIndexResourceState(filteredArticles);
 
-  const handleArticleClick = useCallback(
-    (articleId: string, blogId: string) => {
-      const encodedArticleId = encodeURIComponent(articleId);
-      navigate(`/app/blogs/${encodedArticleId}`);
-    },
-    [navigate],
-  );
+  if (params.blogId) {
+    return <Outlet />;
+  }
 
   const blogFilterOptions = blogs.map((blog: any) => ({
     label: blog.title,
@@ -173,6 +192,8 @@ export default function BlogManager() {
     : [];
 
   const rowMarkup = filteredArticles.map((article: any, index: number) => {
+    const articleNumericId = article.id.replace("gid://shopify/Article/", "");
+    const articleUrl = `/app/blogs/${articleNumericId}`;
     const seoTone =
       article.seoScore === null
         ? undefined
@@ -188,7 +209,6 @@ export default function BlogManager() {
         key={article.id}
         position={index}
         selected={selectedResources.includes(article.id)}
-        onClick={() => handleArticleClick(article.id, article.blogId)}
       >
         <IndexTable.Cell>
           <InlineStack gap="300" blockAlign="center">
@@ -199,7 +219,13 @@ export default function BlogManager() {
             />
             <BlockStack gap="050">
               <Text as="span" variant="bodyMd" fontWeight="semibold">
-                {article.title}
+                <Link
+                  to={articleUrl}
+                  data-primary-link
+                  style={{ color: "inherit", textDecoration: "none" }}
+                >
+                  {article.title}
+                </Link>
               </Text>
               <Text as="span" variant="bodySm" tone="subdued">
                 {article.blogTitle}
@@ -246,6 +272,12 @@ export default function BlogManager() {
         </button>
       </TitleBar>
       <BlockStack gap="500">
+        {shopifyError && (
+          <Banner title="Shopify API connection failed" tone="critical">
+            <p>{shopifyError}</p>
+          </Banner>
+        )}
+
         {/* Summary Cards */}
         <InlineStack gap="400" wrap={false}>
           <Box minWidth="0" width="100%">
@@ -300,7 +332,13 @@ export default function BlogManager() {
 
         {/* Article List */}
         <Card padding="0">
-          {articles.length > 0 ? (
+          {!isClient ? (
+            <Box padding="800">
+              <Text as="p" variant="bodyMd" tone="subdued" alignment="center">
+                Loading articles...
+              </Text>
+            </Box>
+          ) : articles.length > 0 ? (
             <>
               <Box padding="400" paddingBlockEnd="0">
                 <Filters

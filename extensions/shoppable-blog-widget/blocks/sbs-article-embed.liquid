@@ -1,0 +1,68 @@
+{% comment %}
+  App embed for rendering shoppable product widgets inside article content.
+  Add [[SBS_PRODUCTS]] or [[SBS_PRODUCTS:grid]] in a blog article body.
+{% endcomment %}
+
+{% liquid
+  assign sbs_app_url = '/apps/shoppable-blog-seo'
+  assign sbs_article_id = ''
+  if article
+    assign article_id_string = article.id | append: ''
+    if article_id_string contains 'gid://'
+      assign sbs_article_id = article_id_string
+    else
+      assign sbs_article_id = article_id_string | prepend: 'gid://shopify/Article/'
+    endif
+  endif
+%}
+
+<div
+  class="bp-app-embed-config"
+  data-article-id="{{ sbs_article_id }}"
+  data-shop="{{ shop.permanent_domain }}"
+  data-app-url="{{ sbs_app_url }}"
+  data-default-style="{{ block.settings.default_style }}"
+  data-heading="{{ block.settings.heading | escape }}"
+  hidden
+></div>
+
+{% schema %}
+{
+  "name": "Shoppable Blog Markers",
+  "target": "body",
+  "stylesheet": "sbs-widget.css",
+  "javascript": "sbs-widget.js",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Enable this app embed, then place [[SBS_PRODUCTS]], [[SBS_PRODUCTS:carousel]], or [[SBS_PRODUCTS:grid]] inside a blog article body."
+    },
+    {
+      "type": "select",
+      "id": "default_style",
+      "label": "Default marker style",
+      "default": "carousel",
+      "options": [
+        {
+          "value": "carousel",
+          "label": "Carousel"
+        },
+        {
+          "value": "grid",
+          "label": "Grid"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Default heading",
+      "default": "Shop Products from This Article"
+    },
+    {
+      "type": "paragraph",
+      "content": "Product data is loaded automatically through the app proxy."
+    }
+  ]
+}
+{% endschema %}

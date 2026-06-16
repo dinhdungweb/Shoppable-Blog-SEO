@@ -33,38 +33,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = session.shop;
 
   // Fetch all articles from Shopify
-  const response = await admin.graphql(
-    `#graphql
-    query GetAllArticles {
-      blogs(first: 50) {
-        nodes {
-          id
-          title
-          articles(first: 100) {
-            nodes {
-              id
-              title
-              handle
-              publishedAt
-              seo {
+  let blogs: any[] = [];
+  let shopifyError: string | null = null;
+
+  try {
+    const response = await admin.graphql(
+      `#graphql
+      query GetAllArticles {
+        blogs(first: 50) {
+          nodes {
+            id
+            title
+            articles(first: 100) {
+              nodes {
+                id
                 title
-                description
-              }
-              image {
-                url
-              }
-              blog {
-                title
+                handle
+                publishedAt
+                image {
+                  url
+                }
+                blog {
+                  title
+                }
               }
             }
           }
         }
-      }
-    }`,
-  );
+      }`,
+    );
 
-  const responseJson = await response.json();
-  const blogs = responseJson.data?.blogs?.nodes || [];
+    const responseJson = await response.json();
+    blogs = responseJson.data?.blogs?.nodes || [];
+  } catch (error) {
+    console.error("Failed to fetch Shopify articles for SEO", error);
+    shopifyError =
+      "Could not load blog articles from Shopify. Check your app URL, API secret, network connection, and Shopify dev tunnel.";
+  }
 
   const articles = blogs.flatMap((blog: any) =>
     blog.articles.nodes.map((article: any) => ({
@@ -72,8 +77,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       title: article.title,
       handle: article.handle,
       publishedAt: article.publishedAt,
-      seoTitle: article.seo?.title || "",
-      seoDescription: article.seo?.description || "",
+      seoTitle: article.title || "",
+      seoDescription: "",
       hasImage: !!article.image?.url,
       blogTitle: blog.title,
     })),
@@ -131,6 +136,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return {
     articles: articlesWithSEO,
+    shopifyError,
     stats: {
       total: articles.length,
       analyzed: analyzedArticles.length,
@@ -249,7 +255,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SEOOptimizer() {
-  const { articles, stats } = useLoaderData<typeof loader>();
+  const { articles, stats, shopifyError } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const [scoreFilter, setScoreFilter] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -440,6 +446,12 @@ export default function SEOOptimizer() {
         </button>
       </TitleBar>
       <BlockStack gap="500">
+        {shopifyError && (
+          <Banner title="Shopify API connection failed" tone="critical">
+            <p>{shopifyError}</p>
+          </Banner>
+        )}
+
         {/* Results Banner */}
         {fetcher.data?.success && (
           <Banner

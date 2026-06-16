@@ -8,6 +8,9 @@
     },
     "sbs-seo-schema": {
       "name": "SEO Schema (JSON-LD)"
+    },
+    "sbs-article-embed": {
+      "name": "Shoppable Blog Markers"
     }
   }
 }

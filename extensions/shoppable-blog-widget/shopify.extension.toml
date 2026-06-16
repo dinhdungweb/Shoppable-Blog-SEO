@@ -20,3 +20,8 @@ handle = "shoppable-blog-widget"
   type = "sbs-seo-schema"
   name = "SEO Schema (JSON-LD)"
   target = "section"
+
+  [[extensions.blocks]]
+  type = "sbs-article-embed"
+  name = "Shoppable Blog Markers"
+  target = "body"
