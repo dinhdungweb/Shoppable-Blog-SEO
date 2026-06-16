@@ -1,0 +1,79 @@
+{% comment %}
+  BP Shoppable Blog Widget — Product Carousel Block
+  Displays embedded products as a responsive carousel on blog articles.
+{% endcomment %}
+
+<div
+  class="bp-widget bp-carousel"
+  data-article-id="{{ article.id | prepend: 'gid://shopify/Article/' }}"
+  data-shop="{{ shop.permanent_domain }}"
+  data-app-url="{{ block.settings.app_url }}"
+  data-style="carousel"
+  id="bp-widget-{{ block.id }}"
+>
+  <div class="bp-widget__header">
+    <h3 class="bp-widget__title">{{ block.settings.heading }}</h3>
+    {% if block.settings.show_subtitle %}
+      <p class="bp-widget__subtitle">{{ block.settings.subtitle }}</p>
+    {% endif %}
+  </div>
+
+  <div class="bp-carousel__wrapper">
+    <button class="bp-carousel__nav bp-carousel__prev" aria-label="Previous">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+
+    <div class="bp-carousel__track">
+      <!-- Products loaded dynamically via JS -->
+      <div class="bp-widget__loading">
+        <div class="bp-widget__spinner"></div>
+        <p>Loading products...</p>
+      </div>
+    </div>
+
+    <button class="bp-carousel__nav bp-carousel__next" aria-label="Next">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <path d="M7.5 5L12.5 10L7.5 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="bp-carousel__dots"></div>
+</div>
+
+{% schema %}
+{
+  "name": "Product Carousel",
+  "target": "section",
+  "stylesheet": "sbs-widget.css",
+  "javascript": "sbs-widget.js",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Shop Products from This Article"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_subtitle",
+      "label": "Show subtitle",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "subtitle",
+      "label": "Subtitle",
+      "default": "Handpicked products mentioned in this article"
+    },
+    {
+      "type": "url",
+      "id": "app_url",
+      "label": "App URL",
+      "info": "Your app's URL for fetching product data. Set during deployment."
+    }
+  ]
+}
+{% endschema %}

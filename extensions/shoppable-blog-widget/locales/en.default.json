@@ -1,0 +1,13 @@
+{
+  "blocks": {
+    "sbs-carousel": {
+      "name": "Product Carousel"
+    },
+    "sbs-grid": {
+      "name": "Product Grid"
+    },
+    "sbs-seo-schema": {
+      "name": "SEO Schema (JSON-LD)"
+    }
+  }
+}

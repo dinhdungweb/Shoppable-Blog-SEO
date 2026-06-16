@@ -1,0 +1,56 @@
+{% comment %}
+  BP Shoppable Blog Widget — Product Grid Block
+  Displays embedded products in a responsive grid layout.
+{% endcomment %}
+
+<div
+  class="bp-widget bp-grid"
+  data-article-id="{{ article.id | prepend: 'gid://shopify/Article/' }}"
+  data-shop="{{ shop.permanent_domain }}"
+  data-app-url="{{ block.settings.app_url }}"
+  data-style="grid"
+  data-columns="{{ block.settings.columns }}"
+  id="bp-widget-{{ block.id }}"
+>
+  <div class="bp-widget__header">
+    <h3 class="bp-widget__title">{{ block.settings.heading }}</h3>
+  </div>
+
+  <div class="bp-grid__container">
+    <div class="bp-widget__loading">
+      <div class="bp-widget__spinner"></div>
+      <p>Loading products...</p>
+    </div>
+  </div>
+</div>
+
+{% schema %}
+{
+  "name": "Product Grid",
+  "target": "section",
+  "stylesheet": "sbs-widget.css",
+  "javascript": "sbs-widget.js",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Featured Products"
+    },
+    {
+      "type": "range",
+      "id": "columns",
+      "min": 2,
+      "max": 4,
+      "step": 1,
+      "label": "Columns (desktop)",
+      "default": 3
+    },
+    {
+      "type": "url",
+      "id": "app_url",
+      "label": "App URL"
+    }
+  ]
+}
+{% endschema %}

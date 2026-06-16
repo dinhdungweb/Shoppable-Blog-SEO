@@ -1,0 +1,105 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+// Shop configuration for widget display
+model ShopConfig {
+  id            String   @id @default(cuid())
+  shop          String   @unique
+  widgetStyle   String   @default("carousel")
+  primaryColor  String   @default("#6366f1")
+  showPrice     Boolean  @default(true)
+  showRating    Boolean  @default(true)
+  showAddToCart Boolean  @default(true)
+  seoAutoSchema Boolean  @default(true)
+  maxProducts   Int      @default(6)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Mapping: Article <-> Product
+model ArticleProduct {
+  id            String   @id @default(cuid())
+  shop          String
+  articleId     String
+  articleTitle  String
+  articleHandle String
+  blogId        String
+  productId     String
+  productTitle  String
+  productHandle String
+  productImage  String   @default("")
+  productPrice  String   @default("0")
+  position      Int      @default(0)
+  displayStyle  String   @default("card")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([articleId, productId])
+  @@index([shop])
+  @@index([articleId])
+}
+
+// SEO metadata for articles
+model ArticleSEO {
+  id              String    @id @default(cuid())
+  shop            String
+  articleId       String    @unique
+  articleTitle    String    @default("")
+  seoScore        Int       @default(0)
+  metaTitle       String?
+  metaDescription String?
+  focusKeyword    String?
+  schemaGenerated Boolean   @default(false)
+  lastAnalyzedAt  DateTime?
+  issues          String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([shop])
+}
+
+// Analytics: tracking widget events
+model WidgetEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  articleId String
+  productId String
+  eventType String
+  sessionId String?
+  referrer  String?
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([articleId])
+  @@index([productId])
+}

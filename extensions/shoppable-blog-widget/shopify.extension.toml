@@ -1,0 +1,22 @@
+api_version = "2025-01"
+
+[[extensions]]
+uid = "7ecd18a8-01a0-5462-6d9b-c7daa092e54ee49a2cd6"
+type = "theme"
+name = "Shoppable Blog & SEO"
+handle = "shoppable-blog-widget"
+
+  [[extensions.blocks]]
+  type = "sbs-carousel"
+  name = "Product Carousel"
+  target = "section"
+
+  [[extensions.blocks]]
+  type = "sbs-grid"
+  name = "Product Grid"
+  target = "section"
+
+  [[extensions.blocks]]
+  type = "sbs-seo-schema"
+  name = "SEO Schema (JSON-LD)"
+  target = "section"
