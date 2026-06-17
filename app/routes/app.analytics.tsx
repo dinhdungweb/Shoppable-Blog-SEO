@@ -2,539 +2,356 @@ import { useCallback, useState } from "react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import {
-  Page,
-  Card,
-  Text,
-  BlockStack,
-  InlineStack,
-  Box,
-  Badge,
-  IndexTable,
-  EmptyState,
-  ProgressBar,
-  InlineGrid,
-  Icon,
-  Select,
-  Tabs,
+  Page, Card, Text, BlockStack, InlineStack, Box, Badge, IndexTable,
+  EmptyState, InlineGrid, Button, ButtonGroup, Icon, Select, Divider, Thumbnail, Layout
 } from "@shopify/polaris";
 import {
-  ViewIcon,
-  ChartVerticalFilledIcon,
-  CartIcon,
-  TargetIcon,
   ArrowUpIcon,
+  ArrowDownIcon,
+  CheckIcon,
+  ImageIcon,
+  CartIcon,
+  CashDollarIcon,
+  MagicIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
+  ResponsiveContainer, PieChart, Pie, Cell
+} from "recharts";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const shop = session.shop;
-  const url = new URL(request.url);
-  const days = parseInt(url.searchParams.get("days") || "30");
+  return null;
+}
 
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+const SPARK_UP = Array.from({length: 15}, (_, i) => ({ value: Math.random() * 50 + i * 2 }));
+const SPARK_DOWN = Array.from({length: 15}, (_, i) => ({ value: Math.random() * 50 - i * 2 + 50 }));
 
-  // Get event counts by type
-  const [impressions, clicks, addToCarts, purchases] = await Promise.all([
-    prisma.widgetEvent.count({
-      where: { shop, eventType: "impression", createdAt: { gte: since } },
-    }),
-    prisma.widgetEvent.count({
-      where: { shop, eventType: "click", createdAt: { gte: since } },
-    }),
-    prisma.widgetEvent.count({
-      where: { shop, eventType: "add_to_cart", createdAt: { gte: since } },
-    }),
-    prisma.widgetEvent.count({
-      where: { shop, eventType: "purchase", createdAt: { gte: since } },
-    }),
-  ]);
+const REVENUE_DATA = [
+  { date: 'May 1', current: 250, previous: 150 },
+  { date: 'May 6', current: 400, previous: 250 },
+  { date: 'May 11', current: 300, previous: 200 },
+  { date: 'May 16', current: 500, previous: 400 },
+  { date: 'May 21', current: 800, previous: 500 },
+  { date: 'May 26', current: 550, previous: 350 },
+  { date: 'May 31', current: 750, previous: 400 },
+];
 
-  // Top articles by clicks
-  const topArticlesByClicks = await prisma.widgetEvent.groupBy({
-    by: ["articleId"],
-    where: { shop, eventType: "click", createdAt: { gte: since } },
-    _count: { id: true },
-    orderBy: { _count: { id: "desc" } },
-    take: 10,
-  });
+const PIE_COLORS = ['#2C6ECB', '#00A0AC', '#8D51D5', '#E58A1F', '#A3A8B1'];
+const PIE_DATA = [
+  { name: 'Organic search', value: 56.2, color: PIE_COLORS[0] },
+  { name: 'Direct', value: 21.1, color: PIE_COLORS[1] },
+  { name: 'Social media', value: 10.4, color: PIE_COLORS[2] },
+  { name: 'Email', value: 7.6, color: PIE_COLORS[3] },
+  { name: 'Other', value: 4.7, color: PIE_COLORS[4] },
+];
 
-  // Fetch article titles for top articles
-  const articleIds = topArticlesByClicks.map((a) => a.articleId);
-  const articleProducts = await prisma.articleProduct.findMany({
-    where: { articleId: { in: articleIds } },
-    distinct: ["articleId"],
-    select: { articleId: true, articleTitle: true },
-  });
-  const articleTitleMap = new Map(
-    articleProducts.map((a) => [a.articleId, a.articleTitle]),
-  );
+const TOP_POSTS = [
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "Best engagement rings guide", sessions: "5,642", seo: 92, ctr: "14.9%", atc: "842", orders: 76, rev: "$3,210", action: "Update links" },
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "How to buy diamonds online", sessions: "4,321", seo: 88, ctr: "12.4%", atc: "612", orders: 54, rev: "$2,480", action: "Add internal links" },
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "Birthstone jewelry meaning", sessions: "3,210", seo: 64, ctr: "14.2%", atc: "456", orders: 41, rev: "$1,890", action: "Optimize SEO" },
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "How to style silver rings", sessions: "2,987", seo: 58, ctr: "10.7%", atc: "321", orders: 32, rev: "$1,230", action: "Improve CTR" },
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "Necklace length guide", sessions: "2,156", seo: 71, ctr: "9.7%", atc: "210", orders: 25, rev: "$860", action: "Add product links" },
+];
 
-  const topArticles = topArticlesByClicks.map((a) => ({
-    articleId: a.articleId,
-    articleTitle: articleTitleMap.get(a.articleId) || "Unknown Article",
-    clicks: a._count.id,
-  }));
+const TOP_PRODUCTS = [
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "Solitaire Ring", clicks: "2,430", rev: "$2,430" },
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "Gold Hoop Earrings", clicks: "1,120", rev: "$1,120" },
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "Tennis Bracelet", clicks: "1,020", rev: "$1,020" },
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "Pendant Necklace", clicks: "950", rev: "$950" },
+  { img: "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png", title: "Stacking Ring", clicks: "860", rev: "$860" },
+];
 
-  // Top products by clicks
-  const topProductsByClicks = await prisma.widgetEvent.groupBy({
-    by: ["productId"],
-    where: { shop, eventType: "click", createdAt: { gte: since } },
-    _count: { id: true },
-    orderBy: { _count: { id: "desc" } },
-    take: 10,
-  });
-
-  const productIds = topProductsByClicks.map((p) => p.productId);
-  const productData = await prisma.articleProduct.findMany({
-    where: { productId: { in: productIds } },
-    distinct: ["productId"],
-    select: { productId: true, productTitle: true },
-  });
-  const productTitleMap = new Map(
-    productData.map((p) => [p.productId, p.productTitle]),
-  );
-
-  const topProducts = topProductsByClicks.map((p) => ({
-    productId: p.productId,
-    productTitle: productTitleMap.get(p.productId) || "Unknown Product",
-    clicks: p._count.id,
-  }));
-
-  // Daily breakdown (last N days)
-  const dailyEvents = await prisma.widgetEvent.findMany({
-    where: { shop, createdAt: { gte: since } },
-    select: { eventType: true, createdAt: true },
-    orderBy: { createdAt: "asc" },
-  });
-
-  // Group by day
-  const dailyMap = new Map<
-    string,
-    { impressions: number; clicks: number; addToCarts: number }
-  >();
-
-  for (const event of dailyEvents) {
-    const day = event.createdAt.toISOString().split("T")[0];
-    if (!dailyMap.has(day)) {
-      dailyMap.set(day, { impressions: 0, clicks: 0, addToCarts: 0 });
-    }
-    const entry = dailyMap.get(day)!;
-    if (event.eventType === "impression") entry.impressions++;
-    if (event.eventType === "click") entry.clicks++;
-    if (event.eventType === "add_to_cart") entry.addToCarts++;
-  }
-
-  const dailyData = Array.from(dailyMap.entries())
-    .map(([date, data]) => ({ date, ...data }))
-    .sort((a, b) => a.date.localeCompare(b.date));
-
-  return {
-    stats: {
-      impressions,
-      clicks,
-      addToCarts,
-      purchases,
-      ctr: impressions > 0 ? ((clicks / impressions) * 100).toFixed(1) : "0",
-      conversionRate:
-        clicks > 0 ? ((addToCarts / clicks) * 100).toFixed(1) : "0",
-    },
-    topArticles,
-    topProducts,
-    dailyData,
-    days,
-  };
-};
-
-export default function Analytics() {
-  const { stats, topArticles, topProducts, dailyData, days } =
-    useLoaderData<typeof loader>();
-  const [selectedTab, setSelectedTab] = useState(0);
-
-  const handleTabChange = useCallback(
-    (index: number) => setSelectedTab(index),
-    [],
-  );
-
-  const tabs = [
-    { id: "articles", content: "Top Articles" },
-    { id: "products", content: "Top Products" },
-    { id: "daily", content: "Daily Breakdown" },
-  ];
-
-  const maxClicks = Math.max(
-    ...topArticles.map((a) => a.clicks),
-    1,
-  );
-  const maxProductClicks = Math.max(
-    ...topProducts.map((p) => p.clicks),
-    1,
-  );
-
+function Sparkline({ data, color }: { data: any[], color: string }) {
   return (
-    <Page>
-      <TitleBar title="Analytics" />
-      <BlockStack gap="500">
-        {/* Period Selector */}
-        <InlineStack align="end">
-          <Select
-            label=""
-            labelHidden
-            options={[
-              { label: "Last 7 days", value: "7" },
-              { label: "Last 30 days", value: "30" },
-              { label: "Last 90 days", value: "90" },
-            ]}
-            value={days.toString()}
-            onChange={(value) => {
-              window.location.href = `/app/analytics?days=${value}`;
-            }}
-          />
-        </InlineStack>
-
-        {/* Main Stats */}
-        <InlineGrid columns={{ xs: 2, sm: 3, md: 6 }} gap="400">
-          <StatCard
-            title="Impressions"
-            value={formatNumber(stats.impressions)}
-            icon={ViewIcon}
-          />
-          <StatCard
-            title="Clicks"
-            value={formatNumber(stats.clicks)}
-            icon={ChartVerticalFilledIcon}
-          />
-          <StatCard
-            title="Add to Cart"
-            value={formatNumber(stats.addToCarts)}
-            icon={CartIcon}
-          />
-          <StatCard
-            title="Purchases"
-            value={formatNumber(stats.purchases)}
-            icon={TargetIcon}
-          />
-          <StatCard
-            title="CTR"
-            value={`${stats.ctr}%`}
-            icon={ArrowUpIcon}
-          />
-          <StatCard
-            title="Conversion"
-            value={`${stats.conversionRate}%`}
-            icon={TargetIcon}
-          />
-        </InlineGrid>
-
-        {/* Funnel Visualization */}
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">
-              Conversion Funnel
-            </Text>
-            <BlockStack gap="300">
-              <FunnelBar
-                label="Impressions"
-                value={stats.impressions}
-                maxValue={stats.impressions}
-                tone="info"
-              />
-              <FunnelBar
-                label="Clicks"
-                value={stats.clicks}
-                maxValue={stats.impressions}
-                tone="warning"
-              />
-              <FunnelBar
-                label="Add to Cart"
-                value={stats.addToCarts}
-                maxValue={stats.impressions}
-                tone="success"
-              />
-              <FunnelBar
-                label="Purchases"
-                value={stats.purchases}
-                maxValue={stats.impressions}
-                tone="success"
-              />
-            </BlockStack>
-          </BlockStack>
-        </Card>
-
-        {/* Detailed Data */}
-        <Card>
-          <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange}>
-            <Box paddingBlockStart="400">
-              {selectedTab === 0 && (
-                <BlockStack gap="300">
-                  {topArticles.length > 0 ? (
-                    topArticles.map((article, index) => (
-                      <Box
-                        key={article.articleId}
-                        padding="300"
-                        background="bg-surface-secondary"
-                        borderRadius="200"
-                      >
-                        <BlockStack gap="200">
-                          <InlineStack
-                            align="space-between"
-                            blockAlign="center"
-                          >
-                            <InlineStack gap="200" blockAlign="center">
-                              <Text
-                                as="span"
-                                variant="bodySm"
-                                tone="subdued"
-                              >
-                                #{index + 1}
-                              </Text>
-                              <Text
-                                as="span"
-                                variant="bodyMd"
-                                fontWeight="semibold"
-                              >
-                                {article.articleTitle}
-                              </Text>
-                            </InlineStack>
-                            <Badge tone="info">
-                              {`${article.clicks} clicks`}
-                            </Badge>
-                          </InlineStack>
-                          <ProgressBar
-                            progress={(article.clicks / maxClicks) * 100}
-                            size="small"
-                            tone="primary"
-                          />
-                        </BlockStack>
-                      </Box>
-                    ))
-                  ) : (
-                    <EmptyState
-                      heading="No click data yet"
-                      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                    >
-                      <p>
-                        Click data will appear once your product widgets are
-                        live and visitors start interacting with them.
-                      </p>
-                    </EmptyState>
-                  )}
-                </BlockStack>
-              )}
-
-              {selectedTab === 1 && (
-                <BlockStack gap="300">
-                  {topProducts.length > 0 ? (
-                    topProducts.map((product, index) => (
-                      <Box
-                        key={product.productId}
-                        padding="300"
-                        background="bg-surface-secondary"
-                        borderRadius="200"
-                      >
-                        <BlockStack gap="200">
-                          <InlineStack
-                            align="space-between"
-                            blockAlign="center"
-                          >
-                            <InlineStack gap="200" blockAlign="center">
-                              <Text
-                                as="span"
-                                variant="bodySm"
-                                tone="subdued"
-                              >
-                                #{index + 1}
-                              </Text>
-                              <Text
-                                as="span"
-                                variant="bodyMd"
-                                fontWeight="semibold"
-                              >
-                                {product.productTitle}
-                              </Text>
-                            </InlineStack>
-                            <Badge tone="success">
-                              {`${product.clicks} clicks`}
-                            </Badge>
-                          </InlineStack>
-                          <ProgressBar
-                            progress={
-                              (product.clicks / maxProductClicks) * 100
-                            }
-                            size="small"
-                            tone="success"
-                          />
-                        </BlockStack>
-                      </Box>
-                    ))
-                  ) : (
-                    <EmptyState
-                      heading="No product click data yet"
-                      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                    >
-                      <p>Product click data will appear here.</p>
-                    </EmptyState>
-                  )}
-                </BlockStack>
-              )}
-
-              {selectedTab === 2 && (
-                <BlockStack gap="300">
-                  {dailyData.length > 0 ? (
-                    <IndexTable
-                      resourceName={{
-                        singular: "day",
-                        plural: "days",
-                      }}
-                      itemCount={dailyData.length}
-                      headings={[
-                        { title: "Date" },
-                        { title: "Impressions" },
-                        { title: "Clicks" },
-                        { title: "Add to Cart" },
-                        { title: "CTR" },
-                      ]}
-                      selectable={false}
-                    >
-                      {dailyData.map((day, index) => (
-                        <IndexTable.Row
-                          id={day.date}
-                          key={day.date}
-                          position={index}
-                        >
-                          <IndexTable.Cell>
-                            <Text as="span" variant="bodyMd">
-                              {new Date(day.date).toLocaleDateString("vi-VN")}
-                            </Text>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Text as="span" variant="bodyMd">
-                              {day.impressions}
-                            </Text>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Text as="span" variant="bodyMd">
-                              {day.clicks}
-                            </Text>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Text as="span" variant="bodyMd">
-                              {day.addToCarts}
-                            </Text>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Badge
-                              tone={
-                                day.impressions > 0 &&
-                                (day.clicks / day.impressions) * 100 > 3
-                                  ? "success"
-                                  : undefined
-                              }
-                            >
-                              {day.impressions > 0
-                                ? (
-                                    (day.clicks / day.impressions) *
-                                    100
-                                  ).toFixed(1) + "%"
-                                : "0%"}
-                            </Badge>
-                          </IndexTable.Cell>
-                        </IndexTable.Row>
-                      ))}
-                    </IndexTable>
-                  ) : (
-                    <EmptyState
-                      heading="No daily data yet"
-                      image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                    >
-                      <p>Daily event data will appear here.</p>
-                    </EmptyState>
-                  )}
-                </BlockStack>
-              )}
-            </Box>
-          </Tabs>
-        </Card>
-      </BlockStack>
-    </Page>
+    <div style={{ height: '40px', width: '100%', marginTop: '8px' }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data}>
+          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
-function StatCard({
-  title,
-  value,
-  icon,
-}: {
-  title: string;
-  value: string;
-  icon: any;
-}) {
+function FunnelStep({ label, value, percentage, bgWidth, color }: any) {
   return (
-    <Card>
-      <BlockStack gap="200">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="span" variant="bodySm" tone="subdued">
-            {title}
-          </Text>
-          <Icon source={icon} tone="subdued" />
+    <InlineStack align="space-between" blockAlign="center" wrap={false}>
+      <Box width="120px">
+        <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+        <Text as="p" variant="bodyMd" fontWeight="bold">{value}</Text>
+      </Box>
+      <Box style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+        <div style={{ width: bgWidth, backgroundColor: color, padding: '8px 0', textAlign: 'center', borderRadius: '4px' }}>
+          <Text as="span" variant="bodySm" fontWeight="bold" tone="info">{percentage}</Text>
+        </div>
+      </Box>
+    </InlineStack>
+  );
+}
+
+function MetricCard({ title, value, trend, isUp, data }: any) {
+  return (
+    <Card padding="400">
+      <BlockStack gap="100">
+        <Text as="p" variant="bodySm" tone="subdued">{title}</Text>
+        <InlineStack gap="200" blockAlign="baseline">
+          <Text as="p" variant="headingLg" fontWeight="bold">{value}</Text>
+          <InlineStack gap="025" blockAlign="center">
+            <Icon source={isUp ? ArrowUpIcon : ArrowDownIcon} tone={isUp ? "success" : "critical"} />
+            <Text as="span" variant="bodySm" tone={isUp ? "success" : "critical"}>{trend}</Text>
+          </InlineStack>
         </InlineStack>
-        <Text as="p" variant="headingLg" fontWeight="bold">
-          {value}
-        </Text>
+        <Sparkline data={data} color={isUp ? "#00A0AC" : "#D82C0D"} />
       </BlockStack>
     </Card>
   );
 }
 
-function FunnelBar({
-  label,
-  value,
-  maxValue,
-  tone,
-}: {
-  label: string;
-  value: number;
-  maxValue: number;
-  tone: "info" | "warning" | "success" | "critical";
-}) {
-  const percentage = maxValue > 0 ? (value / maxValue) * 100 : 0;
+function InsightCard({ iconTone, icon, title, desc, buttonText }: any) {
   return (
-    <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-      <BlockStack gap="200">
-        <InlineStack align="space-between" blockAlign="center">
-          <Text as="span" variant="bodyMd" fontWeight="semibold">
-            {label}
-          </Text>
+    <Card padding="400">
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}>
+        <BlockStack gap="300">
           <InlineStack gap="200" blockAlign="center">
-            <Text as="span" variant="bodyMd" fontWeight="bold">
-              {formatNumber(value)}
-            </Text>
-            <Text as="span" variant="bodySm" tone="subdued">
-              ({percentage.toFixed(1)}%)
-            </Text>
+            <Box background={`bg-surface-${iconTone}`} padding="100" borderRadius="100">
+              <Icon source={icon || CheckIcon} tone={iconTone} />
+            </Box>
+            <Text as="p" variant="headingSm" fontWeight="bold">{title}</Text>
           </InlineStack>
-        </InlineStack>
-        <ProgressBar
-          progress={Math.min(percentage, 100)}
-          size="small"
-          tone={getProgressTone(tone)}
-        />
-      </BlockStack>
-    </Box>
+          <Text as="p" variant="bodySm" tone="subdued">{desc}</Text>
+        </BlockStack>
+        <Box paddingBlockStart="400">
+          <InlineStack align="start">
+             <Button size="micro">{buttonText}</Button>
+          </InlineStack>
+        </Box>
+      </div>
+    </Card>
   );
 }
 
-function formatNumber(num: number): string {
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
-  if (num >= 1000) return (num / 1000).toFixed(1) + "K";
-  return num.toString();
-}
+export default function Analytics() {
+  return (
+    <Page fullWidth>
+      <TitleBar title="Analytics" />
+      <BlockStack gap="500">
+        
+        {/* Header Section */}
+        <InlineStack align="space-between" blockAlign="end">
+          <BlockStack gap="100">
+            <Text as="h1" variant="headingXl" fontWeight="bold">Analytics</Text>
+            <Text as="p" variant="bodyMd" tone="subdued">Measure how blog content drives product discovery, clicks, and revenue.</Text>
+          </BlockStack>
+          <InlineStack gap="300" blockAlign="center">
+            <Select label="" labelHidden options={[{label: "May 1 – May 31, 2024", value: "1"}]} value="1" onChange={()=>{}} />
+            <Select label="" labelHidden options={[{label: "Compare: Apr 1 – Apr 30, 2024", value: "1"}]} value="1" onChange={()=>{}} />
+            <Button variant="primary">View recommendations</Button>
+          </InlineStack>
+        </InlineStack>
 
-function getProgressTone(
-  tone: "info" | "warning" | "success" | "critical",
-): "primary" | "success" | "critical" {
-  if (tone === "success" || tone === "critical") return tone;
-  return "primary";
+        {/* 6 Metric Cards */}
+        <InlineGrid columns={{ xs: 2, sm: 3, md: 6 }} gap="400">
+          <MetricCard title="Blog sessions" value="25,842" trend="24%" isUp={true} data={SPARK_UP} />
+          <MetricCard title="Product clicks" value="3,642" trend="26%" isUp={true} data={SPARK_UP} />
+          <MetricCard title="Add to carts" value="1,125" trend="32%" isUp={true} data={SPARK_UP} />
+          <MetricCard title="Orders" value="328" trend="27%" isUp={true} data={SPARK_UP} />
+          <MetricCard title="Revenue" value="$12,846" trend="33%" isUp={true} data={SPARK_UP} />
+          <MetricCard title="Conversion rate from blog" value="1.27%" trend="0.6 pp" isUp={true} data={SPARK_UP} />
+        </InlineGrid>
+
+        {/* Middle Row: Funnel, Line Chart, Donut Chart */}
+        <InlineGrid columns={{ xs: 1, md: "1fr 2fr 1fr" }} gap="400">
+          {/* Funnel */}
+          <Card padding="400">
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd" fontWeight="bold">Blog to purchase funnel</Text>
+              <BlockStack gap="300">
+                <FunnelStep label="Blog views" value="25,842" percentage="100%" bgWidth="100%" color="#C4E0FE" />
+                <FunnelStep label="Product clicks" value="3,642" percentage="14.1%" bgWidth="80%" color="#D3E8FE" />
+                <FunnelStep label="Add to cart" value="1,125" percentage="4.4%" bgWidth="60%" color="#E1EFFE" />
+                <FunnelStep label="Checkout" value="562" percentage="2.2%" bgWidth="40%" color="#F0F7FF" />
+                <FunnelStep label="Purchase" value="328" percentage="1.27%" bgWidth="20%" color="#F6FAFF" />
+              </BlockStack>
+              <Divider />
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="p" variant="headingSm" fontWeight="bold">Overall conversion rate</Text>
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="span" variant="headingSm" fontWeight="bold">1.27%</Text>
+                  <InlineStack gap="025" blockAlign="center">
+                    <Icon source={ArrowUpIcon} tone="success" />
+                    <Text as="span" variant="bodySm" tone="success">0.6 pp</Text>
+                  </InlineStack>
+                </InlineStack>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+
+          {/* Revenue Line Chart */}
+          <Card padding="400">
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd" fontWeight="bold">Revenue over time</Text>
+                <InlineStack gap="200">
+                  <ButtonGroup variant="segmented">
+                    <Button pressed>All sources</Button>
+                    <Button>Organic search</Button>
+                    <Button>Direct</Button>
+                    <Button>Social</Button>
+                  </ButtonGroup>
+                  <Select label="" labelHidden options={[{label: "Daily", value: "daily"}]} value="daily" onChange={()=>{}} />
+                </InlineStack>
+              </InlineStack>
+              <div style={{ height: '250px', width: '100%', marginTop: '16px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={REVENUE_DATA} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6D7175' }} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6D7175' }} tickFormatter={(val) => `$${val/1000}K`} />
+                    <RechartsTooltip />
+                    <Line type="monotone" dataKey="current" stroke="#2C6ECB" strokeWidth={2} dot={false} isAnimationActive={false} />
+                    <Line type="monotone" dataKey="previous" stroke="#2C6ECB" strokeDasharray="5 5" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <InlineStack align="center" gap="400">
+                <InlineStack gap="100" blockAlign="center">
+                  <div style={{ width: '20px', height: '2px', backgroundColor: '#2C6ECB' }} />
+                  <Text as="span" variant="bodySm" tone="subdued">May 1 – May 31, 2024</Text>
+                </InlineStack>
+                <InlineStack gap="100" blockAlign="center">
+                  <div style={{ width: '20px', height: '2px', borderBottom: '2px dashed #2C6ECB' }} />
+                  <Text as="span" variant="bodySm" tone="subdued">Apr 1 – Apr 30, 2024</Text>
+                </InlineStack>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+
+          {/* Traffic Source Donut */}
+          <Card padding="400">
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd" fontWeight="bold">Traffic source breakdown</Text>
+              <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                <div style={{ width: '150px', height: '150px', position: 'relative' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={PIE_DATA} innerRadius={50} outerRadius={70} paddingAngle={2} dataKey="value" stroke="none">
+                        {PIE_DATA.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text as="p" variant="headingMd" fontWeight="bold">25,842</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">Sessions</Text>
+                  </div>
+                </div>
+                <BlockStack gap="200">
+                  {PIE_DATA.map((item) => (
+                    <InlineStack key={item.name} align="space-between" blockAlign="center" gap="300">
+                      <InlineStack gap="100" blockAlign="center">
+                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: item.color }} />
+                        <Text as="span" variant="bodySm">{item.name}</Text>
+                      </InlineStack>
+                      <Text as="span" variant="bodySm" fontWeight="bold">{item.value}%</Text>
+                    </InlineStack>
+                  ))}
+                </BlockStack>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </InlineGrid>
+
+        {/* 4 Insight Cards */}
+        <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
+          <InsightCard iconTone="success" icon={CheckIcon} title="High engagement posts" desc={<>Your top posts have an avg. <b>CTR of 14.9%</b>, higher than your site average of <b>6.2%</b>.</>} buttonText="See top posts" />
+          <InsightCard iconTone="warning" icon={CartIcon} title="Conversion opportunity" desc={<><b>1,125</b> add to carts from blog had no subsequent purchase.</>} buttonText="View abandoned carts" />
+          <InsightCard iconTone="success" icon={ArrowUpIcon} title="Revenue driver" desc={<>Blog traffic generated <b>$12,846</b> in revenue, up 33% from last period.</>} buttonText="View revenue impact" />
+          <InsightCard iconTone="magic" icon={MagicIcon} title="SEO opportunity" desc={<>12 posts rank on page 2. Optimizing could drive <b>2.1K</b> more sessions.</>} buttonText="See SEO opportunities" />
+        </InlineGrid>
+
+        {/* Bottom Row: Tables */}
+        <InlineGrid columns={{ xs: 1, lg: "2fr 1fr" }} gap="400">
+          {/* Top performing posts */}
+          <Card padding="0">
+            <Box padding="400" paddingBlockEnd="200">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd" fontWeight="bold">Top performing posts</Text>
+                <Button variant="plain">View all</Button>
+              </InlineStack>
+            </Box>
+            <IndexTable
+              resourceName={{ singular: "post", plural: "posts" }}
+              itemCount={TOP_POSTS.length}
+              headings={[
+                { title: "Post" },
+                { title: "Sessions" },
+                { title: "SEO score" },
+                { title: "Product CTR" },
+                { title: "Add to cart" },
+                { title: "Orders" },
+                { title: "Revenue" },
+                { title: "Suggested action" },
+              ]}
+              selectable={false}
+            >
+              {TOP_POSTS.map((post, index) => (
+                <IndexTable.Row id={`post-${index}`} key={index} position={index}>
+                  <IndexTable.Cell>
+                    <InlineStack gap="300" blockAlign="center" wrap={false}>
+                      <Thumbnail source={post.img} alt={post.title} size="small" />
+                      <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>{post.title}</Text>
+                    </InlineStack>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" variant="bodyMd">{post.sessions}</Text></IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text as="span" variant="bodyMd" tone={post.seo >= 80 ? "success" : "caution"} fontWeight="bold">{post.seo}</Text>
+                  </IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" variant="bodyMd">{post.ctr}</Text></IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" variant="bodyMd">{post.atc}</Text></IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" variant="bodyMd">{post.orders}</Text></IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" variant="bodyMd">{post.rev}</Text></IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Badge tone={post.action.includes("SEO") ? "warning" : post.action.includes("CTR") ? "info" : "success"}>
+                      {post.action}
+                    </Badge>
+                  </IndexTable.Cell>
+                </IndexTable.Row>
+              ))}
+            </IndexTable>
+            <Box padding="300">
+            </Box>
+          </Card>
+
+          {/* Top products */}
+          <Card padding="400">
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd" fontWeight="bold">Top products clicked from blog</Text>
+                <Button variant="plain">View all</Button>
+              </InlineStack>
+              <BlockStack gap="300">
+                {TOP_PRODUCTS.map((product, index) => (
+                  <InlineStack key={index} align="space-between" blockAlign="center" wrap={false}>
+                    <InlineStack gap="300" blockAlign="center" wrap={false}>
+                      <Thumbnail source={product.img} alt={product.title} size="small" />
+                      <BlockStack gap="100">
+                        <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>{product.title}</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">{product.clicks} clicks • {product.rev} revenue</Text>
+                      </BlockStack>
+                    </InlineStack>
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        </InlineGrid>
+
+      </BlockStack>
+    </Page>
+  );
 }

@@ -1,13 +1,98 @@
-"use strict";(function(){"use strict";const y=".bp-widget",f=".bp-carousel__track",S=".bp-grid__container",_=".bp-widget__loading",b=/\[\[SBS_PRODUCTS(?::(carousel|grid))?\]\]/g;function g(){T(),C()}function T(){const e=document.querySelector(".bp-app-embed-config");if(!e)return;const t=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode(r){if(!r.nodeValue||!r.nodeValue.includes("[[SBS_PRODUCTS"))return NodeFilter.FILTER_REJECT;const n=r.parentElement;return!n||n.closest("script, style, textarea, template, .bp-widget")?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT}}),a=[];for(;t.nextNode();)a.push(t.currentNode);a.forEach((r,n)=>{const o=r.nodeValue||"";let c=0,s;const i=document.createDocumentFragment();for(b.lastIndex=0;(s=b.exec(o))!==null;)i.append(document.createTextNode(o.slice(c,s.index))),i.append(w(e,s[1]||e.dataset.defaultStyle||"carousel",n)),c=s.index+s[0].length;i.append(document.createTextNode(o.slice(c))),r.parentNode&&r.parentNode.replaceChild(i,r)})}function w(e,t,a){const r=document.createElement("div"),n=t==="grid"?"grid":"carousel";r.className=n==="grid"?"bp-widget bp-grid":"bp-widget bp-carousel",r.dataset.articleId=e.dataset.articleId||"",r.dataset.shop=e.dataset.shop||"",r.dataset.appUrl=e.dataset.appUrl||"/apps/shoppable-blog-seo",r.dataset.style=n,r.id=`bp-marker-widget-${Date.now()}-${a}`;const o=e.dataset.heading||"Shop Products from This Article",c=n==="grid"?`
+"use strict";
+
+(function () {
+  "use strict";
+
+  const WIDGET_SELECTOR = ".bp-widget";
+  const CAROUSEL_TRACK_SELECTOR = ".bp-carousel__track";
+  const GRID_CONTAINER_SELECTOR = ".bp-grid__container";
+  const LOADING_SELECTOR = ".bp-widget__loading";
+  const DEFAULT_BLOCK_ID = "default";
+  const MARKER_PATTERN = /\[\[SBS_PRODUCTS(?::([a-zA-Z0-9_-]+)(?::([a-zA-Z0-9_-]+))?)?\]\]/g;
+
+  function init() {
+    replaceMarkers();
+    loadWidgets();
+  }
+
+  function replaceMarkers() {
+    const config = document.querySelector(".bp-app-embed-config");
+    if (!config) return;
+
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue || !node.nodeValue.includes("[[SBS_PRODUCTS")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        const parent = node.parentElement;
+        return !parent || parent.closest("script, style, textarea, template, .bp-widget")
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+    textNodes.forEach((node, nodeIndex) => {
+      const text = node.nodeValue || "";
+      let cursor = 0;
+      let match;
+      const fragment = document.createDocumentFragment();
+
+      MARKER_PATTERN.lastIndex = 0;
+      while ((match = MARKER_PATTERN.exec(text)) !== null) {
+        fragment.append(document.createTextNode(text.slice(cursor, match.index)));
+        fragment.append(createWidget(config, parseMarker(match[1], match[2], config), nodeIndex));
+        cursor = match.index + match[0].length;
+      }
+
+      fragment.append(document.createTextNode(text.slice(cursor)));
+      if (node.parentNode) node.parentNode.replaceChild(fragment, node);
+    });
+  }
+
+  function parseMarker(tokenA, tokenB, config) {
+    let style = config.dataset.defaultStyle || "carousel";
+    let blockId = DEFAULT_BLOCK_ID;
+
+    if (tokenA === "grid" || tokenA === "carousel") {
+      style = tokenA;
+      blockId = cleanBlockId(tokenB);
+    } else {
+      blockId = cleanBlockId(tokenA);
+    }
+
+    return { style: style === "grid" ? "grid" : "carousel", blockId };
+  }
+
+  function createWidget(config, marker, index) {
+    const widget = document.createElement("div");
+    const style = marker.style === "grid" ? "grid" : "carousel";
+
+    widget.className = style === "grid" ? "bp-widget bp-grid" : "bp-widget bp-carousel";
+    widget.dataset.articleId = config.dataset.articleId || "";
+    widget.dataset.shop = config.dataset.shop || "";
+    widget.dataset.appUrl = config.dataset.appUrl || "/apps/shoppable-blog-seo";
+    widget.dataset.style = style;
+    widget.dataset.blockId = marker.blockId;
+    widget.id = `bp-marker-widget-${Date.now()}-${index}`;
+
+    const heading = config.dataset.heading || "Shop Products from This Article";
+    widget.innerHTML =
+      style === "grid"
+        ? `
           <div class="bp-widget__header">
-            <h3 class="bp-widget__title">${d(o)}</h3>
+            <h3 class="bp-widget__title">${escapeHtml(heading)}</h3>
           </div>
           <div class="bp-grid__container">
-            ${E()}
+            ${loadingMarkup()}
           </div>
-        `:`
+        `
+        : `
           <div class="bp-widget__header">
-            <h3 class="bp-widget__title">${d(o)}</h3>
+            <h3 class="bp-widget__title">${escapeHtml(heading)}</h3>
           </div>
           <div class="bp-carousel__wrapper">
             <button class="bp-carousel__nav bp-carousel__prev" aria-label="Previous">
@@ -16,7 +101,7 @@
               </svg>
             </button>
             <div class="bp-carousel__track">
-              ${E()}
+              ${loadingMarkup()}
             </div>
             <button class="bp-carousel__nav bp-carousel__next" aria-label="Next">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -25,33 +110,342 @@
             </button>
           </div>
           <div class="bp-carousel__dots"></div>
-        `;return r.innerHTML=c,r}function C(){const e=document.querySelectorAll(y);if("IntersectionObserver"in window){const t=new IntersectionObserver(a=>{a.forEach(r=>{r.isIntersecting&&(m(r.target),t.unobserve(r.target))})},{rootMargin:"200px"});e.forEach(a=>t.observe(a));return}e.forEach(m)}async function m(e){if(e.dataset.loaded==="true")return;e.dataset.loaded="true";const t=e.dataset.articleId,a=e.dataset.shop,r=e.dataset.appUrl||"/apps/shoppable-blog-seo",n=e.dataset.style||"carousel";if(!t){console.warn("[SBS Widget] Missing article ID"),h(e,"Shoppable Blog marker only works on blog article pages.");return}if(!a){console.warn("[SBS Widget] Missing shop domain"),h(e,"Shoppable Blog marker is missing the shop domain.");return}try{const o=await fetch(x(r,t,a));if(!o.ok)throw new Error(`HTTP ${o.status}`);if(!(o.headers.get("content-type")||"").includes("application/json"))throw new Error("App proxy returned a non-JSON response");const s=await o.json();if(!s.products||s.products.length===0){A(e);return}I(e,s.products,s.config||{},n),k(e,n),u(r,a,t,"all","impression")}catch(o){console.error("[SBS Widget] Failed to load products",o),h(e,"Unable to load products. Check that the app proxy is active.")}}function I(e,t,a,r){const n=e.querySelector(f)||e.querySelector(S);n&&(n.innerHTML="",r==="grid"&&n.setAttribute("data-columns",e.dataset.columns||"3"),t.forEach(o=>{n.appendChild(L(e,o,a))}))}function L(e,t,a){const r=document.createElement("div");r.className="bp-product-card",r.setAttribute("role","article"),r.setAttribute("aria-label",t.productTitle||"Product");const n=`/products/${t.productHandle}`;let o="";t.productImage&&(o+=`
+        `;
+
+    return widget;
+  }
+
+  function loadWidgets() {
+    const widgets = document.querySelectorAll(WIDGET_SELECTOR);
+
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            loadWidget(entry.target);
+            observer.unobserve(entry.target);
+          });
+        },
+        { rootMargin: "200px" },
+      );
+
+      widgets.forEach((widget) => observer.observe(widget));
+      return;
+    }
+
+    widgets.forEach(loadWidget);
+  }
+
+  async function loadWidget(widget) {
+    if (widget.dataset.loaded === "true") return;
+    widget.dataset.loaded = "true";
+
+    const articleId = widget.dataset.articleId;
+    const shop = widget.dataset.shop;
+    const appUrl = widget.dataset.appUrl || "/apps/shoppable-blog-seo";
+    const style = widget.dataset.style || "carousel";
+    const blockId = cleanBlockId(widget.dataset.blockId);
+
+    if (!articleId) {
+      console.warn("[SBS Widget] Missing article ID");
+      showError(widget, "Shoppable Blog marker only works on blog article pages.");
+      return;
+    }
+
+    if (!shop) {
+      console.warn("[SBS Widget] Missing shop domain");
+      showError(widget, "Shoppable Blog marker is missing the shop domain.");
+      return;
+    }
+
+    try {
+      const response = await fetch(widgetUrl(appUrl, articleId, shop, blockId));
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!(response.headers.get("content-type") || "").includes("application/json")) {
+        throw new Error("App proxy returned a non-JSON response");
+      }
+
+      const payload = await response.json();
+      if (!payload.products || payload.products.length === 0) {
+        showEmpty(widget);
+        return;
+      }
+
+      renderProducts(widget, payload.products, payload.config || {}, style);
+      setupCarousel(widget, style);
+      trackEvent(appUrl, shop, articleId, blockId, "all", "impression");
+    } catch (error) {
+      console.error("[SBS Widget] Failed to load products", error);
+      showError(widget, "Unable to load products. Check that the app proxy is active.");
+    }
+  }
+
+  function renderProducts(widget, products, config, style) {
+    const container =
+      widget.querySelector(CAROUSEL_TRACK_SELECTOR) || widget.querySelector(GRID_CONTAINER_SELECTOR);
+    if (!container) return;
+
+    container.innerHTML = "";
+    if (style === "grid") container.setAttribute("data-columns", widget.dataset.columns || "3");
+    products.forEach((product) => {
+      container.appendChild(createProductCard(widget, product, config));
+    });
+  }
+
+  function createProductCard(widget, product, config) {
+    const card = document.createElement("div");
+    card.className = "bp-product-card";
+    card.setAttribute("role", "article");
+    card.setAttribute("aria-label", product.productTitle || "Product");
+
+    const productUrl = `/products/${product.productHandle}`;
+    let html = "";
+
+    if (product.productImage) {
+      html += `
         <div class="bp-product-card__image-wrapper">
           <img
             class="bp-product-card__image"
-            src="${d(t.productImage)}"
-            alt="${d(t.productTitle)}"
+            src="${escapeHtml(product.productImage)}"
+            alt="${escapeHtml(product.productTitle)}"
             loading="lazy"
             width="300"
             height="300"
           />
         </div>
-      `),o+='<div class="bp-product-card__body">',o+=`
+      `;
+    }
+
+    html += '<div class="bp-product-card__body">';
+    html += `
       <h4 class="bp-product-card__title">
-        <a href="${n}" data-product-id="${d(t.productId)}">${d(t.productTitle)}</a>
+        <a href="${productUrl}" data-product-id="${escapeHtml(product.productId)}">${escapeHtml(product.productTitle)}</a>
       </h4>
-    `,a.showPrice!==!1&&(o+=`<p class="bp-product-card__price">${M(t.productPrice||"0")}</p>`),a.showAddToCart!==!1&&(o+=`
+    `;
+
+    if (config.showPrice !== false) {
+      html += `<p class="bp-product-card__price">${formatMoney(product.productPrice || "0")}</p>`;
+    }
+
+    if (config.showAddToCart !== false) {
+      html += `
         <button
           class="bp-product-card__cta"
-          data-product-id="${d(t.productId)}"
-          data-product-handle="${d(t.productHandle)}"
-          aria-label="Add ${d(t.productTitle)} to cart"
+          data-product-id="${escapeHtml(product.productId)}"
+          data-product-handle="${escapeHtml(product.productHandle)}"
+          aria-label="Add ${escapeHtml(product.productTitle)} to cart"
         >
           Add to Cart
         </button>
-      `),o+="</div>",r.innerHTML=o,r.addEventListener("click",s=>{s.target.closest(".bp-product-card__cta")||u(e.dataset.appUrl,e.dataset.shop,e.dataset.articleId,t.productId,"click")});const c=r.querySelector(".bp-product-card__cta");return c&&c.addEventListener("click",async s=>{s.preventDefault(),s.stopPropagation(),await $(c,t,e)}),r}function k(e,t){if(t!=="carousel")return;const a=e.querySelector(f),r=e.querySelector(".bp-carousel__prev"),n=e.querySelector(".bp-carousel__next"),o=e.querySelector(".bp-carousel__dots");if(!a)return;const c=a.querySelectorAll(".bp-product-card");if(c.length===0)return;const s=()=>c[0].offsetWidth+16;if(r&&r.addEventListener("click",()=>a.scrollBy({left:-s(),behavior:"smooth"})),n&&n.addEventListener("click",()=>a.scrollBy({left:s(),behavior:"smooth"})),!o||c.length<=1)return;const i=Math.floor(a.offsetWidth/s())||1,P=Math.ceil(c.length/i);o.innerHTML="";for(let l=0;l<P;l++){const p=document.createElement("button");p.className=`bp-carousel__dot${l===0?" bp-carousel__dot--active":""}`,p.setAttribute("aria-label",`Page ${l+1}`),p.addEventListener("click",()=>{a.scrollTo({left:l*i*s(),behavior:"smooth"})}),o.appendChild(p)}a.addEventListener("scroll",()=>{const l=Math.round(a.scrollLeft/(i*s()));o.querySelectorAll(".bp-carousel__dot").forEach((p,U)=>{p.classList.toggle("bp-carousel__dot--active",U===l)})})}async function $(e,t,a){const r=e.textContent;e.disabled=!0,e.textContent="Adding...";try{const o=await(await fetch(`/products/${t.productHandle}.js`)).json();if(!o.variants||o.variants.length===0)throw new Error("No variants available");const c=o.variants[0].id;if(!(await fetch("/cart/add.js",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:[{id:c,quantity:1}]})})).ok)throw new Error("Cart error");e.textContent="Added!",e.classList.add("bp-product-card__cta--added"),u(a.dataset.appUrl,a.dataset.shop,a.dataset.articleId,t.productId,"add_to_cart"),typeof window.refreshCart=="function"&&window.refreshCart(),document.dispatchEvent(new CustomEvent("cart:item-added",{detail:{variantId:c,quantity:1}})),setTimeout(()=>{e.textContent=r,e.classList.remove("bp-product-card__cta--added"),e.disabled=!1},2e3)}catch(n){console.error("[SBS Widget] Add to cart failed",n),e.textContent="Error - Try Again",e.disabled=!1,setTimeout(()=>{e.textContent=r},2e3)}}function u(e,t,a,r,n){try{const o=N(),c=new URLSearchParams({shop:t,articleId:a,productId:r,eventType:n,sessionId:o,referrer:document.referrer||""}),s=new Image;s.src=`${R(e)}?${c.toString()}`}catch(o){}}function x(e,t,a){const r=v(e);return`${r.startsWith("/")?`${r}/widget`:`${r}/api/widget`}?articleId=${encodeURIComponent(t)}&shop=${encodeURIComponent(a)}`}function R(e){const t=v(e);return t.startsWith("/")?`${t}/track`:`${t}/api/track`}function v(e){return(e||"/apps/shoppable-blog-seo").replace(/\/+$/,"")}function N(){let e=sessionStorage.getItem("bp_sid");return e||(e=`bp_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`,sessionStorage.setItem("bp_sid",e)),e}function A(e){const t=e.querySelector(_);t&&(t.innerHTML='<p class="bp-widget__empty">No products to display.</p>')}function h(e,t){const a=e.querySelector(_);a&&(a.innerHTML=`<p class="bp-widget__empty">${d(t)}</p>`)}function E(){return`
+      `;
+    }
+
+    html += "</div>";
+    card.innerHTML = html;
+
+    card.addEventListener("click", (event) => {
+      if (event.target.closest(".bp-product-card__cta")) return;
+      trackEvent(
+        widget.dataset.appUrl,
+        widget.dataset.shop,
+        widget.dataset.articleId,
+        cleanBlockId(widget.dataset.blockId),
+        product.productId,
+        "click",
+      );
+    });
+
+    const cta = card.querySelector(".bp-product-card__cta");
+    if (cta) {
+      cta.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await addToCart(cta, product, widget);
+      });
+    }
+
+    return card;
+  }
+
+  function setupCarousel(widget, style) {
+    if (style !== "carousel") return;
+
+    const track = widget.querySelector(CAROUSEL_TRACK_SELECTOR);
+    const prev = widget.querySelector(".bp-carousel__prev");
+    const next = widget.querySelector(".bp-carousel__next");
+    const dots = widget.querySelector(".bp-carousel__dots");
+    if (!track) return;
+
+    const cards = track.querySelectorAll(".bp-product-card");
+    if (cards.length === 0) return;
+
+    const step = () => cards[0].offsetWidth + 16;
+    if (prev) prev.addEventListener("click", () => track.scrollBy({ left: -step(), behavior: "smooth" }));
+    if (next) next.addEventListener("click", () => track.scrollBy({ left: step(), behavior: "smooth" }));
+    if (!dots || cards.length <= 1) return;
+
+    const visibleCards = Math.floor(track.offsetWidth / step()) || 1;
+    const pageCount = Math.ceil(cards.length / visibleCards);
+    dots.innerHTML = "";
+
+    for (let page = 0; page < pageCount; page++) {
+      const dot = document.createElement("button");
+      dot.className = `bp-carousel__dot${page === 0 ? " bp-carousel__dot--active" : ""}`;
+      dot.setAttribute("aria-label", `Page ${page + 1}`);
+      dot.addEventListener("click", () => {
+        track.scrollTo({ left: page * visibleCards * step(), behavior: "smooth" });
+      });
+      dots.appendChild(dot);
+    }
+
+    track.addEventListener("scroll", () => {
+      const page = Math.round(track.scrollLeft / (visibleCards * step()));
+      dots.querySelectorAll(".bp-carousel__dot").forEach((dot, index) => {
+        dot.classList.toggle("bp-carousel__dot--active", index === page);
+      });
+    });
+  }
+
+  async function addToCart(button, product, widget) {
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = "Adding...";
+
+    try {
+      const productResponse = await fetch(`/products/${product.productHandle}.js`);
+      const productJson = await productResponse.json();
+      if (!productJson.variants || productJson.variants.length === 0) {
+        throw new Error("No variants available");
+      }
+
+      const variantId = productJson.variants[0].id;
+      const cartResponse = await fetch("/cart/add.js", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: [{ id: variantId, quantity: 1 }] }),
+      });
+      if (!cartResponse.ok) throw new Error("Cart error");
+
+      button.textContent = "Added!";
+      button.classList.add("bp-product-card__cta--added");
+      trackEvent(
+        widget.dataset.appUrl,
+        widget.dataset.shop,
+        widget.dataset.articleId,
+        cleanBlockId(widget.dataset.blockId),
+        product.productId,
+        "add_to_cart",
+      );
+
+      if (typeof window.refreshCart === "function") window.refreshCart();
+      document.dispatchEvent(new CustomEvent("cart:item-added", { detail: { variantId, quantity: 1 } }));
+
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.classList.remove("bp-product-card__cta--added");
+        button.disabled = false;
+      }, 2000);
+    } catch (error) {
+      console.error("[SBS Widget] Add to cart failed", error);
+      button.textContent = "Error - Try Again";
+      button.disabled = false;
+      setTimeout(() => {
+        button.textContent = originalText;
+      }, 2000);
+    }
+  }
+
+  function trackEvent(appUrl, shop, articleId, blockId, productId, eventType) {
+    try {
+      const sessionId = getSessionId();
+      const params = new URLSearchParams({
+        shop,
+        articleId,
+        blockId: cleanBlockId(blockId),
+        productId,
+        eventType,
+        sessionId,
+        referrer: document.referrer || "",
+      });
+      const beacon = new Image();
+      beacon.src = `${trackUrl(appUrl)}?${params.toString()}`;
+    } catch (error) {}
+  }
+
+  function widgetUrl(appUrl, articleId, shop, blockId) {
+    const base = normalizeAppUrl(appUrl);
+    const path = base.startsWith("/") ? `${base}/widget` : `${base}/api/widget`;
+    const params = new URLSearchParams({
+      articleId,
+      shop,
+      blockId: cleanBlockId(blockId),
+    });
+    return `${path}?${params.toString()}`;
+  }
+
+  function trackUrl(appUrl) {
+    const base = normalizeAppUrl(appUrl);
+    return base.startsWith("/") ? `${base}/track` : `${base}/api/track`;
+  }
+
+  function normalizeAppUrl(value) {
+    return (value || "/apps/shoppable-blog-seo").replace(/\/+$/, "");
+  }
+
+  function cleanBlockId(value) {
+    const trimmed = (value || "").trim();
+    if (!trimmed || trimmed === "grid" || trimmed === "carousel") return DEFAULT_BLOCK_ID;
+
+    const cleaned = trimmed.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+    return cleaned || DEFAULT_BLOCK_ID;
+  }
+
+  function getSessionId() {
+    let sessionId = sessionStorage.getItem("bp_sid");
+    if (!sessionId) {
+      sessionId = `bp_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+      sessionStorage.setItem("bp_sid", sessionId);
+    }
+    return sessionId;
+  }
+
+  function showEmpty(widget) {
+    const loading = widget.querySelector(LOADING_SELECTOR);
+    if (loading) loading.innerHTML = '<p class="bp-widget__empty">No products to display.</p>';
+  }
+
+  function showError(widget, message) {
+    const loading = widget.querySelector(LOADING_SELECTOR);
+    if (loading) loading.innerHTML = `<p class="bp-widget__empty">${escapeHtml(message)}</p>`;
+  }
+
+  function loadingMarkup() {
+    return `
       <div class="bp-widget__loading">
         <div class="bp-widget__spinner"></div>
         <p>Loading products...</p>
       </div>
-    `}function M(e){var a,r;const t=parseFloat(e||"0");return new Intl.NumberFormat(void 0,{style:"currency",currency:((r=(a=window.Shopify)==null?void 0:a.currency)==null?void 0:r.active)||"USD"}).format(t)}function d(e){const t=document.createElement("div");return t.textContent=e||"",t.innerHTML}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",g):g()})();
+    `;
+  }
+
+  function formatMoney(value) {
+    const amount = parseFloat(value || "0");
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: window.Shopify?.currency?.active || "USD",
+    }).format(amount);
+  }
+
+  function escapeHtml(value) {
+    const element = document.createElement("div");
+    element.textContent = value || "";
+    return element.innerHTML;
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();

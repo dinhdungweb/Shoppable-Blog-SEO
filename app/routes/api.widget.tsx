@@ -7,6 +7,7 @@ import prisma from "../db.server";
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const articleId = url.searchParams.get("articleId");
+  const blockId = cleanProductBlockId(url.searchParams.get("blockId"));
   const shop =
     url.searchParams.get("shop") ||
     request.headers.get("x-shopify-shop-domain");
@@ -25,10 +26,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     where: {
       shop,
       articleId: { in: articleIds },
+      blockId,
       isActive: true,
     },
     orderBy: { position: "asc" },
     select: {
+      blockId: true,
       productId: true,
       productTitle: true,
       productHandle: true,
@@ -46,10 +49,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     products = await prisma.articleProduct.findMany({
       where: {
         articleId: { in: articleIds },
+        blockId,
         isActive: true,
       },
       orderBy: { position: "asc" },
       select: {
+        blockId: true,
         productId: true,
         productTitle: true,
         productHandle: true,
@@ -108,4 +113,12 @@ function getArticleIdCandidates(articleId: string) {
   }
 
   return [...candidates];
+}
+
+function cleanProductBlockId(value?: string | null) {
+  const trimmed = (value || "").trim();
+  if (!trimmed || trimmed === "carousel" || trimmed === "grid") return "default";
+
+  const cleaned = trimmed.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  return cleaned || "default";
 }

@@ -1,6 +1,6 @@
 {% comment %}
   App embed for rendering shoppable product widgets inside article content.
-  Add [[SBS_PRODUCTS]] or [[SBS_PRODUCTS:grid]] in a blog article body.
+  Add [[SBS_PRODUCTS]] or block-specific markers such as [[SBS_PRODUCTS:block_abc]] in a blog article body.
 {% endcomment %}
 
 {% liquid
@@ -35,7 +35,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Enable this app embed, then place [[SBS_PRODUCTS]], [[SBS_PRODUCTS:carousel]], or [[SBS_PRODUCTS:grid]] inside a blog article body."
+      "content": "Enable this app embed, then place [[SBS_PRODUCTS]], [[SBS_PRODUCTS:carousel]], [[SBS_PRODUCTS:grid]], or block-specific markers like [[SBS_PRODUCTS:block_abc]] inside a blog article body."
     },
     {
       "type": "select",

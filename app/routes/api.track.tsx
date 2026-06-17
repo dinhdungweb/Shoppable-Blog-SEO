@@ -11,6 +11,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     const body = await request.json();
     const { shop, articleId, productId, eventType, sessionId, referrer } = body;
+    const blockId = cleanProductBlockId(body.blockId);
 
     if (!shop || !articleId || !productId || !eventType) {
       return json({ error: "Missing required fields" }, { status: 400 });
@@ -26,6 +27,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shop,
         articleId,
         productId,
+        blockId,
         eventType,
         sessionId: sessionId || null,
         referrer: referrer || null,
@@ -52,6 +54,7 @@ async function recordWidgetEvent({
   shop,
   articleId,
   productId,
+  blockId,
   eventType,
   sessionId,
   referrer,
@@ -59,6 +62,7 @@ async function recordWidgetEvent({
   shop: string | null;
   articleId: string | null;
   productId: string | null;
+  blockId?: string | null;
   eventType: string | null;
   sessionId?: string | null;
   referrer?: string | null;
@@ -77,6 +81,7 @@ async function recordWidgetEvent({
       shop,
       articleId,
       productId,
+      blockId: cleanProductBlockId(blockId),
       eventType,
       sessionId: sessionId || null,
       referrer: referrer || null,
@@ -107,6 +112,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         shop: url.searchParams.get("shop"),
         articleId: url.searchParams.get("articleId"),
         productId: url.searchParams.get("productId"),
+        blockId: url.searchParams.get("blockId"),
         eventType,
         sessionId: url.searchParams.get("sessionId"),
         referrer: url.searchParams.get("referrer"),
@@ -125,3 +131,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 };
+
+function cleanProductBlockId(value?: string | null) {
+  const trimmed = (value || "").trim();
+  if (!trimmed || trimmed === "carousel" || trimmed === "grid") return "default";
+
+  const cleaned = trimmed.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  return cleaned || "default";
+}

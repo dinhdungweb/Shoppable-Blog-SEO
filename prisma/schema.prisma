@@ -30,17 +30,55 @@ model Session {
   refreshTokenExpires DateTime?
 }
 
-// Shop configuration for widget display
+// Shop configuration for widget display and settings
 model ShopConfig {
   id            String   @id @default(cuid())
   shop          String   @unique
+  
+  // General
+  defaultBlog   String   @default("News & Articles")
+  language      String   @default("English")
+  market        String   @default("United States")
+  appStatus     Boolean  @default(true)
+
+  // Shoppable blog display
+  productCardLayout    String   @default("Standard")
+  cardPosition         String   @default("After paragraph")
+  buttonText           String   @default("View product")
+  showPrice            Boolean  @default(true)
+  showVariantSelector  Boolean  @default(true)
+  openInNewTab         Boolean  @default(true)
+
+  // SEO rules
+  metaTitleTemplate       String   @default("{{title}} - {{blog}} | {{store}}")
+  metaDescriptionTemplate String   @default("{{excerpt}}")
+  urlHandleRules          String   @default("Use post title")
+  canonicalRules          String   @default("Use default canonical (self)")
+  addBlogSchema           Boolean  @default(true)
+  addProductSchema        Boolean  @default(true)
+
+  // Tracking & attribution
+  attributionWindow        String   @default("7 days")
+  utmRules                 String   @default("Auto-append to product links")
+  enableConversionTracking Boolean  @default(true)
+
+  // AI writing rules
+  brandTone               String   @default("Professional")
+  defaultContentStructure String   @default("Introduction, H2 sections, Conclusion")
+  autoGenerateAltText     Boolean  @default(true)
+  requireApproval         Boolean  @default(true)
+  forbiddenWords          String   @default("")
+
+  // Legacy fields
   widgetStyle   String   @default("carousel")
   primaryColor  String   @default("#6366f1")
-  showPrice     Boolean  @default(true)
   showRating    Boolean  @default(true)
   showAddToCart Boolean  @default(true)
   seoAutoSchema Boolean  @default(true)
   maxProducts   Int      @default(6)
+  borderRadius  String   @default("8px")
+  customCss     String?
+  
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
@@ -58,15 +96,17 @@ model ArticleProduct {
   productHandle String
   productImage  String   @default("")
   productPrice  String   @default("0")
+  blockId       String   @default("default")
   position      Int      @default(0)
   displayStyle  String   @default("card")
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@unique([articleId, productId])
+  @@unique([articleId, blockId, productId])
   @@index([shop])
   @@index([articleId])
+  @@index([articleId, blockId])
 }
 
 // SEO metadata for articles
@@ -94,6 +134,7 @@ model WidgetEvent {
   shop      String
   articleId String
   productId String
+  blockId   String   @default("default")
   eventType String
   sessionId String?
   referrer  String?
@@ -101,5 +142,6 @@ model WidgetEvent {
 
   @@index([shop, createdAt])
   @@index([articleId])
+  @@index([articleId, blockId])
   @@index([productId])
 }
