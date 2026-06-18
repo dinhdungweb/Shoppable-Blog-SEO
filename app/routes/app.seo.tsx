@@ -1,524 +1,1146 @@
-import { useState } from "react";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import { useEffect, useMemo, useState } from "react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import {
-  Page,
-  Layout,
-  Card,
-  Text,
-  BlockStack,
-  InlineStack,
-  Box,
   Badge,
-  IndexTable,
-  ProgressBar,
-  InlineGrid,
-  Icon,
+  BlockStack,
+  Box,
   Button,
-  Tabs,
+  Card,
   Divider,
+  EmptyState,
+  Icon,
+  IndexTable,
+  InlineGrid,
+  InlineStack,
+  Layout,
+  Page,
+  ProgressBar,
+  Tabs,
+  Text,
   Thumbnail,
   useIndexResourceState,
 } from "@shopify/polaris";
 import {
-  ShieldCheckMarkIcon,
   AlertTriangleIcon,
-  MagicIcon,
-  NoteIcon,
   ChartVerticalFilledIcon,
-  ArrowUpIcon,
-  ChevronRightIcon,
-  ChevronLeftIcon,
+  CheckIcon,
   CodeIcon,
   ImageIcon,
-  InfoIcon
+  MagicIcon,
+  NoteIcon,
+  ProductIcon,
+  SearchIcon,
+  ShieldCheckMarkIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+
+type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
+type SeoSeverity = "critical" | "warning" | "info" | "good";
+type Impact = "High" | "Medium" | "Low";
+type Effort = "High" | "Medium" | "Low";
+
+type ArticleInput = {
+  id: string;
+  title: string;
+  handle: string;
+  body: string;
+  summary: string;
+  imageUrl: string;
+  imageAlt: string;
+  seoTitle: string;
+  seoDescription: string;
+  blogId: string;
+  blogTitle: string;
+  blogHandle: string;
+};
+
+type SeoIssue = {
+  type: string;
+  category: SeoCategory;
+  label: string;
+  message: string;
+  severity: SeoSeverity;
+  impact: Impact;
+  effort: Effort;
+  fix: string;
+};
+
+type AuditedPost = ArticleInput & {
+  productCount: number;
+  score: number;
+  issues: SeoIssue[];
+  lastAnalyzedAt: string | null;
+};
+
+type IssueGroup = {
+  id: string;
+  category: SeoCategory;
+  issue: string;
+  affected: number;
+  impact: Impact;
+  effort: Effort;
+  status: string;
+  fix: string;
+  actionLabel: string;
+  examples: string[];
+};
+
+const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
+const DONUT_COLORS = {
+  High: "#D82C0D",
+  Medium: "#FFC453",
+  Low: "#29845A",
+};
+
+const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
+  { id: "all", content: "All issues" },
+  { id: "on_page", content: "On-page SEO" },
+  { id: "product_linking", content: "Product linking" },
+  { id: "image", content: "Image SEO" },
+  { id: "schema", content: "Schema" },
+  { id: "content", content: "Content quality" },
+];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
+  let shopifyError = "";
+  let articles: ArticleInput[] = [];
 
-  let blogs: any[] = [];
   try {
-    const response = await admin.graphql(`
-      query GetBlogs {
-        blogs(first: 50) {
-          nodes {
-            id
-            title
-            articles(first: 100) {
-              nodes {
+    articles = await fetchShopifyArticles(admin);
+  } catch (error) {
+    console.error("SEO Shopify query failed:", error);
+    shopifyError = "Could not load Shopify blog posts.";
+  }
+
+  const [linkedProducts, seoRows, config] = await Promise.all([
+    prisma.articleProduct.findMany({
+      where: { shop, isActive: true },
+      select: {
+        articleId: true,
+        articleTitle: true,
+        articleHandle: true,
+        blogId: true,
+      },
+    }),
+    prisma.articleSEO.findMany({
+      where: { shop },
+      select: {
+        articleId: true,
+        articleTitle: true,
+        seoScore: true,
+        metaTitle: true,
+        metaDescription: true,
+        issues: true,
+        lastAnalyzedAt: true,
+      },
+    }),
+    prisma.shopConfig.upsert({
+      where: { shop },
+      update: {},
+      create: { shop },
+    }),
+  ]);
+
+  const fallbackArticleMap = new Map<string, ArticleInput>();
+  linkedProducts.forEach((product) => {
+    if (!fallbackArticleMap.has(product.articleId)) {
+      fallbackArticleMap.set(product.articleId, {
+        id: product.articleId,
+        title: product.articleTitle || "Untitled post",
+        handle: product.articleHandle || "",
+        body: "",
+        summary: "",
+        imageUrl: "",
+        imageAlt: "",
+        seoTitle: "",
+        seoDescription: "",
+        blogId: product.blogId || "",
+        blogTitle: "Blog",
+        blogHandle: "",
+      });
+    }
+  });
+  seoRows.forEach((row) => {
+    if (!fallbackArticleMap.has(row.articleId)) {
+      fallbackArticleMap.set(row.articleId, {
+        id: row.articleId,
+        title: row.articleTitle || "Untitled post",
+        handle: "",
+        body: "",
+        summary: "",
+        imageUrl: "",
+        imageAlt: "",
+        seoTitle: row.metaTitle || "",
+        seoDescription: row.metaDescription || "",
+        blogId: "",
+        blogTitle: "Blog",
+        blogHandle: "",
+      });
+    }
+  });
+
+  const articleMap = new Map(articles.map((article) => [article.id, article]));
+  fallbackArticleMap.forEach((article, id) => {
+    if (!articleMap.has(id)) articleMap.set(id, article);
+  });
+
+  const productCountMap = new Map<string, number>();
+  linkedProducts.forEach((product) => {
+    productCountMap.set(product.articleId, (productCountMap.get(product.articleId) || 0) + 1);
+  });
+
+  const storedSeoMap = new Map(seoRows.map((row) => [row.articleId, row]));
+  const auditedPosts = Array.from(articleMap.values())
+    .map((article) => {
+      const productCount = productCountMap.get(article.id) || 0;
+      const audit = auditArticle(article, productCount, config);
+      const stored = storedSeoMap.get(article.id);
+
+      return {
+        ...article,
+        productCount,
+        score: stored?.seoScore ?? audit.score,
+        issues: audit.issues,
+        lastAnalyzedAt: stored?.lastAnalyzedAt ? stored.lastAnalyzedAt.toISOString() : null,
+      };
+    })
+    .sort((a, b) => a.score - b.score || b.issues.length - a.issues.length || a.title.localeCompare(b.title));
+
+  const issueGroups = buildIssueGroups(auditedPosts);
+  const issueStats = getIssueStats(issueGroups);
+  const averageScore = getAverageScore(auditedPosts);
+  const lastScanAt = seoRows.reduce<Date | null>((latest, row) => {
+    if (!row.lastAnalyzedAt) return latest;
+    if (!latest || row.lastAnalyzedAt > latest) return row.lastAnalyzedAt;
+    return latest;
+  }, null);
+
+  return json({
+    shopifyError,
+    averageScore,
+    issueGroups,
+    issueStats,
+    affectedPosts: auditedPosts.filter((post) => post.issues.length > 0).length,
+    quickWins: issueGroups.filter((issue) => issue.effort === "Low").reduce((sum, issue) => sum + issue.affected, 0),
+    scannedPosts: seoRows.length,
+    totalPosts: auditedPosts.length,
+    lastScanAt: lastScanAt ? lastScanAt.toISOString() : null,
+    postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6),
+  });
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent !== "scan_all") {
+    return json({ error: "Unsupported action" }, { status: 400 });
+  }
+
+  const [articles, linkedProducts, config] = await Promise.all([
+    fetchShopifyArticles(admin),
+    prisma.articleProduct.findMany({
+      where: { shop, isActive: true },
+      select: { articleId: true },
+    }),
+    prisma.shopConfig.upsert({
+      where: { shop },
+      update: {},
+      create: { shop },
+    }),
+  ]);
+
+  const productCountMap = new Map<string, number>();
+  linkedProducts.forEach((product) => {
+    productCountMap.set(product.articleId, (productCountMap.get(product.articleId) || 0) + 1);
+  });
+
+  const audits = articles.map((article) => {
+    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config);
+    return { article, audit };
+  });
+
+  await Promise.all(
+    audits.map(({ article, audit }) =>
+      prisma.articleSEO.upsert({
+        where: { articleId: article.id },
+        update: {
+          shop,
+          articleTitle: article.title,
+          seoScore: audit.score,
+          metaTitle: article.seoTitle || null,
+          metaDescription: article.seoDescription || null,
+          issues: JSON.stringify(audit.issues),
+          lastAnalyzedAt: new Date(),
+        },
+        create: {
+          shop,
+          articleId: article.id,
+          articleTitle: article.title,
+          seoScore: audit.score,
+          metaTitle: article.seoTitle || null,
+          metaDescription: article.seoDescription || null,
+          issues: JSON.stringify(audit.issues),
+          lastAnalyzedAt: new Date(),
+        },
+      }),
+    ),
+  );
+
+  return json({
+    success: true,
+    scannedCount: audits.length,
+    averageScore: getAverageScore(audits.map(({ article, audit }) => ({ ...article, productCount: productCountMap.get(article.id) || 0, score: audit.score, issues: audit.issues, lastAnalyzedAt: new Date().toISOString() }))),
+  });
+};
+
+export default function SEOOptimizer() {
+  const {
+    shopifyError,
+    averageScore,
+    issueGroups,
+    issueStats,
+    affectedPosts,
+    quickWins,
+    scannedPosts,
+    totalPosts,
+    lastScanAt,
+    postsNeedingAttention,
+  } = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
+  const shopify = useAppBridge();
+  const scanFetcher = useFetcher<typeof action>();
+  const [selectedTab, setSelectedTab] = useState(0);
+  const selectedCategory = CATEGORY_TABS[selectedTab]?.id || "all";
+  const visibleIssues = useMemo(
+    () => issueGroups.filter((issue) => selectedCategory === "all" || issue.category === selectedCategory),
+    [issueGroups, selectedCategory],
+  );
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(visibleIssues as any);
+  const isScanning = scanFetcher.state !== "idle";
+
+  useEffect(() => {
+    const data = scanFetcher.data as { success?: boolean; scannedCount?: number; averageScore?: number; error?: string } | undefined;
+    if (!data) return;
+    if (data.success) {
+      shopify.toast.show(`SEO scan complete: ${data.scannedCount || 0} posts, avg ${data.averageScore || 0}/100`);
+    } else if (data.error) {
+      shopify.toast.show(data.error, { isError: true });
+    }
+  }, [scanFetcher.data, shopify]);
+
+  const selectedIssueCount = allResourcesSelected ? visibleIssues.length : selectedResources.length;
+  const selectedIssues = visibleIssues.filter((issue) => allResourcesSelected || selectedResources.includes(issue.id));
+  const selectedPotential = selectedIssues.reduce((sum, issue) => sum + issue.affected * getImpactWeight(issue.impact), 0);
+  const selectedTime = selectedIssues.reduce((sum, issue) => sum + issue.affected * getEffortMinutes(issue.effort), 0);
+  const donutData = [
+    { name: "High impact", value: issueStats.High, color: DONUT_COLORS.High },
+    { name: "Medium impact", value: issueStats.Medium, color: DONUT_COLORS.Medium },
+    { name: "Low impact", value: issueStats.Low, color: DONUT_COLORS.Low },
+  ];
+
+  return (
+    <Page fullWidth>
+      <TitleBar title="SEO Optimizer">
+        <button
+          variant="primary"
+          disabled={isScanning}
+          onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}
+        >
+          {isScanning ? "Scanning..." : "Run SEO scan"}
+        </button>
+      </TitleBar>
+
+      <BlockStack gap="500">
+        <InlineStack align="space-between" blockAlign="end">
+          <BlockStack gap="100">
+            <Text as="h1" variant="headingXl" fontWeight="bold">
+              SEO Optimizer
+            </Text>
+            <Text as="p" variant="bodyMd" tone="subdued">
+              Identify and resolve SEO issues across Shopify blog posts. Scores are saved to ArticleSEO for Blog Manager and Overview.
+            </Text>
+          </BlockStack>
+          <InlineStack gap="200" blockAlign="center">
+            <Badge tone="info">{lastScanAt ? `Last scan ${formatDate(lastScanAt)}` : "Not scanned yet"}</Badge>
+            <Button loading={isScanning} onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}>
+              Run SEO scan
+            </Button>
+            <Button variant="primary" onClick={() => navigate("/app/blogs")}>
+              Review posts
+            </Button>
+          </InlineStack>
+        </InlineStack>
+
+        {shopifyError && (
+          <Card padding="400">
+            <Text as="p" variant="bodyMd" tone="caution">
+              {shopifyError} Existing saved SEO rows are still shown when available.
+            </Text>
+          </Card>
+        )}
+
+        <InlineGrid columns={{ xs: 1, sm: 2, md: 5 }} gap="400">
+          <MetricCard
+            title="SEO health score"
+            value={String(averageScore)}
+            suffix="/100"
+            tone={averageScore >= 80 ? "success" : averageScore >= 60 ? "warning" : "critical"}
+            icon={ShieldCheckMarkIcon}
+            progress={averageScore}
+          />
+          <MetricCard
+            title="High impact issues"
+            value={String(issueStats.High)}
+            tone={issueStats.High ? "critical" : "success"}
+            icon={AlertTriangleIcon}
+            progress={Math.min(100, issueStats.High * 12)}
+          />
+          <MetricCard
+            title="Quick wins"
+            value={String(quickWins)}
+            tone={quickWins ? "warning" : "success"}
+            icon={MagicIcon}
+            progress={Math.min(100, quickWins * 8)}
+          />
+          <MetricCard
+            title="Affected posts"
+            value={String(affectedPosts)}
+            suffix={`/${totalPosts}`}
+            tone={affectedPosts ? "info" : "success"}
+            icon={NoteIcon}
+            progress={totalPosts ? (affectedPosts / totalPosts) * 100 : 0}
+          />
+          <MetricCard
+            title="Saved scans"
+            value={String(scannedPosts)}
+            suffix={`/${totalPosts}`}
+            tone={scannedPosts === totalPosts && totalPosts > 0 ? "success" : "info"}
+            icon={ChartVerticalFilledIcon}
+            progress={totalPosts ? (scannedPosts / totalPosts) * 100 : 0}
+          />
+        </InlineGrid>
+
+        <Layout>
+          <Layout.Section>
+            <BlockStack gap="400">
+              <Card padding="0">
+                <Tabs tabs={CATEGORY_TABS} selected={selectedTab} onSelect={setSelectedTab} />
+                {visibleIssues.length ? (
+                  <div className="bp-seo-issue-table">
+                    <IndexTable
+                      resourceName={{ singular: "issue", plural: "issues" }}
+                      itemCount={visibleIssues.length}
+                      selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
+                      onSelectionChange={handleSelectionChange}
+                      headings={[
+                        { title: "Issue" },
+                        { title: "Affected" },
+                        { title: "Impact" },
+                        { title: "Effort" },
+                        { title: "Status" },
+                        { title: "Suggested fix" },
+                        { title: "Action" },
+                      ]}
+                      selectable
+                    >
+                      {visibleIssues.map((issue, index) => (
+                        <IndexTable.Row id={issue.id} key={issue.id} position={index} selected={selectedResources.includes(issue.id)}>
+                          <IndexTable.Cell>
+                            <div className="bp-seo-issue-cell">
+                              <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
+                                {issue.issue}
+                              </Text>
+                              <Text as="span" variant="bodySm" tone="subdued" truncate>
+                                {issue.examples.slice(0, 2).join(", ")}
+                              </Text>
+                            </div>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>{issue.affected}</IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Badge tone={getImpactTone(issue.impact)}>{issue.impact}</Badge>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Badge tone={getEffortTone(issue.effort)}>{issue.effort}</Badge>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Badge tone={issue.status === "Done" ? "success" : issue.status === "Saved scan" ? "info" : undefined}>{issue.status}</Badge>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <div className="bp-seo-fix-cell">
+                              <Text as="span" variant="bodyMd" truncate>
+                                {issue.fix}
+                              </Text>
+                            </div>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Button size="micro" onClick={() => navigate(getIssueTarget(issue))}>
+                              {issue.actionLabel}
+                            </Button>
+                          </IndexTable.Cell>
+                        </IndexTable.Row>
+                      ))}
+                    </IndexTable>
+                  </div>
+                ) : (
+                  <Box padding="600">
+                    <EmptyState heading="No issues in this category" image={PLACEHOLDER_IMAGE}>
+                      <p>Choose another category or run a fresh SEO scan.</p>
+                    </EmptyState>
+                  </Box>
+                )}
+              </Card>
+
+              <Card padding="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack gap="400" blockAlign="center">
+                    <BlockStack gap="0">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Text as="span" variant="headingSm">
+                          {selectedIssueCount} issues selected
+                        </Text>
+                        <Button variant="plain" onClick={clearSelection}>
+                          Clear
+                        </Button>
+                      </InlineStack>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        High ({issueStats.High}) - Medium ({issueStats.Medium}) - Low ({issueStats.Low})
+                      </Text>
+                    </BlockStack>
+                    <Divider borderColor="border" />
+                    <BlockStack gap="0">
+                      <Text as="span" variant="bodySm" fontWeight="semibold">
+                        Potential impact
+                      </Text>
+                      <Text as="span" variant="bodySm" tone="success" fontWeight="bold">
+                        {selectedPotential ? `+${selectedPotential} priority points` : "Select issues"}
+                      </Text>
+                    </BlockStack>
+                    <Divider borderColor="border" />
+                    <BlockStack gap="0">
+                      <Text as="span" variant="bodySm" fontWeight="semibold">
+                        Estimated time
+                      </Text>
+                      <Text as="span" variant="bodySm" fontWeight="bold">
+                        {selectedTime ? formatMinutes(selectedTime) : "-"}
+                      </Text>
+                    </BlockStack>
+                  </InlineStack>
+
+                  <InlineStack gap="200">
+                    <Button onClick={() => navigate("/app/blogs")}>Review posts</Button>
+                    <Button variant="primary" loading={isScanning} onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}>
+                      Apply scan
+                    </Button>
+                  </InlineStack>
+                </InlineStack>
+              </Card>
+            </BlockStack>
+          </Layout.Section>
+
+          <Layout.Section variant="oneThird">
+            <BlockStack gap="400">
+              <Card padding="400">
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd" fontWeight="bold">
+                      SEO Assistant
+                    </Text>
+                    <Badge tone="magic">AI</Badge>
+                  </InlineStack>
+                  <Text as="p" variant="bodyMd" tone="subdued">
+                    Recommendations are based on the current scan and linked product data.
+                  </Text>
+                  <BlockStack gap="300">
+                    {issueGroups.slice(0, 4).map((issue) => (
+                      <AssistantItem key={issue.id} issue={issue} onAction={() => navigate(getIssueTarget(issue))} />
+                    ))}
+                    {!issueGroups.length && (
+                      <InlineStack gap="200" blockAlign="center">
+                        <Icon source={CheckIcon} tone="success" />
+                        <Text as="p" variant="bodyMd">
+                          No SEO issues found right now.
+                        </Text>
+                      </InlineStack>
+                    )}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+
+              <Card padding="400">
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd" fontWeight="bold">
+                    Issue breakdown
+                  </Text>
+                  <InlineStack gap="500" blockAlign="center" wrap={false}>
+                    <div style={{ width: "120px", height: "120px", position: "relative" }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={donutData} cx="50%" cy="50%" innerRadius={45} outerRadius={60} paddingAngle={2} dataKey="value" stroke="none">
+                            {donutData.map((entry) => (
+                              <Cell key={entry.name} fill={entry.color} />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
+                        <Text as="p" variant="headingLg" fontWeight="bold">
+                          {issueStats.total}
+                        </Text>
+                        <Text as="span" variant="bodySm" tone="subdued" alignment="center">
+                          Issues
+                        </Text>
+                      </div>
+                    </div>
+                    <BlockStack gap="200">
+                      {donutData.map((item) => (
+                        <InlineStack key={item.name} align="space-between" blockAlign="center" gap="300">
+                          <InlineStack gap="100" blockAlign="center">
+                            <div style={{ width: "8px", height: "8px", borderRadius: "4px", backgroundColor: item.color }} />
+                            <Text as="span" variant="bodySm">
+                              {item.name}
+                            </Text>
+                          </InlineStack>
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {item.value}
+                          </Text>
+                        </InlineStack>
+                      ))}
+                    </BlockStack>
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+
+              <Card padding="400">
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd" fontWeight="bold">
+                      Posts needing attention
+                    </Text>
+                    <Button variant="plain" onClick={() => navigate("/app/blogs")}>
+                      View all
+                    </Button>
+                  </InlineStack>
+                  <BlockStack gap="300">
+                    {postsNeedingAttention.length ? (
+                      postsNeedingAttention.map((post) => (
+                        <InlineStack key={post.id} align="space-between" blockAlign="center" wrap={false}>
+                          <InlineStack gap="300" blockAlign="center" wrap={false}>
+                            <Thumbnail source={post.imageUrl || ImageIcon} alt={post.imageAlt || post.title} size="small" />
+                            <BlockStack gap="050">
+                              <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
+                                {post.title}
+                              </Text>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                Score {post.score}/100
+                              </Text>
+                            </BlockStack>
+                          </InlineStack>
+                          <Badge tone={post.score < 60 ? "critical" : "warning"}>{`${post.issues.length} issues`}</Badge>
+                        </InlineStack>
+                      ))
+                    ) : (
+                      <Text as="p" tone="subdued">
+                        All posts are optimized.
+                      </Text>
+                    )}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            </BlockStack>
+          </Layout.Section>
+        </Layout>
+      </BlockStack>
+    </Page>
+  );
+}
+
+function MetricCard({
+  title,
+  value,
+  suffix,
+  tone,
+  icon,
+  progress,
+}: {
+  title: string;
+  value: string;
+  suffix?: string;
+  tone: "success" | "warning" | "critical" | "info";
+  icon: any;
+  progress: number;
+}) {
+  return (
+    <Card padding="400">
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center" wrap={false}>
+          <InlineStack gap="150" blockAlign="center" wrap={false}>
+            <Icon source={icon} tone={tone as any} />
+            <Text as="span" variant="bodySm" fontWeight="semibold" tone="subdued">
+              {title}
+            </Text>
+          </InlineStack>
+        </InlineStack>
+        <InlineStack gap="100" blockAlign="end">
+          <Text as="span" variant="heading2xl" fontWeight="bold">
+            {value}
+          </Text>
+          {suffix && (
+            <Text as="span" variant="bodyMd" tone="subdued">
+              {suffix}
+            </Text>
+          )}
+        </InlineStack>
+        <ProgressBar progress={Math.max(0, Math.min(100, progress))} tone={tone === "critical" ? "critical" : tone === "warning" ? "primary" : "success"} size="small" />
+      </BlockStack>
+    </Card>
+  );
+}
+
+function AssistantItem({ issue, onAction }: { issue: IssueGroup; onAction: () => void }) {
+  const icon = issue.category === "product_linking" ? ProductIcon : issue.category === "image" ? ImageIcon : issue.category === "schema" ? CodeIcon : issue.category === "content" ? NoteIcon : SearchIcon;
+
+  return (
+    <InlineStack gap="300" blockAlign="center" wrap={false}>
+      <Box background={`bg-surface-${getImpactSurface(issue.impact)}` as any} padding="150" borderRadius="100">
+        <Icon source={icon} tone={getImpactTone(issue.impact)} />
+      </Box>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <BlockStack gap="050">
+          <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>
+            {issue.issue}
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {issue.fix}
+          </Text>
+        </BlockStack>
+      </div>
+      <Button size="micro" onClick={onAction}>
+        {issue.actionLabel}
+      </Button>
+    </InlineStack>
+  );
+}
+
+async function fetchShopifyArticles(admin: any): Promise<ArticleInput[]> {
+  try {
+    return await fetchShopifyArticleList(admin, true);
+  } catch (error) {
+    console.error("Full SEO article query failed, retrying lightweight query:", error);
+    return fetchShopifyArticleList(admin, false);
+  }
+}
+
+async function fetchShopifyArticleList(admin: any, includeContent: boolean): Promise<ArticleInput[]> {
+  const query = includeContent
+    ? `#graphql
+    query SeoBlogs {
+      blogs(first: 50) {
+        nodes {
+          id
+          title
+          handle
+          articles(first: 100) {
+            nodes {
+              id
+              title
+              handle
+              body
+              summary
+              image {
+                url
+                altText
+              }
+              seo {
+                title
+                description
+              }
+              blog {
                 id
                 title
-                image { url altText }
-                seo { title description }
+                handle
               }
             }
           }
         }
       }
-    `);
-    const responseJson = await response.json();
-    blogs = responseJson.data?.blogs?.nodes || [];
-  } catch (error) {
-    console.error(error);
+    }`
+    : `#graphql
+    query SeoBlogsLite {
+      blogs(first: 50) {
+        nodes {
+          id
+          title
+          handle
+          articles(first: 100) {
+            nodes {
+              id
+              title
+              handle
+              image {
+                url
+                altText
+              }
+              seo {
+                title
+                description
+              }
+              blog {
+                id
+                title
+                handle
+              }
+            }
+          }
+        }
+      }
+    }`;
+  const response = await admin.graphql(query);
+  const result: any = await response.json();
+
+  if (result.errors?.length) {
+    throw new Error(result.errors.map((error: any) => error.message).join("; ") || "Could not load Shopify blog posts.");
   }
 
-  const articles = blogs.flatMap((blog: any) => blog.articles.nodes);
-
-  const embedCounts = await prisma.articleProduct.groupBy({
-    by: ["articleId"],
-    where: { shop, isActive: true },
-    _count: { productId: true },
-  });
-  const embedCountMap = new Map(embedCounts.map((ec) => [ec.articleId, ec._count.productId]));
-
-  let missingDescriptions = 0;
-  let missingAltTexts = 0;
-  let noLinkedProducts = 0;
-  let missingSeoTitle = 0;
-
-  const analyzedPosts = articles.map((article: any) => {
-    let issues = 0;
-    
-    if (!article.seo?.description) {
-      missingDescriptions++;
-      issues++;
-    }
-    if (article.image?.url && !article.image?.altText) {
-      missingAltTexts++;
-      issues++;
-    }
-    const productCount = embedCountMap.get(article.id) || 0;
-    if (productCount === 0) {
-      noLinkedProducts++;
-      issues++;
-    }
-    if (!article.seo?.title) {
-      missingSeoTitle++;
-      issues++;
-    }
-    
-    return {
+  const blogs = result.data?.blogs?.nodes || [];
+  return blogs.flatMap((blog: any) =>
+    (blog.articles?.nodes || []).map((article: any) => ({
       id: article.id,
-      title: article.title,
-      thumb: article.image?.url || "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png",
-      issues,
-      tone: issues > 2 ? "critical" : issues > 0 ? "warning" : "success"
-    };
+      title: cleanText(article.title) || "Untitled post",
+      handle: cleanText(article.handle),
+      body: article.body || "",
+      summary: article.summary || "",
+      imageUrl: article.image?.url || "",
+      imageAlt: article.image?.altText || "",
+      seoTitle: article.seo?.title || "",
+      seoDescription: article.seo?.description || "",
+      blogId: article.blog?.id || blog.id,
+      blogTitle: article.blog?.title || blog.title || "Blog",
+      blogHandle: article.blog?.handle || blog.handle || "",
+    })),
+  );
+}
+
+function auditArticle(article: ArticleInput, productCount: number, config: { addBlogSchema?: boolean; addProductSchema?: boolean }) {
+  const issues: SeoIssue[] = [];
+  let score = 100;
+  const seoTitle = article.seoTitle.trim();
+  const seoDescription = article.seoDescription.trim();
+  const bodyText = stripHtml(`${article.summary || ""} ${article.body || ""}`);
+  const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
+
+  const addIssue = (issue: SeoIssue, penalty: number) => {
+    issues.push(issue);
+    score -= penalty;
+  };
+
+  if (!seoDescription) {
+    addIssue(
+      {
+        type: "missing_meta_description",
+        category: "on_page",
+        label: "Missing meta descriptions",
+        message: "Meta descriptions help search engines and shoppers understand each post.",
+        severity: "critical",
+        impact: "High",
+        effort: "Low",
+        fix: "Add a unique 120-160 character meta description.",
+      },
+      18,
+    );
+  } else if (seoDescription.length < 70) {
+    addIssue(
+      {
+        type: "short_meta_description",
+        category: "on_page",
+        label: "Short meta descriptions",
+        message: "Short descriptions may underperform in search results.",
+        severity: "warning",
+        impact: "Medium",
+        effort: "Low",
+        fix: "Expand the meta description with a clearer benefit.",
+      },
+      6,
+    );
+  } else if (seoDescription.length > 165) {
+    addIssue(
+      {
+        type: "long_meta_description",
+        category: "on_page",
+        label: "Long meta descriptions",
+        message: "Long descriptions can be truncated in search results.",
+        severity: "warning",
+        impact: "Low",
+        effort: "Low",
+        fix: "Trim the meta description under 165 characters.",
+      },
+      4,
+    );
+  }
+
+  if (!seoTitle) {
+    addIssue(
+      {
+        type: "missing_seo_title",
+        category: "on_page",
+        label: "Missing SEO titles",
+        message: "SEO titles should be unique and descriptive.",
+        severity: "warning",
+        impact: "Medium",
+        effort: "Low",
+        fix: "Add a unique SEO title for each post.",
+      },
+      12,
+    );
+  } else if (seoTitle.length > 70) {
+    addIssue(
+      {
+        type: "long_seo_title",
+        category: "on_page",
+        label: "Long SEO titles",
+        message: "Long SEO titles can be cut off on search results pages.",
+        severity: "warning",
+        impact: "Low",
+        effort: "Low",
+        fix: "Keep SEO titles under 70 characters.",
+      },
+      4,
+    );
+  }
+
+  if (article.imageUrl && !article.imageAlt.trim()) {
+    addIssue(
+      {
+        type: "missing_image_alt",
+        category: "image",
+        label: "Missing image alt text",
+        message: "Alt text improves accessibility and image search visibility.",
+        severity: "warning",
+        impact: "Medium",
+        effort: "Low",
+        fix: "Add descriptive alt text to blog images.",
+      },
+      8,
+    );
+  }
+
+  if (productCount === 0) {
+    addIssue(
+      {
+        type: "no_linked_products",
+        category: "product_linking",
+        label: "No linked products",
+        message: "Posts without products cannot drive shoppable engagement.",
+        severity: "critical",
+        impact: "High",
+        effort: "Medium",
+        fix: "Link relevant products to the post.",
+      },
+      18,
+    );
+  }
+
+  if (wordCount > 0 && wordCount < 300) {
+    addIssue(
+      {
+        type: "thin_content",
+        category: "content",
+        label: "Thin content",
+        message: "Short posts can be harder to rank for competitive topics.",
+        severity: "warning",
+        impact: "Medium",
+        effort: "Medium",
+        fix: "Add more useful sections, examples, or product context.",
+      },
+      8,
+    );
+  }
+
+  if (article.body && !/<h[2-6][^>]*>/i.test(article.body)) {
+    addIssue(
+      {
+        type: "missing_subheadings",
+        category: "content",
+        label: "Missing subheadings",
+        message: "Subheadings make posts easier to scan and understand.",
+        severity: "info",
+        impact: "Low",
+        effort: "Low",
+        fix: "Add clear H2/H3 sections to structure the article.",
+      },
+      4,
+    );
+  }
+
+  if (!config.addBlogSchema || (productCount > 0 && !config.addProductSchema)) {
+    addIssue(
+      {
+        type: "schema_disabled",
+        category: "schema",
+        label: "Schema settings disabled",
+        message: "Structured data can help eligible rich results.",
+        severity: "info",
+        impact: "Low",
+        effort: "Low",
+        fix: "Enable blog and product schema in Settings.",
+      },
+      3,
+    );
+  }
+
+  return {
+    score: Math.max(0, Math.min(100, Math.round(score))),
+    issues,
+  };
+}
+
+function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
+  const map = new Map<string, IssueGroup>();
+
+  posts.forEach((post) => {
+    post.issues.forEach((issue) => {
+      const group = map.get(issue.type) || {
+        id: issue.type,
+        category: issue.category,
+        issue: issue.label,
+        affected: 0,
+        impact: issue.impact,
+        effort: issue.effort,
+        status: "Needs review",
+        fix: issue.fix,
+        actionLabel: getActionLabel(issue.category),
+        examples: [],
+      };
+
+      group.affected += 1;
+      if (group.examples.length < 3) group.examples.push(post.title);
+      map.set(issue.type, group);
+    });
   });
 
-  const totalIssues = missingDescriptions + missingAltTexts + noLinkedProducts + missingSeoTitle;
-  const healthScore = Math.max(0, 100 - totalIssues * 3);
-
-  const METRICS = [
-    { id: 'health', title: "SEO Health Score", value: healthScore.toString(), suffix: "/100", trend: "+5", iconName: "ShieldCheckMarkIcon", tone: healthScore > 80 ? "success" : "warning" },
-    { id: 'critical', title: "Critical issues", value: (missingDescriptions + noLinkedProducts).toString(), suffix: "", trend: "0", iconName: "AlertTriangleIcon", tone: "critical" },
-    { id: 'quick', title: "Quick wins", value: (missingAltTexts + missingSeoTitle).toString(), suffix: "", trend: "-2", iconName: "MagicIcon", tone: "warning" },
-    { id: 'affected', title: "Affected posts", value: analyzedPosts.filter(p => p.issues > 0).length.toString(), suffix: "", trend: "-1", iconName: "NoteIcon", tone: "info" },
-    { id: 'impact', title: "Estimated traffic impact", value: "+1,240", suffix: "monthly visits", trend: null, iconName: "ChartVerticalFilledIcon", tone: "success" },
-  ];
-
-  const ISSUES = [];
-  if (missingDescriptions > 0) {
-    ISSUES.push({ id: "1", issue: "Missing meta descriptions", affected: missingDescriptions, impact: "High", effort: "Low", status: "Not started", fix: "Add unique meta descriptions", actionLabel: "Fix now" });
-  }
-  if (noLinkedProducts > 0) {
-    ISSUES.push({ id: "2", issue: "No linked products", affected: noLinkedProducts, impact: "High", effort: "Medium", status: "Not started", fix: "Link relevant products", actionLabel: "Fix now" });
-  }
-  if (missingSeoTitle > 0) {
-    ISSUES.push({ id: "3", issue: "Missing SEO titles", affected: missingSeoTitle, impact: "Medium", effort: "Low", status: "In progress", fix: "Review and update titles", actionLabel: "Review" });
-  }
-  if (missingAltTexts > 0) {
-    ISSUES.push({ id: "4", issue: "Missing alt text", affected: missingAltTexts, impact: "Medium", effort: "Low", status: "Not started", fix: "Add alt text to images", actionLabel: "Fix now" });
-  }
-  if (ISSUES.length === 0) {
-    ISSUES.push({ id: "ok", issue: "No issues found!", affected: 0, impact: "Low", effort: "Low", status: "Done", fix: "Everything is great", actionLabel: "View" });
-  }
-
-  const highImpact = (missingDescriptions + noLinkedProducts);
-  const medImpact = (missingSeoTitle + missingAltTexts);
-  const lowImpact = 0;
-  
-  const DONUT_DATA = [
-    { name: 'High impact', value: highImpact, color: '#D82C0D' },
-    { name: 'Medium impact', value: medImpact, color: '#FFC453' },
-    { name: 'Low impact', value: lowImpact, color: '#29845A' }
-  ];
-
-  const POSTS = analyzedPosts.filter(p => p.issues > 0).sort((a, b) => b.issues - a.issues).slice(0, 5);
-
-  return json({ METRICS, ISSUES, DONUT_DATA, POSTS, totalIssues });
-};
-
-export const action = async ({ request }: ActionFunctionArgs) => {
-  return json({ success: true });
-};
-
-export default function SEOOptimizer() {
-  const { METRICS, ISSUES, DONUT_DATA, POSTS, totalIssues } = useLoaderData<typeof loader>();
-  const shopify = useAppBridge();
-
-  const iconMap: Record<string, any> = {
-    ShieldCheckMarkIcon,
-    AlertTriangleIcon,
-    MagicIcon,
-    NoteIcon,
-    ChartVerticalFilledIcon
-  };
-
-  const [selectedTab, setSelectedTab] = useState(0);
-  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(ISSUES as any);
-
-  const getImpactColor = (impact: string) => {
-    if (impact === 'High') return 'var(--p-color-text-critical)';
-    if (impact === 'Medium') return 'var(--p-color-text-warning-strong)';
-    return 'var(--p-color-text-success)';
-  };
-  const getImpactBg = (impact: string) => {
-    if (impact === 'High') return 'var(--p-color-bg-surface-critical)';
-    if (impact === 'Medium') return 'var(--p-color-bg-surface-warning)';
-    return 'var(--p-color-bg-surface-success)';
-  };
-
-  const getEffortColor = (effort: string) => {
-    if (effort === 'High') return 'var(--p-color-text-critical)';
-    if (effort === 'Medium') return 'var(--p-color-text-warning-strong)';
-    return 'var(--p-color-text-success)';
-  };
-  const getEffortBg = (effort: string) => {
-    if (effort === 'High') return 'var(--p-color-bg-surface-critical)';
-    if (effort === 'Medium') return 'var(--p-color-bg-surface-warning)';
-    return 'var(--p-color-bg-surface-success)';
-  };
-
-  const getStatusTone = (status: string) => {
-    return status === 'In progress' ? 'info' : undefined;
-  };
-
-  return (
-    <Page fullWidth>
-      <TitleBar title="SEO Optimizer">
-        <button variant="primary">Run SEO scan</button>
-        <button>Export issues</button>
-      </TitleBar>
-
-      <BlockStack gap="500">
-        <Text as="p" variant="bodyMd" tone="subdued">Identify and resolve SEO issues to improve your rankings and drive more organic traffic.</Text>
-
-        {/* TOP METRICS */}
-        <InlineGrid columns={5} gap="400">
-          {METRICS.map((m) => (
-            <Card padding="400" key={m.id}>
-              <BlockStack gap="400">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', justifyContent: 'flex-start', flex: '0 0 auto' }}>
-                    <span style={{ display: 'inline-block', width: '20px', height: '20px', flexShrink: 0 }}>
-                      <Icon source={iconMap[m.iconName]} tone={m.tone as any} />
-                    </span>
-                    <Text as="span" variant="bodySm" fontWeight="semibold" tone="subdued">{m.title}</Text>
-                  </div>
-                  {m.id === 'health' && (
-                    <div style={{ display: 'inline-flex', flex: '0 0 auto', width: '20px', height: '20px' }}>
-                      <Icon source={InfoIcon} tone="subdued" />
-                    </div>
-                  )}
-                </div>
-                <BlockStack gap="100">
-                  <InlineStack gap="100" blockAlign="end">
-                    <Text as="span" variant="heading3xl" fontWeight="bold">{m.value}</Text>
-                    {m.suffix && <Text as="span" variant="bodyMd" tone="subdued">{m.suffix}</Text>}
-                  </InlineStack>
-                  {m.trend && (
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-start' }}>
-                      <span style={{ display: 'inline-block', width: '16px', height: '16px', flexShrink: 0 }}>
-                        <Icon source={ArrowUpIcon} tone={m.tone as any} />
-                      </span>
-                      <Text as="span" variant="bodySm" fontWeight="semibold" tone={m.tone as any}>{m.trend} vs last scan</Text>
-                    </div>
-                  )}
-                  {!m.trend && m.suffix && (
-                    <Text as="span" variant="bodySm" tone="success">monthly visits</Text>
-                  )}
-                </BlockStack>
-                <div style={{ width: '100%', height: '4px', backgroundColor: 'var(--p-color-bg-surface-secondary)', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ width: m.id === 'health' ? `${m.value}%` : m.id === 'critical' ? '30%' : m.id === 'quick' ? '60%' : m.id === 'affected' ? '40%' : '100%', height: '100%', backgroundColor: `var(--p-color-bg-surface-${m.tone}-strong)` }} />
-                </div>
-              </BlockStack>
-            </Card>
-          ))}
-        </InlineGrid>
-
-        {/* MAIN CONTENT */}
-        <Layout>
-          
-          {/* LEFT COLUMN */}
-          <Layout.Section>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <Card padding="0">
-              <Tabs
-                tabs={[
-                  { id: 'on-page', content: 'On-page SEO' },
-                  { id: 'linking', content: 'Product linking' },
-                  { id: 'internal', content: 'Internal links' },
-                  { id: 'image', content: 'Image SEO' },
-                  { id: 'schema', content: 'Schema' },
-                  { id: 'quality', content: 'Content quality' }
-                ]}
-                selected={selectedTab}
-                onSelect={setSelectedTab}
-              />
-              <Box padding="0">
-                  <IndexTable
-                    resourceName={{ singular: 'issue', plural: 'issues' }}
-                    itemCount={ISSUES.length}
-                    selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
-                    onSelectionChange={handleSelectionChange}
-                    headings={[
-                      { title: 'Issue' },
-                      { title: 'Affected posts' },
-                      { title: 'Impact' },
-                      { title: 'Effort' },
-                      { title: 'Status' },
-                      { title: 'Suggested fix' },
-                      { title: 'Action' }
-                    ]}
-                    selectable={true}
-                  >
-                    {ISSUES.map((issue, index) => (
-                      <IndexTable.Row id={issue.id} key={issue.id} position={index} selected={selectedResources.includes(issue.id)}>
-                        <IndexTable.Cell><Text as="span" variant="bodyMd" fontWeight="semibold">{issue.issue}</Text></IndexTable.Cell>
-                        <IndexTable.Cell><Text as="span" variant="bodyMd">{issue.affected}</Text></IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <div style={{ padding: '4px 10px', borderRadius: '4px', backgroundColor: issue.impact === 'High' ? '#FFEEEE' : issue.impact === 'Medium' ? '#FFF5EA' : '#E8F5E9', color: issue.impact === 'High' ? '#D82C0D' : issue.impact === 'Medium' ? '#B98900' : '#29845A', display: 'inline-block', fontSize: '12px', fontWeight: 'bold' }}>
-                            {issue.impact}
-                          </div>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <div style={{ padding: '4px 10px', borderRadius: '4px', backgroundColor: issue.effort === 'High' ? '#FFEEEE' : issue.effort === 'Medium' ? '#FFF5EA' : '#E8F5E9', color: issue.effort === 'High' ? '#D82C0D' : issue.effort === 'Medium' ? '#B98900' : '#29845A', display: 'inline-block', fontSize: '12px', fontWeight: 'bold' }}>
-                            {issue.effort}
-                          </div>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <div style={{ padding: '4px 10px', borderRadius: '4px', backgroundColor: issue.status === 'In progress' ? '#E8F4FD' : '#F3F3F3', color: issue.status === 'In progress' ? '#0070E0' : '#616161', display: 'inline-block', fontSize: '12px', fontWeight: '500' }}>
-                            {issue.status}
-                          </div>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell><Text as="span" variant="bodyMd">{issue.fix}</Text></IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <Button size="micro" onClick={() => shopify.toast.show('AI optimizing...')} >{issue.actionLabel}</Button>
-                        </IndexTable.Cell>
-                      </IndexTable.Row>
-                    ))}
-                  </IndexTable>
-                  <Box padding="300">
-                    <InlineStack align="center" gap="200">
-                      <Button icon={ChevronLeftIcon} disabled />
-                      <Button pressed>1</Button>
-                      <Button>2</Button>
-                      <Button icon={ChevronRightIcon} />
-                    </InlineStack>
-                  </Box>
-                </Box>
-            </Card>
-
-            {/* STICKY BOTTOM BAR */}
-            <Card padding="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <InlineStack gap="400" blockAlign="center">
-                  <BlockStack gap="0">
-                    <InlineStack gap="200" blockAlign="center">
-                      <Text as="span" variant="headingSm">{selectedResources.length} issues selected</Text>
-                      <Button variant="plain" onClick={clearSelection}>Clear</Button>
-                    </InlineStack>
-                    <Text as="span" variant="bodySm" tone="subdued">High (3) • Medium (2) • Low (1)</Text>
-                  </BlockStack>
-
-                  <div style={{ width: '1px', height: '30px', backgroundColor: 'var(--p-color-border)' }} />
-
-                  <BlockStack gap="0">
-                    <InlineStack gap="100" blockAlign="center">
-                      <Text as="span" variant="bodySm" fontWeight="semibold">Potential impact</Text>
-                      <Icon source={InfoIcon} tone="subdued" />
-                    </InlineStack>
-                    <Text as="span" variant="bodySm" tone="success" fontWeight="bold">+620 monthly visits</Text>
-                  </BlockStack>
-
-                  <div style={{ width: '1px', height: '30px', backgroundColor: 'var(--p-color-border)' }} />
-
-                  <BlockStack gap="0">
-                    <InlineStack gap="100" blockAlign="center">
-                      <Text as="span" variant="bodySm" fontWeight="semibold">Estimated time to fix</Text>
-                      <Icon source={InfoIcon} tone="subdued" />
-                    </InlineStack>
-                    <Text as="span" variant="bodySm" fontWeight="bold">2h 15m</Text>
-                  </BlockStack>
-                </InlineStack>
-
-                <InlineStack gap="300">
-                  <Button>Preview changes</Button>
-                  <Button>Save for later</Button>
-                  <Button variant="primary">Apply fixes</Button>
-                </InlineStack>
-              </InlineStack>
-            </Card>
-          </div>
-          </Layout.Section>
-
-          {/* RIGHT COLUMN */}
-          <Layout.Section variant="oneThird">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            
-            {/* SEO Assistant */}
-            <Card padding="400">
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd" fontWeight="bold">SEO Assistant</Text>
-                  <div style={{ backgroundColor: '#F4EBFF', color: '#7F56D9', padding: '4px 12px', borderRadius: '16px', fontSize: '12px', fontWeight: 'bold' }}>AI</div>
-                </InlineStack>
-                <Text as="p" variant="bodyMd" tone="subdued">Based on your latest scan, I've identified high-impact opportunities to improve your SEO performance.</Text>
-                
-                <BlockStack gap="400">
-                  {/* Item 1 */}
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--p-color-bg-surface-critical)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
-                      <div style={{ width: '16px', height: '16px', color: 'var(--p-color-icon-critical)' }}><Icon source={AlertTriangleIcon} /></div>
-                    </div>
-                    <div style={{ display: 'flex', flex: 1, justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                      <BlockStack gap="0">
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">Missing meta descriptions</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">Add unique, keyword-rich meta descriptions.</Text>
-                      </BlockStack>
-                      <div style={{ flexShrink: 0 }}><Button size="micro" onClick={() => shopify.toast.show('AI generating...')}>Apply</Button></div>
-                    </div>
-                  </div>
-
-                  {/* Item 2 */}
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--p-color-bg-surface-warning)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
-                      <div style={{ width: '16px', height: '16px', color: 'var(--p-color-icon-warning)' }}><Icon source={MagicIcon} /></div>
-                    </div>
-                    <div style={{ display: 'flex', flex: 1, justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                      <BlockStack gap="0">
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">Missing SEO titles</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">These fixes are low effort and can deliver fast results.</Text>
-                      </BlockStack>
-                      <div style={{ flexShrink: 0 }}><Button size="micro" onClick={() => shopify.toast.show('AI optimizing...')}>Review</Button></div>
-                    </div>
-                  </div>
-
-                  {/* Item 3 */}
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--p-color-bg-surface-success)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
-                      <div style={{ width: '16px', height: '16px', color: 'var(--p-color-icon-success)' }}><Icon source={ImageIcon} /></div>
-                    </div>
-                    <div style={{ display: 'flex', flex: 1, justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                      <BlockStack gap="0">
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">Missing alt text</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">Improve accessibility and image search visibility.</Text>
-                      </BlockStack>
-                      <div style={{ flexShrink: 0 }}><Button size="micro" onClick={() => shopify.toast.show('AI generating...')}>Generate</Button></div>
-                    </div>
-                  </div>
-
-                  {/* Item 4 */}
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--p-color-bg-surface-info)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
-                      <div style={{ width: '16px', height: '16px', color: 'var(--p-color-icon-info)' }}><Icon source={CodeIcon} /></div>
-                    </div>
-                    <div style={{ display: 'flex', flex: 1, justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                      <BlockStack gap="0">
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">Schema markup rules</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">Add structured data to enhance rich results.</Text>
-                      </BlockStack>
-                      <div style={{ flexShrink: 0 }}><Button size="micro" onClick={() => shopify.toast.show('Saving settings...')}>Apply</Button></div>
-                    </div>
-                  </div>
-                </BlockStack>
-              </BlockStack>
-            </Card>
-
-            {/* Issue breakdown */}
-            <Card padding="400">
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd" fontWeight="bold">Issue breakdown</Text>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-                  <div style={{ width: '120px', height: '120px', position: 'relative' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={DONUT_DATA}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={45}
-                          outerRadius={60}
-                          paddingAngle={2}
-                          dataKey="value"
-                          stroke="none"
-                        >
-                          {DONUT_DATA.map((entry: any, index: number) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
-                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-                      <Text as="p" variant="headingLg" fontWeight="bold">{totalIssues}</Text>
-                      <Text as="span" variant="bodySm" tone="subdued" alignment="center">Total issues</Text>
-                    </div>
-                  </div>
-                  <BlockStack gap="200">
-                    {DONUT_DATA.map((item: any) => (
-                      <div key={item.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '150px' }}>
-                        <InlineStack gap="100" blockAlign="center">
-                          <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: item.color }} />
-                          <Text as="span" variant="bodySm">{item.name}</Text>
-                        </InlineStack>
-                        <Text as="span" variant="bodySm" tone="subdued">{item.value} ({totalIssues > 0 ? Math.round((item.value / totalIssues) * 100) : 0}%)</Text>
-                      </div>
-                    ))}
-                  </BlockStack>
-                </div>
-              </BlockStack>
-            </Card>
-
-            {/* Posts needing attention */}
-            <Card padding="400">
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd" fontWeight="bold">Posts needing attention</Text>
-                  <Button variant="plain">View all</Button>
-                </InlineStack>
-                <BlockStack gap="300">
-                  {POSTS.length === 0 ? (
-                    <Text as="p" tone="subdued">All posts are optimized!</Text>
-                  ) : (
-                    POSTS.map((post: any) => (
-                      <div key={post.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <InlineStack gap="300" blockAlign="center" wrap={false}>
-                          <Thumbnail source={post.thumb} alt={post.title} size="small" />
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">{post.title.substring(0, 30)}{post.title.length > 30 ? '...' : ''}</Text>
-                        </InlineStack>
-                        <div style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: post.tone === 'critical' ? '#FFEEEE' : post.tone === 'warning' ? '#FFF5EA' : '#E8F5E9', color: post.tone === 'critical' ? '#D82C0D' : post.tone === 'warning' ? '#B98900' : '#29845A', fontSize: '12px', fontWeight: 'bold' }}>
-                          {`${post.issues} issue${post.issues > 1 ? 's' : ''}`}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </BlockStack>
-              </BlockStack>
-            </Card>
-
-          </div>
-          </Layout.Section>
-        </Layout>
-
-      </BlockStack>
-    </Page>
+  return Array.from(map.values()).sort(
+    (a, b) => getImpactWeight(b.impact) - getImpactWeight(a.impact) || b.affected - a.affected || a.issue.localeCompare(b.issue),
   );
+}
+
+function getIssueStats(issueGroups: IssueGroup[]) {
+  return issueGroups.reduce(
+    (stats, issue) => {
+      stats[issue.impact] += issue.affected;
+      stats.total += issue.affected;
+      return stats;
+    },
+    { High: 0, Medium: 0, Low: 0, total: 0 },
+  );
+}
+
+function getAverageScore(posts: Array<{ score: number }>) {
+  if (!posts.length) return 0;
+  return Math.round(posts.reduce((sum, post) => sum + post.score, 0) / posts.length);
+}
+
+function getActionLabel(category: SeoCategory) {
+  if (category === "product_linking") return "Add products";
+  if (category === "image") return "Add alt text";
+  if (category === "schema") return "Open settings";
+  if (category === "content") return "Edit content";
+  return "Review";
+}
+
+function getIssueTarget(issue: IssueGroup) {
+  if (issue.category === "schema") return "/app/settings";
+  return "/app/blogs";
+}
+
+function getImpactWeight(impact: Impact) {
+  if (impact === "High") return 3;
+  if (impact === "Medium") return 2;
+  return 1;
+}
+
+function getEffortMinutes(effort: Effort) {
+  if (effort === "High") return 35;
+  if (effort === "Medium") return 20;
+  return 8;
+}
+
+function getImpactTone(impact: Impact) {
+  if (impact === "High") return "critical";
+  if (impact === "Medium") return "warning";
+  return "success";
+}
+
+function getEffortTone(effort: Effort) {
+  if (effort === "High") return "critical";
+  if (effort === "Medium") return "warning";
+  return "success";
+}
+
+function getImpactSurface(impact: Impact) {
+  if (impact === "High") return "critical";
+  if (impact === "Medium") return "warning";
+  return "success";
+}
+
+function formatMinutes(minutes: number) {
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function stripHtml(value: string) {
+  return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function cleanText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function links() {
+  return [
+    {
+      rel: "stylesheet",
+      href:
+        "data:text/css," +
+        encodeURIComponent(`
+          .bp-seo-issue-table {
+            max-width: 100%;
+            overflow-x: auto;
+          }
+          .bp-seo-issue-table table {
+            min-width: 940px;
+          }
+          .bp-seo-issue-cell {
+            display: grid;
+            gap: 2px;
+            width: 300px;
+            max-width: 300px;
+            min-width: 0;
+          }
+          .bp-seo-fix-cell {
+            width: 220px;
+            max-width: 220px;
+            min-width: 0;
+          }
+        `),
+    },
+  ];
 }

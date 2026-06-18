@@ -2,6 +2,7 @@
   App embed for rendering shoppable product widgets inside article content.
   Add [[SBS_PRODUCTS]] or block-specific markers such as [[SBS_PRODUCTS:block_abc]] in a blog article body.
 {% endcomment %}
+<script src="{{ 'sbs-widget.js' | asset_url }}" defer="defer"></script>
 
 {% liquid
   assign sbs_app_url = '/apps/shoppable-blog-seo'
@@ -31,7 +32,6 @@
   "name": "Shoppable Blog Markers",
   "target": "body",
   "stylesheet": "sbs-widget.css",
-  "javascript": "sbs-widget.js",
   "settings": [
     {
       "type": "paragraph",

@@ -12,6 +12,7 @@ import {
   Box,
   Button,
   ButtonGroup,
+  Collapsible,
   Card,
   Checkbox,
   ChoiceList,
@@ -23,6 +24,8 @@ import {
   InlineStack,
   Modal,
   Page,
+  Popover,
+  ActionList,
   ProgressBar,
   Select,
   Tabs,
@@ -36,21 +39,30 @@ import {
   ArrowUpIcon,
   CashDollarIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CodeIcon,
   DeleteIcon,
-  EditIcon,
   ExternalIcon,
   ImageIcon,
   LinkIcon,
+  ListBulletedIcon,
   MagicIcon,
-  MenuHorizontalIcon,
   PlusIcon,
   PlayCircleIcon,
   ProductIcon,
   SearchIcon,
   SortIcon,
   DataTableIcon,
+  TextAlignCenterIcon,
+  TextAlignLeftIcon,
+  TextAlignRightIcon,
+  TextColorIcon,
+  TextBoldIcon,
+  TextItalicIcon,
+  TextUnderlineIcon,
   ViewIcon,
+  InfoIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -58,11 +70,12 @@ import prisma from "../db.server";
 
 type SeoIssue = {
   type: string;
+  category?: 'basic' | 'additional' | 'title_readability' | 'content_readability';
   label: string;
   message: string;
   severity: "good" | "info" | "warning" | "critical";
-  impact: "Low" | "Medium" | "High";
-  effort: "Low" | "Medium" | "High";
+  impact?: "Low" | "Medium" | "High";
+  effort?: "Low" | "Medium" | "High";
 };
 
 type ProductMetric = {
@@ -78,6 +91,7 @@ type ProductMetric = {
 type ShopifyImageFile = {
   id: string;
   url: string;
+  thumbnailUrl?: string;
   alt: string;
   title: string;
   width?: number;
@@ -111,6 +125,8 @@ const STYLE_OPTIONS = [
   { label: "Featured", value: "featured" },
 ];
 
+const DEFAULT_AUTHOR_NAME = "Admin";
+
 const EDITOR_IMAGE_SIZE_OPTIONS = [
   { label: "Original size", value: "original", width: null },
   { label: "Inline (16px)", value: "inline", width: 16 },
@@ -130,7 +146,47 @@ type EditorImageSize = (typeof EDITOR_IMAGE_SIZE_OPTIONS)[number]["value"];
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
-  const articleId = getArticleId(params.blogId || "");
+  const rawArticleParam = params.blogId || "";
+  const isNewPost = isNewArticleParam(rawArticleParam);
+  const blogs = await fetchShopifyEditorBlogs(admin);
+  const defaultAuthorName = DEFAULT_AUTHOR_NAME;
+
+  if (isNewPost) {
+    const article = makeEmptyArticle(blogs[0], defaultAuthorName);
+    const initialAudit = auditSeo({
+      title: article.title,
+      handle: article.handle,
+      summary: article.summary,
+      body: article.body,
+      hasImage: false,
+      imageAlt: "",
+      productCount: 0,
+    });
+
+    return json({
+      shop,
+      isNewPost: true,
+      blogs,
+      article,
+      embeddedProducts: [],
+      seoData: null,
+      stats: {
+        clicks: 0,
+        impressions: 0,
+        addToCarts: 0,
+        purchases: 0,
+        revenue: 0,
+        ctr: 0,
+      },
+      initialAudit,
+      livePostUrl: "",
+      defaultAuthorName,
+      fileImages: [],
+      fileImagesError: "",
+    });
+  }
+
+  const articleId = getArticleId(rawArticleParam);
 
   const articleResponse = await admin.graphql(
     `#graphql
@@ -170,7 +226,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Article not found", { status: 404 });
   }
 
-  const [linkedProducts, seoData, eventGroups, imageFilesResult] = await Promise.all([
+  const [linkedProducts, seoData, eventGroups] = await Promise.all([
     prisma.articleProduct.findMany({
       where: { shop, articleId, isActive: true },
       orderBy: { position: "asc" },
@@ -183,7 +239,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       where: { shop, articleId },
       _count: { _all: true },
     }),
-    fetchShopifyImageFiles(admin),
   ]);
 
   const metricMap = buildProductMetricMap(eventGroups);
@@ -242,17 +297,33 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     },
     initialAudit,
     livePostUrl,
-    fileImages: imageFilesResult.images,
-    fileImagesError: imageFilesResult.error,
+    isNewPost: false,
+    blogs,
+    defaultAuthorName,
+    fileImages: [],
+    fileImagesError: "",
   });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
-  const articleId = getArticleId(params.blogId || "");
+  const defaultAuthorName = DEFAULT_AUTHOR_NAME;
+  const rawArticleParam = params.blogId || "";
+  const isNewPost = isNewArticleParam(rawArticleParam);
+  const articleId = isNewPost ? "" : getArticleId(rawArticleParam);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
+
+  if (
+    isNewPost &&
+    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions"].includes(intent)
+  ) {
+    return json(
+      { success: false, error: "Save this post before using this action." },
+      { status: 400 },
+    );
+  }
 
   if (intent === "update_post") {
     const title = cleanString(formData.get("title"));
@@ -269,17 +340,155 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const imageAlt = cleanString(formData.get("imageAlt"));
     const removeImage = formData.get("removeImage") === "true";
     const productCount = Number(formData.get("productCount") || "0");
+    const focusKeyword = cleanString(formData.get("focusKeyword"));
+    const blogId = cleanString(formData.get("blogId"));
+    const authorName = cleanString(formData.get("author")) || defaultAuthorName;
 
-    if (!title || !handle) {
-      return json(
-        { success: false, error: "Title and URL handle are required." },
-        { status: 400 },
+    if (!title) {
+      return json({ success: false, error: "Title is required." }, { status: 400 });
+    }
+
+    if (!isNewPost && !handle) {
+      return json({ success: false, error: "URL handle is required." }, { status: 400 });
+    }
+
+    if (isNewPost) {
+      if (!blogId) {
+        return json({ success: false, error: "Choose a blog before creating this post." }, { status: 400 });
+      }
+
+      const createInput: Record<string, unknown> = {
+        blogId,
+        title,
+        author: { name: authorName },
+        body: body || "<p></p>",
+        summary,
+        tags,
+        isPublished,
+      };
+
+      if (handle) {
+        createInput.handle = handle;
+      }
+
+      if (templateSuffix && templateSuffix !== "default") {
+        createInput.templateSuffix = templateSuffix;
+      }
+
+      if (!removeImage && imageUrl) {
+        createInput.image = {
+          url: imageUrl,
+          altText: imageAlt,
+        };
+      }
+
+      const response = await admin.graphql(
+        `#graphql
+        mutation CreateArticle($article: ArticleCreateInput!) {
+          articleCreate(article: $article) {
+            article {
+              id
+              title
+              handle
+              body
+              summary
+              tags
+              publishedAt
+              updatedAt
+              isPublished
+              templateSuffix
+              author {
+                name
+              }
+              image {
+                url
+                altText
+              }
+              blog {
+                id
+                title
+                handle
+              }
+            }
+            userErrors {
+              code
+              field
+              message
+            }
+          }
+        }`,
+        { variables: { article: createInput } },
       );
+
+      const result: any = await response.json();
+      const userErrors = result.data?.articleCreate?.userErrors || [];
+      const graphQLErrors = result.errors || [];
+
+      if (userErrors.length || graphQLErrors.length) {
+        const message =
+          userErrors[0]?.message ||
+          graphQLErrors[0]?.message ||
+          "Shopify could not create this article.";
+        return json({ success: false, error: message }, { status: 400 });
+      }
+
+      const article = result.data?.articleCreate?.article;
+      if (!article?.id) {
+        return json(
+          { success: false, error: "Shopify did not return the new article." },
+          { status: 500 },
+        );
+      }
+
+      const audit = auditSeo({
+        title: metaTitle,
+        handle: article.handle || handle,
+        summary: metaDescription,
+        body,
+        hasImage: Boolean(imageUrl),
+        imageAlt,
+        productCount,
+        focusKeyword,
+      });
+
+      await prisma.articleSEO.upsert({
+        where: { articleId: article.id },
+        update: {
+          shop,
+          articleTitle: title,
+          seoScore: audit.score,
+          metaTitle,
+          metaDescription,
+          focusKeyword,
+          issues: JSON.stringify(audit.issues),
+          lastAnalyzedAt: new Date(),
+        },
+        create: {
+          shop,
+          articleId: article.id,
+          articleTitle: title,
+          seoScore: audit.score,
+          metaTitle,
+          metaDescription,
+          focusKeyword,
+          issues: JSON.stringify(audit.issues),
+          lastAnalyzedAt: new Date(),
+        },
+      });
+
+      return json({
+        success: true,
+        action: "post_created",
+        article,
+        score: audit.score,
+        issues: audit.issues,
+      });
     }
 
     const articleInput: Record<string, unknown> = {
       title,
       handle,
+      author: { name: authorName },
       body,
       summary,
       tags,
@@ -287,6 +496,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       templateSuffix: templateSuffix === "default" ? "" : templateSuffix,
       redirectNewHandle: true,
     };
+
+    if (blogId) {
+      articleInput.blogId = blogId;
+    }
 
     if (removeImage) {
       articleInput.image = null;
@@ -312,6 +525,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             updatedAt
             isPublished
             templateSuffix
+            author {
+              name
+            }
             image {
               url
               altText
@@ -352,6 +568,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       hasImage: removeImage ? false : Boolean(imageUrl || hasImage),
       imageAlt,
       productCount,
+      focusKeyword,
     });
 
     await prisma.articleSEO.upsert({
@@ -362,6 +579,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         seoScore: audit.score,
         metaTitle,
         metaDescription,
+        focusKeyword,
         issues: JSON.stringify(audit.issues),
         lastAnalyzedAt: new Date(),
       },
@@ -372,6 +590,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         seoScore: audit.score,
         metaTitle,
         metaDescription,
+        focusKeyword,
         issues: JSON.stringify(audit.issues),
         lastAnalyzedAt: new Date(),
       },
@@ -398,9 +617,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       orderBy: { position: "desc" },
       select: { position: true },
     });
+    const existingProducts = await prisma.articleProduct.findMany({
+      where: { shop, articleId, blockId, isActive: true },
+      select: { productId: true },
+    });
+    const existingProductIds = new Set(existingProducts.map((product) => product.productId));
+    let addedCount = 0;
     let nextPosition = (maxPos?.position ?? -1) + 1;
 
     for (const product of products) {
+      if (!existingProductIds.has(product.id)) {
+        addedCount += 1;
+        existingProductIds.add(product.id);
+      }
+
       await prisma.articleProduct.upsert({
         where: {
           articleId_blockId_productId: {
@@ -434,7 +664,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
-    return json({ success: true, action: "products_added", count: products.length });
+    return json({ success: true, action: "products_added", count: addedCount });
   }
 
   if (intent === "remove_product") {
@@ -473,6 +703,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   if (intent === "analyze_seo") {
+    const focusKeyword = cleanString(formData.get("focusKeyword"));
     const audit = auditSeo({
       title: cleanString(formData.get("metaTitle")),
       handle: cleanString(formData.get("handle")),
@@ -481,7 +712,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       hasImage: formData.get("hasImage") === "true",
       imageAlt: cleanString(formData.get("imageAlt")),
       productCount: Number(formData.get("productCount") || "0"),
+      focusKeyword,
     });
+
+    if (isNewPost) {
+      return json({ success: true, action: "seo_analyzed", score: audit.score, issues: audit.issues });
+    }
 
     await prisma.articleSEO.upsert({
       where: { articleId },
@@ -491,6 +727,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         seoScore: audit.score,
         metaTitle: cleanString(formData.get("metaTitle")),
         metaDescription: cleanString(formData.get("metaDescription")),
+        focusKeyword,
         issues: JSON.stringify(audit.issues),
         lastAnalyzedAt: new Date(),
       },
@@ -501,6 +738,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         seoScore: audit.score,
         metaTitle: cleanString(formData.get("metaTitle")),
         metaDescription: cleanString(formData.get("metaDescription")),
+        focusKeyword,
         issues: JSON.stringify(audit.issues),
         lastAnalyzedAt: new Date(),
       },
@@ -516,15 +754,33 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const productCount = Number(formData.get("productCount") || "0");
     const suggestedTitle = makeSeoTitle(articleTitle);
     const suggestedDescription = makeMetaDescription(articleTitle, body);
+    const hasImage = formData.get("hasImage") === "true";
+    const imageAlt = cleanString(formData.get("imageAlt"));
+    const suggestedImageAlt = imageAlt || (hasImage ? suggestedTitle : "");
+    const focusKeyword = cleanString(formData.get("focusKeyword"));
+
     const audit = auditSeo({
       title: suggestedTitle,
       handle,
       summary: suggestedDescription,
       body,
-      hasImage: formData.get("hasImage") === "true",
-      imageAlt: cleanString(formData.get("imageAlt")),
+      hasImage,
+      imageAlt: suggestedImageAlt,
       productCount,
+      focusKeyword,
     });
+
+    if (isNewPost) {
+      return json({
+        success: true,
+        action: "seo_suggestions_applied",
+        metaTitle: suggestedTitle,
+        metaDescription: suggestedDescription,
+        imageAlt: suggestedImageAlt,
+        score: audit.score,
+        issues: audit.issues,
+      });
+    }
 
     await prisma.articleSEO.upsert({
       where: { articleId },
@@ -534,6 +790,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         seoScore: audit.score,
         metaTitle: suggestedTitle,
         metaDescription: suggestedDescription,
+        focusKeyword,
         issues: JSON.stringify(audit.issues),
         lastAnalyzedAt: new Date(),
       },
@@ -544,6 +801,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         seoScore: audit.score,
         metaTitle: suggestedTitle,
         metaDescription: suggestedDescription,
+        focusKeyword,
         issues: JSON.stringify(audit.issues),
         lastAnalyzedAt: new Date(),
       },
@@ -554,17 +812,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       action: "seo_suggestions_applied",
       metaTitle: suggestedTitle,
       metaDescription: suggestedDescription,
+      imageAlt: suggestedImageAlt,
       score: audit.score,
       issues: audit.issues,
     });
   }
 
   if (intent === "search_images") {
-    const result = await fetchShopifyImageFiles(admin, cleanString(formData.get("query")));
+    const query = cleanString(formData.get("query")).toLowerCase();
+    const result = await fetchShopifyImageFiles(admin, query);
 
     return json({
       success: !result.error,
       action: "images_searched",
+      query,
       images: result.images,
       error: result.error,
     });
@@ -601,7 +862,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { article, embeddedProducts, seoData, stats, initialAudit, livePostUrl, fileImages, fileImagesError } =
+  const { shop, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
@@ -616,16 +877,20 @@ export default function ArticleDetail() {
     stripHtml(seoData?.metaDescription || article.summary || makeMetaDescription(article.title, article.body || "")),
   );
   const [body, setBody] = useState(article.body || "");
-  const [metaTitle, setMetaTitle] = useState(seoData?.metaTitle || article.title || "");
+  const [metaTitle, setMetaTitle] = useState(getInitialMetaTitle(seoData?.metaTitle, article.title));
+  const [metaTitleTouched, setMetaTitleTouched] = useState(isInitialMetaTitleCustom(seoData?.metaTitle, article.title));
   const [metaDescription, setMetaDescription] = useState(
     seoData?.metaDescription || stripHtml(article.summary || ""),
   );
   const [tags, setTags] = useState((article.tags || []).join(", "));
   const [themeTemplate, setThemeTemplate] = useState(article.templateSuffix || "default");
   const [visibility, setVisibility] = useState(article.isPublished ? "visible" : "hidden");
+  const [authorName, setAuthorName] = useState(article.author?.name || defaultAuthorName);
+  const [selectedBlogId, setSelectedBlogId] = useState(article.blog?.id || blogs[0]?.id || "");
+  const [handleTouched, setHandleTouched] = useState(Boolean(article.handle));
   const [featuredImageUrl, setFeaturedImageUrl] = useState(article.image?.url || "");
   const [featuredImageAlt, setFeaturedImageAlt] = useState(article.image?.altText || "");
-  const [imageFiles, setImageFiles] = useState<ShopifyImageFile[]>(fileImages || []);
+  const [imageFiles, setImageFiles] = useState<ShopifyImageFile[]>((fileImages || []) as unknown as ShopifyImageFile[]);
   const [imageFilesMessage, setImageFilesMessage] = useState(fileImagesError || "");
   const [imageSearchQuery, setImageSearchQuery] = useState("");
   const [selectedImage, setSelectedImage] = useState<ShopifyImageFile | null>(null);
@@ -637,49 +902,35 @@ export default function ArticleDetail() {
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [selectedStyle, setSelectedStyle] = useState("card");
   const [selectedProductBlockId, setSelectedProductBlockId] = useState(DEFAULT_PRODUCT_BLOCK_ID);
+  const [isEditingSnippet, setIsEditingSnippet] = useState(false);
   const editorImageInsertRef = useRef<((image: ShopifyImageFile) => void) | null>(null);
   const previousProductBlockIdsRef = useRef<string[]>([]);
+  const imageFetcherSubmitRef = useRef(imageFetcher.submit);
+  const imageResultsCacheRef = useRef(new Map<string, { images: ShopifyImageFile[]; error: string }>());
+  const imageRequestsInFlightRef = useRef(new Set<string>());
 
   const fetcherData = fetcher.data as any;
   const imageFetcherData = imageFetcher.data as any;
   const uploadFetcherData = uploadFetcher.data as any;
   const handledFetcherDataRef = useRef<any>(null);
-  const persistedIssues = parseIssues(seoData?.issues);
-  const currentAudit = useMemo(
-    () =>
-      auditSeo({
-        title: metaTitle,
-        handle,
-        summary: metaDescription || excerpt,
-        body,
-        hasImage: Boolean(featuredImageUrl) && !imageRemoved,
-        imageAlt: featuredImageAlt,
-        productCount: embeddedProducts.length,
-      }),
-    [
-      body,
-      embeddedProducts.length,
-      excerpt,
-      featuredImageAlt,
-      featuredImageUrl,
-      handle,
-      imageRemoved,
-      metaDescription,
-      metaTitle,
-    ],
-  );
+  const [focusKeyword, setFocusKeyword] = useState(seoData?.focusKeyword || "");
 
-  const seoScore =
-    typeof fetcherData?.score === "number"
-      ? fetcherData.score
-      : seoData?.seoScore || initialAudit.score || currentAudit.score;
-  const seoIssues = Array.isArray(fetcherData?.issues)
-    ? fetcherData.issues
-    : persistedIssues.length
-      ? persistedIssues
-      : currentAudit.issues;
-  const goodChecks = getGoodSeoChecks(currentAudit, seoIssues);
-  const needsImprovement = seoIssues.filter((issue: SeoIssue) => issue.severity !== "good");
+  const effectiveMetaTitle = metaTitleTouched ? metaTitle || title : title;
+
+  const { score: seoScore, issues: seoIssues, keywordScores } = useMemo(() => {
+    if (!article) return { score: 0, issues: [], keywordScores: {} };
+    return auditSeo({
+      title: effectiveMetaTitle || title,
+      handle,
+      summary: metaDescription || excerpt || "",
+      body,
+      hasImage: !!(featuredImageUrl || (article.image?.url && !imageRemoved)),
+      imageAlt: featuredImageAlt || article.image?.altText || "",
+      productCount: embeddedProducts.length,
+      focusKeyword,
+    });
+  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword]);
+
   const productBlockOptions = useMemo(
     () => buildProductBlockOptions(body, embeddedProducts),
     [body, embeddedProducts],
@@ -693,12 +944,40 @@ export default function ArticleDetail() {
       ),
     [embeddedProducts, selectedProductBlock?.id],
   );
+  const selectedProductSelectionIds = useMemo(
+    () =>
+      selectedBlockProducts
+        .map((product: any) => product.productId)
+        .filter(Boolean)
+        .map((id: string) => ({ id })),
+    [selectedBlockProducts],
+  );
+  const currentBlog = useMemo(
+    () => blogs.find((blog: any) => blog.id === selectedBlogId) || article.blog || blogs[0],
+    [article.blog, blogs, selectedBlogId],
+  );
   const topProduct = [...embeddedProducts].sort((a, b) => b.clicks - a.clicks)[0] || embeddedProducts[0];
   const isSubmitting = fetcher.state !== "idle";
   const activeImage = imageRemoved ? null : featuredImageUrl;
-  const isLoadingImages = imageFetcher.state !== "idle";
+  const normalizedImageQuery = imageSearchQuery.trim().toLowerCase();
+  const isLoadingImages =
+    isImageModalOpen &&
+    imageFetcher.state !== "idle" &&
+    !imageResultsCacheRef.current.has(normalizedImageQuery);
   const isUploadingImage = uploadFetcher.state !== "idle";
   const shouldShowSaveBar = isDirty && !isImageModalOpen && !showStyleModal;
+  const isVisible = visibility !== "hidden";
+  const postPreviewUrl =
+    currentBlog?.handle && handle
+      ? `https://${shop}/blogs/${currentBlog.handle}/${handle}`
+      : livePostUrl;
+  const blogOptions: { label: string; value: string }[] = blogs.length
+    ? blogs.map((blog: any) => ({ label: blog.title, value: blog.id }))
+    : [{ label: "No blogs found", value: "" }];
+  const postBlogOptions =
+    currentBlog?.id && !blogOptions.some((option) => option.value === currentBlog.id)
+      ? [{ label: currentBlog.title, value: currentBlog.id }, ...blogOptions]
+      : blogOptions;
 
   useEffect(() => {
     const ids = productBlockOptions.map((block) => block.id);
@@ -724,6 +1003,14 @@ export default function ArticleDetail() {
       return;
     }
 
+    if (fetcherData.action === "post_created") {
+      setIsDirty(false);
+      setImageRemoved(false);
+      shopify.toast.show("Post created successfully");
+      navigate(`/app/blogs/${encodeURIComponent(fetcherData.article.id)}`);
+      return;
+    }
+
     if (fetcherData.action === "post_updated") {
       setIsDirty(false);
       setImageRemoved(false);
@@ -735,6 +1022,8 @@ export default function ArticleDetail() {
         setTags((fetcherData.article.tags || []).join(", "));
         setVisibility(fetcherData.article.isPublished ? "visible" : "hidden");
         setThemeTemplate(fetcherData.article.templateSuffix || "default");
+        setAuthorName(fetcherData.article.author?.name || defaultAuthorName);
+        setSelectedBlogId((current: string) => fetcherData.article.blog?.id || current);
         setFeaturedImageUrl(fetcherData.article.image?.url || "");
         setFeaturedImageAlt(fetcherData.article.image?.altText || "");
       }
@@ -747,14 +1036,23 @@ export default function ArticleDetail() {
 
     if (fetcherData.action === "seo_suggestions_applied") {
       setMetaTitle(fetcherData.metaTitle);
+      setMetaTitleTouched(true);
       setMetaDescription(fetcherData.metaDescription);
       setExcerpt(fetcherData.metaDescription);
+      if (fetcherData.imageAlt !== undefined) {
+        setFeaturedImageAlt(fetcherData.imageAlt);
+      }
       setIsDirty(true);
       shopify.toast.show("SEO suggestions applied. Save the post to publish them.");
     }
 
     if (fetcherData.action === "products_added") {
-      shopify.toast.show(`${fetcherData.count} product${fetcherData.count === 1 ? "" : "s"} added`);
+      const addedCount = Number(fetcherData.count || 0);
+      shopify.toast.show(
+        addedCount > 0
+          ? `${addedCount} product${addedCount === 1 ? "" : "s"} added`
+          : "Product selection unchanged",
+      );
     }
 
     if (fetcherData.action === "product_removed") {
@@ -769,16 +1067,30 @@ export default function ArticleDetail() {
       setShowStyleModal(false);
       shopify.toast.show("Product display style updated");
     }
-  }, [fetcherData, shopify]);
+  }, [defaultAuthorName, fetcherData, navigate, shopify]);
 
   useEffect(() => {
     if (!imageFetcherData) return;
 
     if (imageFetcherData.action !== "images_searched") return;
 
-    setImageFiles(imageFetcherData.images || []);
-    setImageFilesMessage(imageFetcherData.error || "");
-  }, [imageFetcherData]);
+    const query = imageFetcherData.query || "";
+    const result = {
+      images: imageFetcherData.images || [],
+      error: imageFetcherData.error || "",
+    };
+
+    imageRequestsInFlightRef.current.clear();
+    imageResultsCacheRef.current.set(query, result);
+    if (query === normalizedImageQuery) {
+      setImageFiles(result.images);
+      setImageFilesMessage(result.error);
+    }
+  }, [imageFetcherData, normalizedImageQuery]);
+
+  useEffect(() => {
+    imageFetcherSubmitRef.current = imageFetcher.submit;
+  }, [imageFetcher.submit]);
 
   useEffect(() => {
     if (!uploadFetcherData) return;
@@ -794,6 +1106,7 @@ export default function ArticleDetail() {
       uploadFetcherData.image,
       ...current.filter((image) => image.id !== uploadFetcherData.image.id),
     ]);
+    imageResultsCacheRef.current.clear();
     setSelectedImage(uploadFetcherData.image);
     setImageFilesMessage("");
     shopify.toast.show("Image uploaded");
@@ -801,16 +1114,27 @@ export default function ArticleDetail() {
 
   useEffect(() => {
     if (!isImageModalOpen) return;
+    const query = normalizedImageQuery;
+    const cached = imageResultsCacheRef.current.get(query);
+
+    if (cached) {
+      setImageFiles(cached.images);
+      setImageFilesMessage(cached.error);
+      return;
+    }
+
+    if (imageRequestsInFlightRef.current.has(query)) return;
 
     const timeout = window.setTimeout(() => {
       const formData = new FormData();
       formData.append("intent", "search_images");
-      formData.append("query", imageSearchQuery);
-      imageFetcher.submit(formData, { method: "POST" });
-    }, 250);
+      formData.append("query", query);
+      imageRequestsInFlightRef.current.add(query);
+      imageFetcherSubmitRef.current(formData, { method: "POST" });
+    }, query ? 300 : 0);
 
     return () => window.clearTimeout(timeout);
-  }, [imageSearchQuery, isImageModalOpen]);
+  }, [isImageModalOpen, normalizedImageQuery]);
 
   const markDirty = useCallback(() => setIsDirty(true), []);
 
@@ -884,21 +1208,25 @@ export default function ArticleDetail() {
     formData.append("intent", "update_post");
     formData.append("title", title);
     formData.append("handle", handle);
+    formData.append("blogId", selectedBlogId);
     formData.append("summary", excerpt);
     formData.append("body", body);
     formData.append("tags", tags);
     formData.append("visibility", visibility);
+    formData.append("author", authorName);
     formData.append("templateSuffix", themeTemplate);
-    formData.append("metaTitle", metaTitle);
+    formData.append("metaTitle", effectiveMetaTitle);
     formData.append("metaDescription", metaDescription || excerpt);
     formData.append("hasImage", activeImage ? "true" : "false");
     formData.append("imageUrl", featuredImageUrl);
     formData.append("imageAlt", featuredImageAlt);
     formData.append("removeImage", imageRemoved ? "true" : "false");
     formData.append("productCount", String(embeddedProducts.length));
+    formData.append("focusKeyword", focusKeyword);
     fetcher.submit(formData, { method: "POST" });
   }, [
     activeImage,
+    authorName,
     body,
     embeddedProducts.length,
     excerpt,
@@ -908,24 +1236,27 @@ export default function ArticleDetail() {
     handle,
     imageRemoved,
     metaDescription,
-    metaTitle,
+    effectiveMetaTitle,
+    selectedBlogId,
     tags,
     themeTemplate,
     title,
     visibility,
+    focusKeyword,
   ]);
 
   const handleRunSeoScan = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "analyze_seo");
     formData.append("articleTitle", title);
-    formData.append("metaTitle", metaTitle);
+    formData.append("metaTitle", effectiveMetaTitle);
     formData.append("metaDescription", metaDescription || excerpt);
     formData.append("handle", handle);
     formData.append("body", body);
     formData.append("hasImage", activeImage ? "true" : "false");
     formData.append("imageAlt", featuredImageAlt);
     formData.append("productCount", String(embeddedProducts.length));
+    formData.append("focusKeyword", focusKeyword);
     fetcher.submit(formData, { method: "POST" });
   }, [
     activeImage,
@@ -936,8 +1267,9 @@ export default function ArticleDetail() {
     featuredImageAlt,
     handle,
     metaDescription,
-    metaTitle,
+    effectiveMetaTitle,
     title,
+    focusKeyword,
   ]);
 
   const handleApplySeoSuggestions = useCallback(() => {
@@ -949,6 +1281,7 @@ export default function ArticleDetail() {
     formData.append("hasImage", activeImage ? "true" : "false");
     formData.append("imageAlt", featuredImageAlt);
     formData.append("productCount", String(embeddedProducts.length));
+    formData.append("focusKeyword", focusKeyword);
     fetcher.submit(formData, { method: "POST" });
   }, [
     activeImage,
@@ -958,14 +1291,24 @@ export default function ArticleDetail() {
     featuredImageAlt,
     handle,
     title,
+    focusKeyword,
   ]);
 
   const handleAddProducts = useCallback(async () => {
+    if (isNewPost) {
+      shopify.toast.show("Save this post before adding products.", { isError: true });
+      return;
+    }
+
     try {
       const selected = await shopify.resourcePicker({
         type: "product",
         multiple: true,
         action: "select",
+        selectionIds: selectedProductSelectionIds,
+        filter: {
+          variants: false,
+        },
       });
 
       if (!selected || selected.length === 0) return;
@@ -992,7 +1335,7 @@ export default function ArticleDetail() {
       console.error("Resource picker error:", error);
       shopify.toast.show("Could not open product picker", { isError: true });
     }
-  }, [article.blog.id, fetcher, handle, selectedProductBlock?.id, shopify, title]);
+  }, [article.blog.id, fetcher, handle, isNewPost, selectedProductBlock?.id, selectedProductSelectionIds, shopify, title]);
 
   const handleRemoveProduct = (recordId: string) => {
     const formData = new FormData();
@@ -1043,7 +1386,11 @@ export default function ArticleDetail() {
     setTags((article.tags || []).join(", "));
     setVisibility(article.isPublished ? "visible" : "hidden");
     setThemeTemplate(article.templateSuffix || "default");
-    setMetaTitle(seoData?.metaTitle || article.title || "");
+    setAuthorName(article.author?.name || defaultAuthorName);
+    setSelectedBlogId(article.blog?.id || blogs[0]?.id || "");
+    setHandleTouched(Boolean(article.handle));
+    setMetaTitle(getInitialMetaTitle(seoData?.metaTitle, article.title));
+    setMetaTitleTouched(isInitialMetaTitleCustom(seoData?.metaTitle, article.title));
     setMetaDescription(seoData?.metaDescription || stripHtml(article.summary || ""));
     setFeaturedImageUrl(article.image?.url || "");
     setFeaturedImageAlt(article.image?.altText || "");
@@ -1056,14 +1403,13 @@ export default function ArticleDetail() {
   const tabs = [
     { id: "content", content: "Content" },
     { id: "products", content: "Products", badge: String(embeddedProducts.length) },
-    { id: "seo", content: "SEO", badge: String(needsImprovement.length) },
     { id: "performance", content: "Performance" },
     { id: "history", content: "History" },
   ];
 
   return (
     <Page fullWidth>
-      <TitleBar title="Blog detail" />
+      <TitleBar title={isNewPost ? "Create post" : "Blog detail"} />
       <style>{DETAIL_STYLES}</style>
 
       <div className="bp-detail-shell">
@@ -1077,48 +1423,39 @@ export default function ArticleDetail() {
                 /
               </Text>
               <Text as="span" variant="bodySm" fontWeight="semibold">
-                {article.title}
+                {isNewPost ? "Create post" : article.title}
               </Text>
             </InlineStack>
 
             <BlockStack gap="200">
               <InlineStack gap="300" blockAlign="center">
                 <Text as="h1" variant="headingXl" fontWeight="bold">
-                  {title || article.title}
+                  {title || (isNewPost ? "Create post" : article.title)}
                 </Text>
-                <Badge tone={article.isPublished ? "success" : "attention"}>
-                  {article.isPublished ? "Published" : "Draft"}
+                <Badge tone={isVisible ? "success" : "attention"}>
+                  {isVisible ? "Published" : "Draft"}
                 </Badge>
               </InlineStack>
               <InlineStack gap="300" blockAlign="center">
                 <Text as="span" variant="bodySm" tone="subdued">
-                  {article.blog.title}
+                  {currentBlog?.title || "No blog selected"}
                 </Text>
                 <Text as="span" variant="bodySm" tone="subdued">
-                  {formatDateTime(article.publishedAt || article.updatedAt)}
+                  {isNewPost ? "Not saved yet" : formatDateTime(article.publishedAt || article.updatedAt)}
                 </Text>
                 <Text as="span" variant="bodySm" tone="subdued">
                   {embeddedProducts.length} products linked
                 </Text>
-                <InlineStack gap="100" blockAlign="center">
-                  <span className="bp-score-dot" />
-                  <Text as="span" variant="bodySm" tone="subdued">
-                    SEO score: {seoScore}/100
-                  </Text>
-                </InlineStack>
               </InlineStack>
             </BlockStack>
           </BlockStack>
 
-          <InlineStack gap="300" blockAlign="center">
-            <Button icon={ExternalIcon} url={livePostUrl} target="_blank">
-              Preview post
-            </Button>
+          <InlineStack gap="200" blockAlign="center">
             <Button loading={isSubmitting && fetcherData?.action === "seo_analyzed"} onClick={handleRunSeoScan}>
               Run SEO scan
             </Button>
-            <Button variant="primary" loading={isSubmitting && fetcherData?.action === "post_updated"} onClick={handleSave}>
-              Update post
+            <Button variant="primary" loading={isSubmitting && (fetcherData?.action === "post_updated" || fetcherData?.action === "post_created")} onClick={handleSave}>
+              {isNewPost ? "Create post" : "Update post"}
             </Button>
           </InlineStack>
         </div>
@@ -1126,8 +1463,8 @@ export default function ArticleDetail() {
         <InlineGrid columns={{ xs: 1, sm: 2, md: 5 }} gap="400">
           <MetricCard
             title="Status"
-            value={article.isPublished ? "Published" : "Draft"}
-            tone={article.isPublished ? "success" : "attention"}
+            value={isVisible ? "Published" : "Draft"}
+            tone={isVisible ? "success" : "attention"}
             icon={ViewIcon}
           />
           <MetricCard
@@ -1159,36 +1496,124 @@ export default function ArticleDetail() {
         </InlineGrid>
 
         <div className="bp-detail-tabs">
-          <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} />
+          <Card padding="0">
+            <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} />
+          </Card>
         </div>
 
-        <div className="bp-detail-main">
+        <div className={`bp-detail-main${selectedTab === 0 ? "" : " bp-detail-main--full"}`}>
           <main className="bp-detail-content">
             {selectedTab === 0 && (
-              <ShopifyContentEditor
-                title={title}
-                body={body}
-                excerpt={excerpt}
-                articleTitle={article.title}
-                onTitleChange={(value) => {
-                  setTitle(value);
-                  if (!metaTitle || metaTitle === article.title) setMetaTitle(value);
-                  markDirty();
-                }}
-                onBodyChange={(value) => {
-                  setBody(value);
-                  markDirty();
-                }}
-                onExcerptChange={(value) => {
-                  setExcerpt(value);
-                  if (!metaDescription || metaDescription === seoData?.metaDescription) {
-                    setMetaDescription(stripHtml(value));
-                  }
-                  markDirty();
-                }}
-                onOpenImagePicker={openEditorImagePicker}
-                onProductBlockInserted={handleProductBlockInserted}
-              />
+              <BlockStack gap="600">
+                <ShopifyContentEditor
+                  title={title}
+                  body={body}
+                  excerpt={excerpt}
+                  articleTitle={article.title}
+                  onTitleChange={(value) => {
+                    setTitle(value);
+                    if (!metaTitleTouched) setMetaTitle(value);
+                    if (isNewPost && !handleTouched) setHandle(slugifyKeyword(value));
+                    markDirty();
+                  }}
+                  onBodyChange={(value) => {
+                    setBody(value);
+                    markDirty();
+                  }}
+                  onExcerptChange={(value) => {
+                    setExcerpt(value);
+                    if (!metaDescription || metaDescription === seoData?.metaDescription) {
+                      setMetaDescription(stripHtml(value));
+                    }
+                    markDirty();
+                  }}
+                  onOpenImagePicker={openEditorImagePicker}
+                  onProductBlockInserted={handleProductBlockInserted}
+                />
+                
+                <div id="seo-card">
+                  <GoogleSnippetPreview
+                    title={effectiveMetaTitle || title || article.title}
+                    url={postPreviewUrl}
+                    description={metaDescription || stripHtml(article.summary || excerpt || "")}
+                    imageUrl={featuredImageUrl || activeImage || undefined}
+                    focusKeywords={focusKeyword.split(',').map(k => k.trim()).filter(Boolean)}
+                    onEdit={() => setIsEditingSnippet(!isEditingSnippet)}
+                  />
+                </div>
+
+                {isEditingSnippet && (
+                  <Card padding="400">
+                    <BlockStack gap="400">
+                      <Text as="h3" variant="headingMd" fontWeight="bold">
+                        SEO Metadata
+                      </Text>
+                      <TextField
+                        label="Meta Title"
+                        value={metaTitle}
+                        onChange={(value) => {
+                          setMetaTitleTouched(true);
+                          setMetaTitle(value);
+                          markDirty();
+                        }}
+                        autoComplete="off"
+                        helpText="Leave blank to use the article title."
+                      />
+                      <TextField
+                        label="URL Handle"
+                        value={handle}
+                        onChange={(value) => {
+                          setHandleTouched(true);
+                          setHandle(value);
+                          markDirty();
+                        }}
+                        onBlur={() => {
+                          const newHandle = handle.trim() || title;
+                          setHandleTouched(true);
+                          setHandle(slugifyKeyword(newHandle));
+                          markDirty();
+                        }}
+                        autoComplete="off"
+                        helpText="The unique identifier in the URL. Leave blank to auto-generate from title."
+                      />
+                      <TextField
+                        label="Meta Description"
+                        value={metaDescription}
+                        onChange={(value) => {
+                          setMetaDescription(value);
+                          setExcerpt(value);
+                          markDirty();
+                        }}
+                        autoComplete="off"
+                        multiline={3}
+                        helpText="Leave blank to use the article excerpt."
+                      />
+                    </BlockStack>
+                  </Card>
+                )}
+
+                <SeoSidebar
+                  seoScore={seoScore}
+                  issues={seoIssues}
+                  onFixIssues={() => {
+                    const el = document.getElementById("seo-card");
+                    if (el) el.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  isSubmitting={fetcher.state !== "idle"}
+                  focusKeyword={focusKeyword}
+                  onChangeFocusKeyword={(val) => {
+                    setFocusKeyword(val);
+                    markDirty();
+                  }}
+                  keywordScores={keywordScores}
+                />
+                
+                <RecommendationsCard
+                  issues={seoIssues.filter((i: any) => i.severity !== 'good')}
+                  onApplyAll={handleApplySeoSuggestions}
+                  onManageProducts={() => setSelectedTab(1)}
+                />
+              </BlockStack>
             )}
 
             {selectedTab === 1 && (
@@ -1205,95 +1630,81 @@ export default function ArticleDetail() {
             )}
 
             {selectedTab === 2 && (
-              <SeoPanel
-                metaTitle={metaTitle}
-                metaDescription={metaDescription}
-                seoScore={seoScore}
-                issues={seoIssues}
-                onMetaTitleChange={(value) => {
-                  setMetaTitle(value);
-                  markDirty();
-                }}
-                onMetaDescriptionChange={(value) => {
-                  setMetaDescription(value);
-                  setExcerpt(value);
-                  markDirty();
-                }}
-                onScan={handleRunSeoScan}
-                onApplySuggestions={handleApplySeoSuggestions}
-                isSubmitting={isSubmitting}
-              />
-            )}
-
-            {selectedTab === 3 && (
               <PerformancePanel products={embeddedProducts} stats={stats} />
             )}
 
-            {selectedTab === 4 && (
-              <HistoryPanel article={article} seoData={seoData} products={embeddedProducts} />
+            {selectedTab === 3 && (
+              <HistoryPanel
+                article={{ ...article, title: title || article.title || "Untitled post", blog: currentBlog || article.blog }}
+                seoData={seoData}
+                products={embeddedProducts}
+              />
             )}
           </main>
 
-          <aside className="bp-detail-sidebar">
-            {selectedTab === 0 ? (
-              <>
-                <SeoSidebar
-                  seoScore={seoScore}
-                  goodChecks={goodChecks}
-                  issues={needsImprovement}
-                  onFixIssues={handleApplySeoSuggestions}
-                  isSubmitting={isSubmitting}
-                />
-                <RecommendationsCard
-                  issues={needsImprovement}
-                  onApplyAll={handleApplySeoSuggestions}
-                  onManageProducts={() => setSelectedTab(1)}
-                />
-                <ProductsSummaryCard
-                  productCount={embeddedProducts.length}
-                  ctr={stats.ctr}
-                  revenue={stats.revenue}
-                  topProduct={topProduct}
-                  onManageProducts={() => setSelectedTab(1)}
-                />
-                <ArticleImageCard
-                  article={article}
-                  activeImage={activeImage}
-                  imageAlt={featuredImageAlt}
-                  onOpenImageModal={openImageModal}
-                  onRemoveImage={() => {
-                    setFeaturedImageUrl("");
-                    setFeaturedImageAlt("");
-                    setImageRemoved(true);
-                    markDirty();
-                  }}
-                />
-              </>
-            ) : (
-              <>
-                <SeoSidebar
-                  seoScore={seoScore}
-                  goodChecks={goodChecks}
-                  issues={needsImprovement}
-                  onFixIssues={handleApplySeoSuggestions}
-                  isSubmitting={isSubmitting}
-                />
-                <RecommendationsCard
-                  issues={needsImprovement}
-                  onApplyAll={handleApplySeoSuggestions}
-                  onManageProducts={() => setSelectedTab(1)}
-                />
-                <ProductsSummaryCard
-                  productCount={embeddedProducts.length}
-                  ctr={stats.ctr}
-                  revenue={stats.revenue}
-                  topProduct={topProduct}
-                  onManageProducts={() => setSelectedTab(1)}
-                />
-                <PublishingCard article={article} livePostUrl={livePostUrl} />
-              </>
-            )}
-          </aside>
+          {selectedTab === 0 && (
+            <aside className="bp-detail-sidebar">
+              <PublishingCard
+                article={{ ...article, isPublished: isVisible, blog: currentBlog, author: { name: authorName } }}
+                livePostUrl={postPreviewUrl}
+                isNewPost={isNewPost}
+              />
+              <ArticleImageCard
+                article={article}
+                activeImage={activeImage}
+                imageAlt={featuredImageAlt}
+                onOpenImageModal={openImageModal}
+                onImageAltChange={(value) => {
+                  setFeaturedImageAlt(value);
+                  markDirty();
+                }}
+                onRemoveImage={() => {
+                  setFeaturedImageUrl("");
+                  setFeaturedImageAlt("");
+                  setImageRemoved(true);
+                  markDirty();
+                }}
+              />
+              <PostSettingsCard
+                blogOptions={postBlogOptions}
+                selectedBlogId={selectedBlogId}
+                status={visibility}
+                authorName={authorName}
+                tags={tags}
+                themeTemplate={themeTemplate}
+                canChangeBlog
+                disabled={isSubmitting}
+                blogsAvailable={blogs.length > 0}
+                onBlogChange={(value) => {
+                  setSelectedBlogId(value);
+                  markDirty();
+                }}
+                onStatusChange={(value) => {
+                  setVisibility(value);
+                  markDirty();
+                }}
+                onAuthorChange={(value) => {
+                  setAuthorName(value);
+                  markDirty();
+                }}
+                onTagsChange={(value) => {
+                  setTags(value);
+                  markDirty();
+                }}
+                onTemplateChange={(value) => {
+                  setThemeTemplate(value);
+                  markDirty();
+                }}
+              />
+              <ProductsSummaryCard
+                productCount={embeddedProducts.length}
+                ctr={stats.ctr}
+                revenue={stats.revenue}
+                topProduct={topProduct}
+                onManageProducts={() => setSelectedTab(1)}
+              />
+            </aside>
+          )}
         </div>
       </div>
 
@@ -1391,7 +1802,7 @@ function MetricCard({
             <Icon source={icon} tone={tone as any} />
           </span>
         </InlineStack>
-        {typeof progress === "number" && <ProgressBar progress={progress} tone={progress >= 80 ? "success" : "critical"} />}
+        {typeof progress === "number" && <ProgressBar progress={progress} size="small" tone={progress >= 80 ? "success" : "critical"} />}
       </BlockStack>
     </Card>
   );
@@ -1602,7 +2013,7 @@ function ImagePickerModal({
                   >
                     <span className="bp-image-picker-check">{selected ? <Icon source={CheckIcon} tone="base" /> : null}</span>
                     <span className="bp-image-picker-thumb">
-                      <img src={image.url} alt={image.alt || image.title} />
+                      <img src={image.thumbnailUrl || image.url} alt={image.alt || image.title} loading="lazy" decoding="async" />
                     </span>
                     <span className="bp-image-picker-title">{compactImageTitle(image.title)}</span>
                     <span className="bp-image-picker-meta">{imageFormatFromUrl(image.url)}</span>
@@ -1628,12 +2039,14 @@ function ArticleImageCard({
   activeImage,
   imageAlt,
   onOpenImageModal,
+  onImageAltChange,
   onRemoveImage,
 }: {
   article: any;
   activeImage: string | null | undefined;
   imageAlt: string;
   onOpenImageModal: () => void;
+  onImageAltChange: (value: string) => void;
   onRemoveImage: () => void;
 }) {
   return (
@@ -1647,6 +2060,14 @@ function ArticleImageCard({
             <div className="bp-native-image-preview">
               <img src={activeImage} alt={imageAlt || article.title} />
             </div>
+            <TextField
+              label="Image alt text"
+              value={imageAlt}
+              onChange={onImageAltChange}
+              autoComplete="off"
+              placeholder={article.title || "Describe the image"}
+              helpText="Briefly describe the image for screen readers and SEO."
+            />
             <InlineStack gap="200" align="end">
               <Button onClick={onOpenImageModal}>Change</Button>
               <Button tone="critical" onClick={onRemoveImage}>
@@ -1693,6 +2114,10 @@ function RichArticleEditor({
   const [linkText, setLinkText] = useState("");
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
+  const [viewHtml, setViewHtml] = useState(false);
+  const [alignPopoverActive, setAlignPopoverActive] = useState(false);
+  const [colorPopoverActive, setColorPopoverActive] = useState(false);
+  const [currentAlignment, setCurrentAlignment] = useState<"justifyLeft" | "justifyCenter" | "justifyRight">("justifyLeft");
   const [imageEditModalOpen, setImageEditModalOpen] = useState(false);
   const [editImageSize, setEditImageSize] = useState<EditorImageSize>("original");
   const [editImageAlt, setEditImageAlt] = useState("");
@@ -1708,12 +2133,14 @@ function RichArticleEditor({
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor || value === lastHtmlRef.current) return;
-    editor.innerHTML = value || "";
-    lastHtmlRef.current = value;
+    const cleanedValue = (value || "").replace(/\s+(bis_[a-z_]+|data-[a-z-]*gramm[a-z-]*|data-lt-tmp-id|spellcheck|data-gr-ext-installed|data-new-gr-c-s-check-loaded)="[^"]*"/ig, '');
+    editor.innerHTML = cleanedValue;
+    lastHtmlRef.current = cleanedValue;
   }, [value]);
 
   const emitChange = useCallback(() => {
-    const next = editorRef.current?.innerHTML || "";
+    const raw = editorRef.current?.innerHTML || "";
+    const next = raw.replace(/\s+(bis_[a-z_]+|data-[a-z-]*gramm[a-z-]*|data-lt-tmp-id|spellcheck|data-gr-ext-installed|data-new-gr-c-s-check-loaded)="[^"]*"/ig, '');
     lastHtmlRef.current = next;
     onChange(next);
   }, [onChange]);
@@ -1767,9 +2194,52 @@ function RichArticleEditor({
   );
 
   const openLinkModal = () => {
+    let currentText = window.getSelection()?.toString() || "";
+    let currentUrl = "";
+
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      let foundAnchor: HTMLAnchorElement | null = null;
+      
+      let node: Node | null = range.commonAncestorContainer;
+      while (node && node.nodeName !== 'A' && node !== editorRef.current) {
+        node = node.parentNode;
+      }
+      
+      if (node && node.nodeName === 'A') {
+        foundAnchor = node as HTMLAnchorElement;
+      } else {
+        node = selection.anchorNode;
+        while (node && node.nodeName !== 'A' && node !== editorRef.current) {
+          node = node.parentNode;
+        }
+        if (node && node.nodeName === 'A') {
+          foundAnchor = node as HTMLAnchorElement;
+        } else if (range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE) {
+          const aTags = (range.commonAncestorContainer as HTMLElement).querySelectorAll('a');
+          for (let i = 0; i < aTags.length; i++) {
+            if (range.intersectsNode(aTags[i])) {
+              foundAnchor = aTags[i];
+              break;
+            }
+          }
+        }
+      }
+
+      if (foundAnchor) {
+        currentUrl = foundAnchor.getAttribute('href') || "";
+        const newRange = document.createRange();
+        newRange.selectNode(foundAnchor);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+        currentText = selection.toString();
+      }
+    }
+    
     saveSelection();
-    setLinkText(window.getSelection()?.toString() || "");
-    setLinkUrl("");
+    setLinkText(currentText);
+    setLinkUrl(currentUrl);
     setLinkModalOpen(true);
   };
 
@@ -1777,8 +2247,76 @@ function RichArticleEditor({
     const href = normalizeEditorUrl(linkUrl);
     if (!href) return;
 
-    const text = linkText.trim() || linkUrl.trim();
-    insertHtml(`<a href="${escapeAttribute(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`);
+    const originalText = savedSelectionRef.current ? savedSelectionRef.current.toString() : "";
+    restoreSelection();
+    
+    const selection = window.getSelection();
+    let existingAnchor: HTMLAnchorElement | null = null;
+    
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      let node: Node | null = range.commonAncestorContainer;
+      while (node && node.nodeName !== 'A' && node !== editorRef.current) {
+        node = node.parentNode;
+      }
+      if (node && node.nodeName === 'A') {
+        existingAnchor = node as HTMLAnchorElement;
+      } else if (range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE) {
+        const children = (range.commonAncestorContainer as HTMLElement).childNodes;
+        for (let i = range.startOffset; i < range.endOffset; i++) {
+          if (children[i] && children[i].nodeName === 'A') {
+            existingAnchor = children[i] as HTMLAnchorElement;
+            break;
+          }
+        }
+      }
+    }
+
+    if (existingAnchor) {
+      existingAnchor.setAttribute('href', href);
+      existingAnchor.setAttribute('target', '_blank');
+      existingAnchor.setAttribute('rel', 'noopener noreferrer');
+      
+      if (linkText.trim() !== "" && linkText !== originalText) {
+         existingAnchor.textContent = linkText;
+      }
+      emitChange();
+      saveSelection();
+    } else {
+      if (linkText.trim() !== "" && linkText !== originalText) {
+        insertHtml(`<a href="${escapeAttribute(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkText)}</a>`);
+      } else {
+        const editor = editorRef.current;
+        if (editor) {
+          let hasImage = false;
+          if (selection && selection.rangeCount > 0) {
+            const div = document.createElement("div");
+            div.appendChild(selection.getRangeAt(0).cloneContents());
+            if (div.querySelector('img')) {
+              hasImage = true;
+            }
+          }
+          
+          if (hasImage && savedSelectionRef.current) {
+            const div = document.createElement("div");
+            div.appendChild(savedSelectionRef.current.cloneContents());
+            insertHtml(`<a href="${escapeAttribute(href)}" target="_blank" rel="noopener noreferrer">${div.innerHTML}</a>`);
+          } else {
+            document.execCommand("createLink", false, href);
+            const links = editor.querySelectorAll("a");
+            links.forEach(a => {
+              if (a.getAttribute("href") === href && !a.getAttribute("target")) {
+                a.setAttribute("target", "_blank");
+                a.setAttribute("rel", "noopener noreferrer");
+              }
+            });
+            emitChange();
+            saveSelection();
+          }
+        }
+      }
+    }
+
     setLinkModalOpen(false);
     setLinkUrl("");
     setLinkText("");
@@ -1852,6 +2390,26 @@ function RichArticleEditor({
     },
     [emitChange, saveSelection],
   );
+
+  const handleEditorClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    
+    const aTag = target?.closest("a") as HTMLAnchorElement | null;
+    if (aTag) {
+      event.preventDefault();
+    }
+
+    const image = target?.closest("img") as HTMLImageElement | null;
+    
+    if (image && editorRef.current?.contains(image) && !image.classList.contains("bp-product-marker")) {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNode(image);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      saveSelection();
+    }
+  }, [saveSelection]);
 
   const handleEditorDoubleClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
@@ -1939,8 +2497,12 @@ function RichArticleEditor({
             onChange={(event) => runCommand("formatBlock", event.currentTarget.value)}
           >
             <option value="p">Paragraph</option>
+            <option value="h1">Heading 1</option>
             <option value="h2">Heading 2</option>
             <option value="h3">Heading 3</option>
+            <option value="h4">Heading 4</option>
+            <option value="h5">Heading 5</option>
+            <option value="h6">Heading 6</option>
             <option value="blockquote">Quote</option>
           </select>
           <span className="bp-editor-separator" />
@@ -1951,7 +2513,7 @@ function RichArticleEditor({
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => runCommand("bold")}
           >
-            B
+            <Icon source={TextBoldIcon} tone="base" />
           </button>
           <button
             type="button"
@@ -1960,7 +2522,7 @@ function RichArticleEditor({
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => runCommand("italic")}
           >
-            <em>I</em>
+            <Icon source={TextItalicIcon} tone="base" />
           </button>
           <button
             type="button"
@@ -1969,37 +2531,83 @@ function RichArticleEditor({
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => runCommand("underline")}
           >
-            <u>U</u>
+            <Icon source={TextUnderlineIcon} tone="base" />
           </button>
-          <select
-            className="bp-editor-icon-select"
-            aria-label="Text color"
-            defaultValue=""
-            onMouseDown={saveSelection}
-            onChange={(event) => {
-              applyTextColor(event.currentTarget.value);
-              event.currentTarget.value = "";
-            }}
+          <Popover
+            active={colorPopoverActive}
+            activator={
+              <button
+                type="button"
+                className="bp-editor-icon-button"
+                style={{ padding: '0 4px', width: 'auto' }}
+                title="Text color"
+                onMouseDown={(event) => { event.preventDefault(); saveSelection(); }}
+                onClick={() => setColorPopoverActive(!colorPopoverActive)}
+              >
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <Icon source={TextColorIcon} tone="base" />
+                  <Icon source={ChevronDownIcon} tone="subdued" />
+                </div>
+              </button>
+            }
+            onClose={() => setColorPopoverActive(false)}
           >
-            <option value="">A</option>
-            <option value="#202223">Black</option>
-            <option value="#2563eb">Blue</option>
-            <option value="#16a34a">Green</option>
-            <option value="#d97706">Orange</option>
-            <option value="#dc2626">Red</option>
-          </select>
+            <ActionList
+              actionRole="menuitem"
+              items={[
+                { content: "Black", onAction: () => { applyTextColor("#202223"); setColorPopoverActive(false); } },
+                { content: "Blue", onAction: () => { applyTextColor("#2563eb"); setColorPopoverActive(false); } },
+                { content: "Green", onAction: () => { applyTextColor("#16a34a"); setColorPopoverActive(false); } },
+                { content: "Orange", onAction: () => { applyTextColor("#d97706"); setColorPopoverActive(false); } },
+                { content: "Red", onAction: () => { applyTextColor("#dc2626"); setColorPopoverActive(false); } },
+              ]}
+            />
+          </Popover>
           <span className="bp-editor-separator" />
-          <select
-            className="bp-editor-icon-select bp-editor-align-select"
-            aria-label="Text alignment"
-            defaultValue="justifyLeft"
-            onMouseDown={saveSelection}
-            onChange={(event) => applyAlignment(event.currentTarget.value)}
+          <Popover
+            active={alignPopoverActive}
+            activator={
+              <button
+                type="button"
+                className="bp-editor-icon-button"
+                style={{ padding: '0 4px', width: 'auto' }}
+                title="Text alignment"
+                onMouseDown={(event) => { event.preventDefault(); saveSelection(); }}
+                onClick={() => setAlignPopoverActive(!alignPopoverActive)}
+              >
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <Icon source={
+                    currentAlignment === "justifyCenter" ? TextAlignCenterIcon :
+                    currentAlignment === "justifyRight" ? TextAlignRightIcon :
+                    TextAlignLeftIcon
+                  } tone="base" />
+                  <Icon source={ChevronDownIcon} tone="subdued" />
+                </div>
+              </button>
+            }
+            onClose={() => setAlignPopoverActive(false)}
           >
-            <option value="justifyLeft">Left</option>
-            <option value="justifyCenter">Center</option>
-            <option value="justifyRight">Right</option>
-          </select>
+            <ActionList
+              actionRole="menuitem"
+              items={[
+                {
+                  icon: TextAlignLeftIcon,
+                  content: "Left",
+                  onAction: () => { applyAlignment("justifyLeft"); setCurrentAlignment("justifyLeft"); setAlignPopoverActive(false); },
+                },
+                {
+                  icon: TextAlignCenterIcon,
+                  content: "Center",
+                  onAction: () => { applyAlignment("justifyCenter"); setCurrentAlignment("justifyCenter"); setAlignPopoverActive(false); },
+                },
+                {
+                  icon: TextAlignRightIcon,
+                  content: "Right",
+                  onAction: () => { applyAlignment("justifyRight"); setCurrentAlignment("justifyRight"); setAlignPopoverActive(false); },
+                },
+              ]}
+            />
+          </Popover>
           <button
             type="button"
             title="Bulleted list"
@@ -2007,7 +2615,7 @@ function RichArticleEditor({
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => runCommand("insertUnorderedList")}
           >
-            List
+            <Icon source={ListBulletedIcon} tone="base" />
           </button>
           <span className="bp-editor-separator" />
           <button
@@ -2047,30 +2655,31 @@ function RichArticleEditor({
             <Icon source={DataTableIcon} tone="base" />
           </button>
           {showProductButton && (
-            <button
-              type="button"
-              className="bp-editor-icon-button bp-editor-products-button"
-              title="Insert products marker"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={insertProductBlock}
-            >
-              Products
-            </button>
+            <>
+              <span className="bp-editor-separator" />
+              <button
+                type="button"
+                className="bp-editor-icon-button bp-editor-products-button"
+                title="Insert products marker"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={insertProductBlock}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Icon source={ProductIcon} tone="base" /> Products
+                </div>
+              </button>
+            </>
           )}
-          <span className="bp-editor-separator" />
           <button
             type="button"
             className="bp-editor-icon-button"
-            title="More"
+            style={{ 
+              backgroundColor: viewHtml ? 'var(--p-color-bg-surface-active)' : 'transparent',
+              marginLeft: 'auto'
+            }}
+            title="Toggle HTML View"
             onMouseDown={(event) => event.preventDefault()}
-          >
-            <Icon source={MenuHorizontalIcon} tone="base" />
-          </button>
-          <button
-            type="button"
-            className="bp-editor-icon-button bp-editor-code-button"
-            title="HTML source"
-            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setViewHtml(!viewHtml)}
           >
             <Icon source={CodeIcon} tone="base" />
           </button>
@@ -2078,7 +2687,7 @@ function RichArticleEditor({
         <div
           ref={editorRef}
           className="bp-editor-canvas"
-          style={{ minHeight }}
+          style={{ minHeight, display: viewHtml ? 'none' : 'block' }}
           contentEditable
           suppressContentEditableWarning
           role="textbox"
@@ -2086,12 +2695,32 @@ function RichArticleEditor({
           data-placeholder={placeholder}
           onKeyDown={handleEditorKeyDown}
           onDoubleClick={handleEditorDoubleClick}
+          onClick={handleEditorClick}
           onInput={emitChange}
           onBlur={emitChange}
           onKeyUp={saveSelection}
           onMouseUp={saveSelection}
-          onFocus={saveSelection}
         />
+        {viewHtml && (
+          <textarea
+            className="bp-editor-html-textarea"
+            style={{ 
+              minHeight, 
+              width: '100%', 
+              border: 'none', 
+              resize: 'vertical', 
+              padding: '16px', 
+              fontFamily: 'monospace', 
+              fontSize: '14px',
+              outline: 'none',
+              lineHeight: '1.5',
+              backgroundColor: '#fafafa',
+              color: '#333'
+            }}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        )}
       </div>
 
       <Modal
@@ -2247,7 +2876,6 @@ function RichArticleEditor({
                 <div className="bp-editor-spacing-bottom">
                   <TextField
                     label="Bottom"
-                    type="number"
                     value={editImageSpacing.bottom}
                     onChange={(value) => updateEditImageSpacing("bottom", value)}
                     autoComplete="off"
@@ -2308,15 +2936,21 @@ function ProductsPanel({
 
       <Card padding="400">
         <InlineGrid columns={{ xs: 1, md: "minmax(260px, 360px) 1fr" }} gap="400">
-          <Select
-            label="Product block"
-            options={blocks.map((block) => ({
-              label: `${block.label} (${block.productCount})`,
-              value: block.id,
-            }))}
-            value={selectedBlockId}
-            onChange={onBlockChange}
-          />
+          <BlockStack gap="100">
+            <Text as="span" variant="bodySm" fontWeight="semibold">
+              Product block
+            </Text>
+            <Select
+              label="Product block"
+              labelHidden
+              options={blocks.map((block) => ({
+                label: `${block.label} (${block.productCount})`,
+                value: block.id,
+              }))}
+              value={selectedBlockId}
+              onChange={onBlockChange}
+            />
+          </BlockStack>
           <BlockStack gap="100">
             <Text as="span" variant="bodySm" fontWeight="semibold">
               Marker
@@ -2327,61 +2961,64 @@ function ProductsPanel({
       </Card>
 
       <Card padding="0">
-        <IndexTable
-          resourceName={{ singular: "product", plural: "products" }}
-          itemCount={products.length}
-          headings={[
-            { title: "" },
-            { title: "Product" },
-            { title: "Price" },
-            { title: "Clicks" },
-            { title: "CTR" },
-            { title: "Style" },
-            { title: "Actions" },
-          ]}
-          selectable={false}
-        >
-          {products.map((product, index) => (
-            <IndexTable.Row id={product.id} key={product.id} position={index}>
-              <IndexTable.Cell>
-                <Thumbnail source={product.productImage || ImageIcon} alt={product.productTitle} size="small" />
-              </IndexTable.Cell>
-              <IndexTable.Cell>
-                <Text as="span" variant="bodyMd" fontWeight="semibold">
-                  {product.productTitle}
-                </Text>
-              </IndexTable.Cell>
-              <IndexTable.Cell>{formatProductPrice(product.productPrice)}</IndexTable.Cell>
-              <IndexTable.Cell>{product.clicks}</IndexTable.Cell>
-              <IndexTable.Cell>{formatPercent(product.ctr)}</IndexTable.Cell>
-              <IndexTable.Cell>
-                <Button size="micro" onClick={() => onOpenStyleModal(product.id, product.displayStyle)}>
-                  {styleLabel(product.displayStyle)}
-                </Button>
-              </IndexTable.Cell>
-              <IndexTable.Cell>
-                <InlineStack wrap={false} gap="200" blockAlign="center">
-                  <ButtonGroup variant="segmented">
-                    <Button
-                      size="micro"
-                      icon={ArrowUpIcon}
-                      disabled={index === 0}
-                      onClick={() => onMoveProduct(index, "up")}
-                    />
-                    <Button
-                      size="micro"
-                      icon={ArrowDownIcon}
-                      disabled={index === products.length - 1}
-                      onClick={() => onMoveProduct(index, "down")}
-                    />
-                  </ButtonGroup>
-                  <Button size="micro" icon={DeleteIcon} tone="critical" onClick={() => onRemoveProduct(product.id)} />
-                </InlineStack>
-              </IndexTable.Cell>
-            </IndexTable.Row>
-          ))}
-        </IndexTable>
-        {products.length === 0 && (
+        {products.length > 0 ? (
+          <IndexTable
+            resourceName={{ singular: "product", plural: "products" }}
+            itemCount={products.length}
+            headings={[
+              { title: "" },
+              { title: "Product" },
+              { title: "Price" },
+              { title: "Clicks" },
+              { title: "CTR" },
+              { title: "Style" },
+              { title: "Actions", alignment: "end" },
+            ]}
+            selectable={false}
+          >
+            {products.map((product, index) => (
+              <IndexTable.Row id={product.id} key={product.id} position={index}>
+                <IndexTable.Cell>
+                  <Thumbnail source={product.productImage || ImageIcon} alt={product.productTitle} size="small" />
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  <Text as="span" variant="bodyMd" fontWeight="semibold">
+                    {product.productTitle}
+                  </Text>
+                </IndexTable.Cell>
+                <IndexTable.Cell>{formatProductPrice(product.productPrice)}</IndexTable.Cell>
+                <IndexTable.Cell>{product.clicks}</IndexTable.Cell>
+                <IndexTable.Cell>{formatPercent(product.ctr)}</IndexTable.Cell>
+                <IndexTable.Cell>
+                  <Button size="micro" onClick={() => onOpenStyleModal(product.id, product.displayStyle)}>
+                    {styleLabel(product.displayStyle)}
+                  </Button>
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <InlineStack wrap={false} gap="200" blockAlign="center">
+                    <ButtonGroup variant="segmented">
+                      <Button
+                        size="micro"
+                        icon={ArrowUpIcon}
+                        disabled={index === 0}
+                        onClick={() => onMoveProduct(index, "up")}
+                      />
+                      <Button
+                        size="micro"
+                        icon={ArrowDownIcon}
+                        disabled={index === products.length - 1}
+                        onClick={() => onMoveProduct(index, "down")}
+                      />
+                    </ButtonGroup>
+                    <Button size="micro" icon={DeleteIcon} tone="critical" onClick={() => onRemoveProduct(product.id)} />
+                    </InlineStack>
+                  </div>
+                </IndexTable.Cell>
+              </IndexTable.Row>
+            ))}
+          </IndexTable>
+        ) : (
           <Box padding="600">
             <EmptyState
               heading="No products linked yet"
@@ -2392,106 +3029,6 @@ function ProductsPanel({
             </EmptyState>
           </Box>
         )}
-      </Card>
-    </BlockStack>
-  );
-}
-
-function SeoPanel({
-  metaTitle,
-  metaDescription,
-  seoScore,
-  issues,
-  onMetaTitleChange,
-  onMetaDescriptionChange,
-  onScan,
-  onApplySuggestions,
-  isSubmitting,
-}: {
-  metaTitle: string;
-  metaDescription: string;
-  seoScore: number;
-  issues: SeoIssue[];
-  onMetaTitleChange: (value: string) => void;
-  onMetaDescriptionChange: (value: string) => void;
-  onScan: () => void;
-  onApplySuggestions: () => void;
-  isSubmitting: boolean;
-}) {
-  return (
-    <BlockStack gap="500">
-      <InlineStack align="space-between" blockAlign="center">
-        <BlockStack gap="100">
-          <Text as="h2" variant="headingLg" fontWeight="bold">
-            SEO optimizer
-          </Text>
-          <Text as="span" variant="bodySm" tone="subdued">
-            Tune metadata and scan for content issues before publishing changes.
-          </Text>
-        </BlockStack>
-        <InlineStack gap="200">
-          <Button onClick={onApplySuggestions} loading={isSubmitting}>
-            Apply suggestions
-          </Button>
-          <Button variant="primary" onClick={onScan} loading={isSubmitting}>
-            Run scan
-          </Button>
-        </InlineStack>
-      </InlineStack>
-
-      <InlineGrid columns={{ xs: 1, md: "220px 1fr" }} gap="400">
-        <Card padding="400">
-          <BlockStack gap="300" inlineAlign="center">
-            <ScoreRing score={seoScore} />
-            <Text as="span" variant="bodySm" tone="subdued">
-              Current SEO score
-            </Text>
-          </BlockStack>
-        </Card>
-        <Card padding="400">
-          <BlockStack gap="400">
-            <TextField
-              label="Meta title"
-              value={metaTitle}
-              maxLength={60}
-              showCharacterCount
-              onChange={onMetaTitleChange}
-              autoComplete="off"
-            />
-            <TextField
-              label="Meta description"
-              value={metaDescription}
-              multiline={3}
-              maxLength={160}
-              showCharacterCount
-              onChange={onMetaDescriptionChange}
-              autoComplete="off"
-            />
-          </BlockStack>
-        </Card>
-      </InlineGrid>
-
-      <Card padding="0">
-        <Box padding="400">
-          <Text as="h3" variant="headingMd" fontWeight="bold">
-            Scan results
-          </Text>
-        </Box>
-        <Divider />
-        <BlockStack gap="0">
-          {issues.length === 0 ? (
-            <Box padding="400">
-              <InlineStack gap="200" blockAlign="center">
-                <Icon source={CheckIcon} tone="success" />
-                <Text as="span" variant="bodyMd">
-                  No SEO issues found.
-                </Text>
-              </InlineStack>
-            </Box>
-          ) : (
-            issues.map((issue) => <IssueRow issue={issue} key={issue.type} />)
-          )}
-        </BlockStack>
       </Card>
     </BlockStack>
   );
@@ -2619,68 +3156,157 @@ function HistoryPanel({ article, seoData, products }: { article: any; seoData: a
 
 function SeoSidebar({
   seoScore,
-  goodChecks,
   issues,
   onFixIssues,
   isSubmitting,
+  focusKeyword,
+  onChangeFocusKeyword,
+  keywordScores,
 }: {
   seoScore: number;
-  goodChecks: string[];
   issues: SeoIssue[];
   onFixIssues: () => void;
   isSubmitting: boolean;
+  focusKeyword: string;
+  onChangeFocusKeyword: (val: string) => void;
+  keywordScores: Record<string, "success" | "warning" | "critical">;
 }) {
+  const categories = {
+    basic: "Basic SEO",
+    additional: "Additional",
+    title_readability: "Title Readability",
+    content_readability: "Content Readability"
+  };
+
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({
+    basic: false,
+    additional: false,
+    title_readability: false,
+    content_readability: false
+  });
+
+  const toggleCategory = (cat: string) => {
+    setOpenCategories(prev => ({ ...prev, [cat]: !prev[cat] }));
+  };
+
+  const [inputValue, setInputValue] = useState("");
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = inputValue.trim();
+      if (val) {
+        const currentKeywords = focusKeyword.split(',').map(k => k.trim()).filter(Boolean);
+        if (!currentKeywords.includes(val)) {
+          const newKeywords = [...currentKeywords, val];
+          onChangeFocusKeyword(newKeywords.join(', '));
+        }
+        setInputValue("");
+      }
+    }
+  };
+
+  const handleRemove = (kwToRemove: string) => {
+    const currentKeywords = focusKeyword.split(',').map(k => k.trim()).filter(Boolean);
+    const newKeywords = currentKeywords.filter(kw => kw !== kwToRemove);
+    onChangeFocusKeyword(newKeywords.join(', '));
+  };
+
   return (
-    <Card padding="400">
-      <BlockStack gap="400">
-        <InlineStack align="space-between">
-          <Text as="h3" variant="headingMd" fontWeight="bold">
-            SEO score
-          </Text>
-          <Badge tone={seoScore >= 80 ? "success" : seoScore >= 60 ? "warning" : "critical"}>
-            {seoScore >= 80 ? "Good" : seoScore >= 60 ? "Needs work" : "Critical"}
-          </Badge>
-        </InlineStack>
+    <BlockStack gap="400">
+      <Card padding="400">
+        <BlockStack gap="400">
+          <div onKeyDown={handleKeyDown}>
+            <TextField
+              label="Focus Keyword"
+              value={inputValue}
+              onChange={setInputValue}
+              autoComplete="off"
+              placeholder="Type keyword and press Enter"
+            />
+          </div>
+          {focusKeyword && focusKeyword.trim().length > 0 && (
+            <InlineStack gap="200">
+              {focusKeyword.split(',').map(k => k.trim()).filter(Boolean).map((kw, index) => {
+                const score = keywordScores[kw.toLowerCase()] || "critical";
+                return (
+                  <span key={index} style={{ cursor: 'pointer', display: 'inline-block' }} onClick={() => handleRemove(kw)} title="Click to remove">
+                    <Badge tone={score === "success" ? "success" : score === "warning" ? "warning" : "critical"}>
+                      {`${kw} ✕`}
+                    </Badge>
+                  </span>
+                );
+              })}
+            </InlineStack>
+          )}
+        </BlockStack>
+      </Card>
 
-        <InlineStack gap="400" wrap={false} blockAlign="center">
-          <ScoreRing score={seoScore} />
-          <InlineGrid columns={2} gap="400">
-            <BlockStack gap="150">
-              <Text as="span" variant="bodySm" fontWeight="semibold" tone="success">
-                Good
-              </Text>
-              {goodChecks.slice(0, 4).map((check) => (
-                <InlineStack key={check} gap="100" blockAlign="center" wrap={false}>
-                  <Icon source={CheckIcon} tone="success" />
-                  <Text as="span" variant="bodySm">
-                    {check}
-                  </Text>
-                </InlineStack>
-              ))}
-            </BlockStack>
-            <BlockStack gap="150">
-              <Text as="span" variant="bodySm" fontWeight="semibold">
-                Needs improvement
-              </Text>
-              {issues.slice(0, 4).map((issue) => (
-                <InlineStack key={issue.type} gap="100" blockAlign="center" wrap={false}>
-                  <span className="bp-warning-dot" />
-                  <Text as="span" variant="bodySm">
-                    {issue.label}
-                  </Text>
-                </InlineStack>
-              ))}
-            </BlockStack>
-          </InlineGrid>
-        </InlineStack>
+      <Card padding="400">
+        <BlockStack gap="400">
+          <InlineStack align="space-between">
+            <Text as="h3" variant="headingMd" fontWeight="bold">
+              SEO score
+            </Text>
+            <Badge tone={seoScore >= 80 ? "success" : seoScore >= 60 ? "warning" : "critical"}>
+              {`${seoScore}/100`}
+            </Badge>
+          </InlineStack>
 
-        <InlineStack align="end">
-          <Button size="micro" onClick={onFixIssues} loading={isSubmitting}>
-            Fix SEO issues
-          </Button>
-        </InlineStack>
-      </BlockStack>
-    </Card>
+          {Object.entries(categories).map(([cat, title]) => {
+            const catIssues = issues.filter(i => i.category === cat);
+            if (catIssues.length === 0) return null;
+            const errorCount = catIssues.filter(i => i.severity !== 'good').length;
+            
+            return (
+              <BlockStack key={cat} gap="200" inlineAlign="stretch">
+                <div 
+                  onClick={() => toggleCategory(cat)}
+                  style={{ display: 'flex', width: '100%', flex: 1, alignItems: 'center', cursor: 'pointer', padding: '4px 0' }}
+                >
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="span" variant="bodyMd" fontWeight="semibold">{title}</Text>
+                    {errorCount > 0 ? (
+                      <Badge tone="critical">{`${errorCount} ${errorCount === 1 ? 'Error' : 'Errors'}`}</Badge>
+                    ) : (
+                      <Badge tone="success">✓ All Good</Badge>
+                    )}
+                  </InlineStack>
+                  <div style={{ marginLeft: 'auto' }}>
+                    <Icon source={openCategories[cat] ? ChevronUpIcon : ChevronDownIcon} tone="subdued" />
+                  </div>
+                </div>
+                <Collapsible
+                  open={openCategories[cat]}
+                  id={`collapsible-${cat}`}
+                  transition={{ duration: '150ms', timingFunction: 'ease' }}
+                >
+                  <BlockStack gap="200">
+                    {catIssues.map((issue, idx) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                        <div style={{ flexShrink: 0 }}>
+                          <Icon source={issue.severity === 'good' ? CheckIcon : issue.severity === 'critical' ? AlertCircleIcon : InfoIcon} 
+                                tone={issue.severity === 'good' ? 'success' : issue.severity === 'critical' ? 'critical' : 'warning'} />
+                        </div>
+                        <div style={{ flex: 1, textAlign: 'left' }}>
+                          <Text as="span" variant="bodySm">{issue.message}</Text>
+                        </div>
+                      </div>
+                    ))}
+                  </BlockStack>
+                </Collapsible>
+              </BlockStack>
+            );
+          })}
+
+          <InlineStack align="end">
+            <Button size="micro" onClick={onFixIssues} loading={isSubmitting}>
+              Scroll up to edit SEO
+            </Button>
+          </InlineStack>
+        </BlockStack>
+      </Card>
+    </BlockStack>
   );
 }
 
@@ -2801,22 +3427,107 @@ function ProductsSummaryCard({
   );
 }
 
-function PublishingCard({ article, livePostUrl }: { article: any; livePostUrl: string }) {
+function PostSettingsCard({
+  blogOptions,
+  selectedBlogId,
+  status,
+  authorName,
+  tags,
+  themeTemplate,
+  canChangeBlog,
+  disabled,
+  blogsAvailable,
+  onBlogChange,
+  onStatusChange,
+  onAuthorChange,
+  onTagsChange,
+  onTemplateChange,
+}: {
+  blogOptions: { label: string; value: string }[];
+  selectedBlogId: string;
+  status: string;
+  authorName: string;
+  tags: string;
+  themeTemplate: string;
+  canChangeBlog: boolean;
+  disabled: boolean;
+  blogsAvailable: boolean;
+  onBlogChange: (value: string) => void;
+  onStatusChange: (value: string) => void;
+  onAuthorChange: (value: string) => void;
+  onTagsChange: (value: string) => void;
+  onTemplateChange: (value: string) => void;
+}) {
   return (
     <Card padding="400">
       <BlockStack gap="400">
         <Text as="h3" variant="headingMd" fontWeight="bold">
-          Publishing
+          Post settings
         </Text>
+        <Select
+          label="Blog"
+          options={blogOptions}
+          value={selectedBlogId}
+          onChange={onBlogChange}
+          disabled={!canChangeBlog || disabled || !blogsAvailable}
+        />
+        <Select
+          label="Status"
+          options={[
+            { label: "Draft", value: "hidden" },
+            { label: "Published", value: "visible" },
+          ]}
+          value={status}
+          onChange={onStatusChange}
+          disabled={disabled}
+        />
+        <TextField
+          label="Author"
+          value={authorName}
+          onChange={onAuthorChange}
+          autoComplete="off"
+          disabled={disabled}
+        />
+        <TextField
+          label="Tags"
+          value={tags}
+          onChange={onTagsChange}
+          autoComplete="off"
+          placeholder="Guide, Rings, Styling"
+          disabled={disabled}
+        />
+        <TextField
+          label="Template suffix"
+          value={themeTemplate === "default" ? "" : themeTemplate}
+          onChange={onTemplateChange}
+          autoComplete="off"
+          placeholder="default"
+          helpText="Leave blank to use the default article template."
+          disabled={disabled}
+        />
+      </BlockStack>
+    </Card>
+  );
+}
+
+function PublishingCard({ article, livePostUrl, isNewPost }: { article: any; livePostUrl: string; isNewPost?: boolean }) {
+  return (
+    <Card padding="400">
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center" gap="300" wrap={false}>
+          <Text as="h3" variant="headingMd" fontWeight="bold">
+            Publishing
+          </Text>
+          <Button size="micro" icon={ExternalIcon} url={!isNewPost ? livePostUrl : undefined} disabled={isNewPost || !livePostUrl} target="_blank">
+            Preview
+          </Button>
+        </InlineStack>
         <InlineGrid columns={2} gap="400">
           <MetricMeta label="Status" value={article.isPublished ? "Published" : "Draft"} badge={article.isPublished} />
           <MetricMeta label="Visibility" value="Online Store" />
-          <MetricMeta label="Author" value={article.author?.name || "Store admin"} />
-          <MetricMeta label="Last updated" value={formatDateTime(article.updatedAt)} />
+          <MetricMeta label="Author" value={article.author?.name || DEFAULT_AUTHOR_NAME} />
+          <MetricMeta label="Last updated" value={isNewPost ? "Not saved yet" : formatDateTime(article.updatedAt)} />
         </InlineGrid>
-        <Button fullWidth icon={ExternalIcon} url={livePostUrl} target="_blank">
-          Preview live post
-        </Button>
       </BlockStack>
     </Card>
   );
@@ -2842,7 +3553,9 @@ function MetricMeta({ label, value, badge }: { label: string; value: string; bad
         {label}
       </Text>
       {badge ? (
-        <Badge tone="success">{value}</Badge>
+        <InlineStack>
+          <Badge tone="success">{value}</Badge>
+        </InlineStack>
       ) : (
         <Text as="span" variant="bodyMd">
           {value}
@@ -2852,73 +3565,59 @@ function MetricMeta({ label, value, badge }: { label: string; value: string; bad
   );
 }
 
-function ScoreRing({ score }: { score: number }) {
-  const color = score >= 80 ? "#16a34a" : score >= 60 ? "#d97706" : "#dc2626";
-  return (
-    <div className="bp-score-ring" style={{ background: `conic-gradient(${color} ${score}%, #e5e7eb 0)` }}>
-      <div className="bp-score-ring-inner">
-        <Text as="span" variant="headingLg" fontWeight="bold">
-          {score}
-        </Text>
-        <Text as="span" variant="bodySm" tone="subdued">
-          /100
-        </Text>
-      </div>
-    </div>
-  );
+async function fetchShopifyEditorBlogs(admin: any) {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+      query GetArticleEditorBlogs {
+        blogs(first: 50) {
+          nodes {
+            id
+            title
+            handle
+          }
+        }
+      }`,
+    );
+    const result: any = await response.json();
+
+    return result.errors?.length ? [] : result.data?.blogs?.nodes || [];
+  } catch {
+    return [];
+  }
 }
 
-function IssueRow({ issue }: { issue: SeoIssue }) {
-  return (
-    <div className="bp-issue-row">
-      <InlineStack gap="200" blockAlign="center" wrap={false}>
-        {issue.severity === "critical" ? (
-          <Icon source={AlertCircleIcon} tone="critical" />
-        ) : issue.severity === "warning" ? (
-          <span className="bp-warning-dot" />
-        ) : (
-          <Icon source={CheckIcon} tone="success" />
-        )}
-        <BlockStack gap="050">
-          <Text as="span" variant="bodyMd" fontWeight="semibold">
-            {issue.label}
-          </Text>
-          <Text as="span" variant="bodySm" tone="subdued">
-            {issue.message}
-          </Text>
-        </BlockStack>
-      </InlineStack>
-      <InlineStack gap="200">
-        <Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>
-          {issue.impact}
-        </Badge>
-        <Badge tone={issue.effort === "Low" ? "success" : "warning"}>{issue.effort}</Badge>
-      </InlineStack>
-    </div>
-  );
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
 }
 
 async function fetchShopifyImageFiles(admin: any, search = "") {
   try {
-    const response = await admin.graphql(
-      `#graphql
+    const response = await withTimeout<any>(
+      admin.graphql(
+        `#graphql
       query GetImageFiles($query: String) {
-        files(first: 48, query: $query, sortKey: UPDATED_AT, reverse: true) {
+        files(first: 24, query: $query, sortKey: UPDATED_AT, reverse: true) {
           nodes {
             __typename
             id
             alt
-            createdAt
             updatedAt
             fileStatus
             preview {
               image {
-                url
+                url(transform: {maxWidth: 320, maxHeight: 320, preferredContentType: WEBP})
               }
             }
             ... on MediaImage {
               image {
                 url
+                thumbnailUrl: url(transform: {maxWidth: 320, maxHeight: 320, preferredContentType: WEBP})
                 width
                 height
               }
@@ -2926,7 +3625,10 @@ async function fetchShopifyImageFiles(admin: any, search = "") {
           }
         }
       }`,
-      { variables: { query: search || null } },
+        { variables: { query: search || null } },
+      ),
+      8000,
+      "Shopify image search timed out. Try a more specific search.",
     );
     const result: any = await response.json();
 
@@ -3138,6 +3840,7 @@ function normalizeShopifyImageFile(file: any): ShopifyImageFile | null {
   return {
     id: file.id,
     url,
+    thumbnailUrl: file.image?.thumbnailUrl || file.preview?.image?.url || url,
     alt: file.alt || "",
     title: file.alt || imageTitleFromUrl(url),
     width: file.image?.width,
@@ -3147,11 +3850,68 @@ function normalizeShopifyImageFile(file: any): ShopifyImageFile | null {
   };
 }
 
+function isNewArticleParam(rawParam: string) {
+  return decodeURIComponent(rawParam || "").toLowerCase() === "new";
+}
+
 function getArticleId(rawParam: string) {
   const articleParam = decodeURIComponent(rawParam || "");
   return articleParam.startsWith("gid://")
     ? articleParam
     : `gid://shopify/Article/${articleParam}`;
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isLikelyStaleAutoMetaTitle(metaTitle: string, articleTitle: string) {
+  const meta = metaTitle.trim();
+  const title = articleTitle.trim();
+
+  return Boolean(
+    meta &&
+      title &&
+      meta.length <= 2 &&
+      meta.length < title.length &&
+      title.toLowerCase().startsWith(meta.toLowerCase()),
+  );
+}
+
+function getInitialMetaTitle(metaTitle: unknown, articleTitle: unknown) {
+  const meta = textValue(metaTitle);
+  const title = textValue(articleTitle);
+
+  if (!meta || isLikelyStaleAutoMetaTitle(meta, title)) return title;
+
+  return meta;
+}
+
+function isInitialMetaTitleCustom(metaTitle: unknown, articleTitle: unknown) {
+  const meta = textValue(metaTitle);
+  const title = textValue(articleTitle);
+
+  return Boolean(meta && meta !== title && !isLikelyStaleAutoMetaTitle(meta, title));
+}
+
+function makeEmptyArticle(blog?: any, authorName = DEFAULT_AUTHOR_NAME) {
+  const selectedBlog = blog || { id: "", title: "Select a blog", handle: "" };
+
+  return {
+    id: "new",
+    title: "",
+    handle: "",
+    tags: [],
+    body: "",
+    summary: "",
+    publishedAt: null,
+    updatedAt: null,
+    isPublished: false,
+    templateSuffix: "",
+    image: null,
+    author: { name: authorName },
+    blog: selectedBlog,
+  };
 }
 
 function cleanString(value: FormDataEntryValue | null) {
@@ -3452,6 +4212,7 @@ function auditSeo({
   hasImage,
   imageAlt,
   productCount,
+  focusKeyword,
 }: {
   title: string;
   handle: string;
@@ -3460,157 +4221,180 @@ function auditSeo({
   hasImage: boolean;
   imageAlt: string;
   productCount: number;
-}) {
+  focusKeyword?: string;
+}): { score: number; issues: SeoIssue[]; keywordScores: Record<string, "success" | "warning" | "critical"> } {
   const issues: SeoIssue[] = [];
   let score = 100;
   const text = stripHtml(body);
   const wordCount = text ? text.split(/\s+/).length : 0;
   const linkCount = (body.match(/<a\s/gi) || []).length;
+  const keywordScores: Record<string, "success" | "warning" | "critical"> = {};
 
-  if (!title) {
-    issues.push({
-      type: "meta_title",
-      label: "Meta title",
-      message: "Add a meta title for search snippets.",
-      severity: "critical",
-      impact: "High",
-      effort: "Low",
-    });
-    score -= 20;
-  } else if (title.length < 30 || title.length > 60) {
-    issues.push({
-      type: "meta_title",
-      label: "Meta title length",
-      message: "Keep the meta title between 30 and 60 characters.",
-      severity: "warning",
-      impact: "Medium",
-      effort: "Low",
-    });
-    score -= 10;
-  }
+  const titleLower = title.toLowerCase();
+  const summaryLower = summary.toLowerCase();
+  const handleLower = handle.toLowerCase();
+  const bodyLower = text.toLowerCase();
+  const first10Words = text.split(/\s+/).slice(0, Math.max(20, Math.floor(wordCount * 0.1))).join(' ').toLowerCase();
 
-  if (!summary) {
-    issues.push({
-      type: "meta_description",
-      label: "Meta description",
-      message: "Write a concise meta description for this post.",
-      severity: "critical",
-      impact: "High",
-      effort: "Low",
-    });
-    score -= 20;
-  } else if (summary.length < 120 || summary.length > 160) {
-    issues.push({
-      type: "meta_description",
-      label: "Meta description length",
-      message: "Keep the meta description between 120 and 160 characters.",
-      severity: "warning",
-      impact: "High",
-      effort: "Low",
-    });
-    score -= 8;
-  }
-
-  if (!handle || !/^[a-z0-9-]+$/.test(handle)) {
-    issues.push({
-      type: "url_handle",
-      label: "URL handle",
-      message: "Use a clean lowercase URL handle with hyphens.",
-      severity: "warning",
-      impact: "Medium",
-      effort: "Low",
-    });
-    score -= 8;
-  }
-
-  if (!hasImage) {
-    issues.push({
-      type: "image",
-      label: "Featured image",
-      message: "Add a featured image to improve sharing and article previews.",
-      severity: "warning",
-      impact: "Medium",
-      effort: "Medium",
-    });
-    score -= 8;
-  } else if (!imageAlt) {
-    issues.push({
-      type: "image_alt",
-      label: "Image alt text",
-      message: "Add descriptive alt text to the featured image.",
-      severity: "warning",
-      impact: "Medium",
-      effort: "Low",
-    });
-    score -= 6;
-  }
-
+  // Length
   if (wordCount < 250) {
-    issues.push({
-      type: "content",
-      label: "Content depth",
-      message: "Expand the article to at least 250 words for better topical coverage.",
-      severity: "warning",
-      impact: "Medium",
-      effort: "Medium",
-    });
-    score -= 10;
-  }
-
-  if (linkCount < 1) {
-    issues.push({
-      type: "internal_links",
-      label: "Internal links",
-      message: "Add at least one internal link to guide readers deeper into the store.",
-      severity: "warning",
-      impact: "Medium",
-      effort: "Low",
-    });
+    issues.push({ category: 'basic', type: "content_length", label: "Content length", message: `Your article is too short (${wordCount} words). Aim for at least 600 words.`, severity: "critical", impact: "High", effort: "Medium" });
+    score -= 15;
+  } else if (wordCount < 600) {
+    issues.push({ category: 'basic', type: "content_length", label: "Content length", message: `Your article is ${wordCount} words. Aim for at least 600 words.`, severity: "warning", impact: "Medium", effort: "Medium" });
     score -= 5;
+  } else {
+    issues.push({ category: 'basic', type: "content_length", label: "Content length", message: `Great! Your article is ${wordCount} words long.`, severity: "good" });
   }
 
-  if (productCount === 0) {
-    issues.push({
-      type: "products",
-      label: "Products linked",
-      message: "Link relevant products to make the article shoppable.",
-      severity: "warning",
-      impact: "High",
-      effort: "Medium",
+  // Links
+  if (linkCount < 1) {
+    issues.push({ category: 'additional', type: "links", label: "Links", message: "Add some internal or external links to your content.", severity: "warning", impact: "Medium", effort: "Low" });
+    score -= 5;
+  } else {
+    issues.push({ category: 'additional', type: "links", label: "Links", message: "You are linking to other resources.", severity: "good" });
+  }
+
+  // URL length
+  if (!handle || handle.length > 75) {
+    issues.push({ category: 'additional', type: "url_length", label: "URL Length", message: "Your URL is too long. Keep it short and descriptive.", severity: "warning", impact: "Low", effort: "Low" });
+    score -= 2;
+  } else {
+    issues.push({ category: 'additional', type: "url_length", label: "URL Length", message: "Your URL is short and descriptive.", severity: "good" });
+  }
+
+  // Media
+  const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
+  if (!hasImage && !hasMediaInBody) {
+    issues.push({ category: 'content_readability', type: "media", label: "Media", message: "Add images, products, or videos to make your content more engaging.", severity: "warning", impact: "Medium", effort: "Medium" });
+    score -= 5;
+  } else {
+    issues.push({ category: 'content_readability', type: "media", label: "Media", message: "Your content contains engaging media.", severity: "good" });
+  }
+
+  // Paragraph length
+  const paragraphs = body.split(/<\/p>/i);
+  const longParagraphs = paragraphs.filter(p => stripHtml(p).split(/\s+/).length > 120);
+  if (longParagraphs.length > 0) {
+    issues.push({ category: 'content_readability', type: "paragraph_length", label: "Paragraph Length", message: "Some of your paragraphs are too long. Keep them under 120 words.", severity: "warning", impact: "Low", effort: "Low" });
+    score -= 3;
+  } else {
+    issues.push({ category: 'content_readability', type: "paragraph_length", label: "Paragraph Length", message: "Your paragraphs are nicely broken down.", severity: "good" });
+  }
+
+  // Title Readability
+  if (/\d/.test(title)) {
+    issues.push({ category: 'title_readability', type: "title_number", label: "Number in Title", message: "Your SEO title contains a number.", severity: "good" });
+  } else {
+    issues.push({ category: 'title_readability', type: "title_number", label: "Number in Title", message: "Consider adding a number to your SEO title to improve CTR.", severity: "warning", impact: "Low", effort: "Low" });
+    score -= 2;
+  }
+
+  // Keyword checks
+  if (focusKeyword) {
+    const keywords = focusKeyword.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0);
+
+    keywords.forEach((kw, index) => {
+      let kwScore = 100;
+      const isPrimary = index === 0;
+
+      const occurrences = bodyLower.split(kw).length - 1;
+      const density = wordCount > 0 ? (occurrences * kw.split(' ').length / wordCount) * 100 : 0;
+      
+      const inTitle = titleLower.includes(kw);
+      const inSummary = summaryLower.includes(kw);
+      const inHandle = handleLower.includes(slugifyKeyword(kw));
+      const inFirst10 = first10Words.includes(kw);
+
+      if (!inTitle) kwScore -= isPrimary ? 10 : 5;
+      if (!inSummary) kwScore -= isPrimary ? 5 : 2;
+      if (!inHandle) kwScore -= isPrimary ? 5 : 2;
+      
+      if (occurrences === 0) kwScore -= 15;
+      else if (density < 0.5) kwScore -= 5;
+      else if (density > 2.5) kwScore -= 5;
+
+      if (!inFirst10) kwScore -= 5;
+      
+      if (kwScore >= 80) keywordScores[kw] = "success";
+      else if (kwScore >= 50) keywordScores[kw] = "warning";
+      else keywordScores[kw] = "critical";
+
+      if (isPrimary) {
+        if (inTitle) issues.push({ category: 'basic', type: "kw_title", label: "Keyword in Title", message: "Focus Keyword is in the SEO title.", severity: "good" });
+        else { issues.push({ category: 'basic', type: "kw_title", label: "Keyword in Title", message: "Focus Keyword does not appear in the SEO title.", severity: "critical", impact: "High", effort: "Low" }); score -= 10; }
+
+        if (inSummary) issues.push({ category: 'basic', type: "kw_summary", label: "Keyword in Meta", message: "Focus Keyword is in the SEO Meta Description.", severity: "good" });
+        else { issues.push({ category: 'basic', type: "kw_summary", label: "Keyword in Meta", message: "Focus Keyword not found in your SEO Meta Description.", severity: "warning", impact: "Medium", effort: "Low" }); score -= 5; }
+
+        if (inHandle) issues.push({ category: 'basic', type: "kw_url", label: "Keyword in URL", message: "Focus Keyword is in the URL.", severity: "good" });
+        else { issues.push({ category: 'basic', type: "kw_url", label: "Keyword in URL", message: "Focus Keyword not found in the URL.", severity: "warning", impact: "Medium", effort: "Low" }); score -= 5; }
+
+        if (inFirst10) issues.push({ category: 'basic', type: "kw_early", label: "Keyword at Start", message: "Focus Keyword appears in the first 10% of the content.", severity: "good" });
+        else { issues.push({ category: 'basic', type: "kw_early", label: "Keyword at Start", message: "Focus Keyword does not appear in the first 10% of the content.", severity: "warning", impact: "Medium", effort: "Low" }); score -= 5; }
+
+        if (occurrences > 0) issues.push({ category: 'basic', type: "kw_content", label: "Keyword in Content", message: `Focus Keyword appears in the content.`, severity: "good" });
+        else { issues.push({ category: 'basic', type: "kw_content", label: "Keyword in Content", message: "Focus Keyword does not appear in the content.", severity: "critical", impact: "High", effort: "Medium" }); score -= 15; }
+
+        // Subheadings
+        const headingRegex = /<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi;
+        let foundInHeading = false;
+        let match;
+        while ((match = headingRegex.exec(body)) !== null) {
+          if (match[1].toLowerCase().includes(kw)) {
+            foundInHeading = true;
+            break;
+          }
+        }
+        if (foundInHeading) issues.push({ category: 'additional', type: "kw_heading", label: "Keyword in Subheadings", message: "Focus Keyword found in subheading(s).", severity: "good" });
+        else { issues.push({ category: 'additional', type: "kw_heading", label: "Keyword in Subheadings", message: "Focus Keyword not found in subheading(s) like H2, H3, etc.", severity: "warning", impact: "Low", effort: "Medium" }); score -= 2; }
+
+        // Density
+        if (occurrences > 0) {
+          if (density >= 0.5 && density <= 2.5) {
+            issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: `Keyword density is ${density.toFixed(2)}%, which is great.`, severity: "good" });
+          } else if (density < 0.5) {
+            issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: `Keyword density is ${density.toFixed(2)}%, which is low. Aim for ~1%.`, severity: "warning", impact: "Low", effort: "Medium" });
+            score -= 2;
+          } else {
+            issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: `Keyword density is ${density.toFixed(2)}%, which is high. Don't over-optimize.`, severity: "warning", impact: "Low", effort: "Medium" });
+            score -= 2;
+          }
+        }
+
+        // Image Alt
+        if (hasImage) {
+          if (imageAlt.toLowerCase().includes(kw)) issues.push({ category: 'additional', type: "kw_alt", label: "Keyword in Image Alt", message: "Focus Keyword found in image alt attributes.", severity: "good" });
+          else { issues.push({ category: 'additional', type: "kw_alt", label: "Keyword in Image Alt", message: "Focus Keyword not found in image alt attributes.", severity: "warning", impact: "Low", effort: "Low" }); score -= 2; }
+        }
+
+        // Title Readability - Keyword position
+        if (titleLower.indexOf(kw) >= 0 && titleLower.indexOf(kw) < 20) {
+          issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Focus Keyword used at the beginning of SEO title.", severity: "good" });
+        } else if (inTitle) {
+          issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Focus Keyword doesn't appear at the beginning of SEO title.", severity: "info", impact: "Low", effort: "Low" });
+        }
+
+      } else {
+        if (occurrences === 0) {
+          issues.push({ category: 'additional', type: `secondary_kw_content_${index}`, label: `Secondary Keyword in Content`, message: `Secondary keyword "${kw}" does not appear in the content.`, severity: "warning", impact: "Low", effort: "Low" });
+          score -= 3;
+        } else {
+          issues.push({ category: 'additional', type: `secondary_kw_content_${index}`, label: `Secondary Keyword in Content`, message: `Secondary keyword "${kw}" appears in the content.`, severity: "good" });
+        }
+      }
     });
-    score -= 8;
+  } else {
+    // No focus keyword
+    issues.push({ category: 'basic', type: "kw_missing", label: "Missing Focus Keyword", message: "You have not set a focus keyword yet.", severity: "critical", impact: "High", effort: "Low" });
+    score -= 30;
   }
 
   return {
     score: Math.max(0, Math.min(100, score)),
     issues,
+    keywordScores,
   };
-}
-
-function getGoodSeoChecks(currentAudit: { issues: SeoIssue[] }, issues: SeoIssue[]) {
-  const badTypes = new Set(issues.map((issue) => issue.type));
-  const checks = [
-    { type: "meta_title", label: "Meta title" },
-    { type: "url_handle", label: "URL handle" },
-    { type: "image", label: "Featured image" },
-    { type: "internal_links", label: "Internal links" },
-    { type: "products", label: "Products linked" },
-  ];
-
-  const auditBadTypes = new Set(currentAudit.issues.map((issue) => issue.type));
-  return checks
-    .filter((check) => !badTypes.has(check.type) && !auditBadTypes.has(check.type))
-    .map((check) => check.label);
-}
-
-function parseIssues(value?: string | null): SeoIssue[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
 }
 
 function buildProductMetricMap(groups: any[]) {
@@ -3707,7 +4491,7 @@ function styleLabel(value: string) {
 
 const DETAIL_STYLES = `
 .bp-detail-shell {
-  max-width: 1680px;
+  max-width: 1200px;
   margin: 0 auto;
   padding-bottom: 88px;
 }
@@ -3769,7 +4553,6 @@ const DETAIL_STYLES = `
 
 .bp-detail-tabs {
   margin-top: 20px;
-  border-bottom: 1px solid var(--p-color-border);
 }
 
 .bp-detail-main {
@@ -3780,6 +4563,10 @@ const DETAIL_STYLES = `
   margin-top: 18px;
 }
 
+.bp-detail-main--full {
+  grid-template-columns: 1fr;
+}
+
 .bp-detail-content {
   min-width: 0;
 }
@@ -3788,6 +4575,8 @@ const DETAIL_STYLES = `
   display: flex;
   flex-direction: column;
   gap: 16px;
+  position: sticky;
+  top: 16px;
 }
 
 .bp-field-grid {
@@ -3972,9 +4761,8 @@ const DETAIL_STYLES = `
   background: #fbfbfb;
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 6px;
-  overflow-x: auto;
 }
 
 .bp-editor-toolbar button,
@@ -4171,7 +4959,6 @@ const DETAIL_STYLES = `
 .bp-editor-canvas img {
   max-width: 100%;
   height: auto;
-  border-radius: 8px;
   cursor: pointer;
 }
 
@@ -4217,8 +5004,9 @@ const DETAIL_STYLES = `
   display: inline-flex;
   align-items: center;
   min-height: 32px;
+  box-sizing: border-box;
   width: 100%;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border: 1px solid var(--p-color-border);
   border-radius: 6px;
   background: var(--p-color-bg-surface-secondary);
@@ -4330,3 +5118,117 @@ const DETAIL_STYLES = `
   }
 }
 `;
+
+function slugifyKeyword(kw: string) {
+  return kw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function GoogleSnippetPreview({
+  title,
+  url,
+  description,
+  imageUrl,
+  focusKeywords,
+  onEdit,
+}: {
+  title: string;
+  url: string;
+  description: string;
+  imageUrl?: string;
+  focusKeywords?: string[];
+  onEdit?: () => void;
+}) {
+  const displayTitle = truncateText(title, 60);
+  const displayDesc = truncateText(description, 160);
+
+  const renderHighlighted = (text: string, keywords?: string[]) => {
+    if (!keywords || keywords.length === 0) return text;
+    
+    // Escape special characters and create a regex pattern for all keywords
+    const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const validKeywords = keywords.filter(kw => kw.trim().length > 0);
+    if (validKeywords.length === 0) return text;
+    
+    const pattern = validKeywords.map(escapeRegExp).join('|');
+    const parts = text.split(new RegExp(`(${pattern})`, 'gi'));
+    
+    return (
+      <>
+        {parts.map((part, i) => {
+          const isKeywordMatch = validKeywords.some(kw => kw.trim().toLowerCase() === part.toLowerCase());
+          return isKeywordMatch ? (
+            <strong key={i} style={{ fontWeight: 800 }}>{part}</strong>
+          ) : (
+            part
+          );
+        })}
+      </>
+    );
+  };
+
+  const renderUrlHighlighted = (text: string, keywords?: string[]) => {
+    if (!keywords || keywords.length === 0) return text;
+    const validKeywords = keywords.filter(kw => kw.trim().length > 0);
+    if (validKeywords.length === 0) return text;
+
+    const slugifiedKeywords = validKeywords.map(kw => slugifyKeyword(kw));
+    const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = slugifiedKeywords.map(escapeRegExp).join('|');
+    const parts = text.split(new RegExp(`(${pattern})`, 'gi'));
+
+    return (
+      <>
+        {parts.map((part, i) => {
+          const isKeywordMatch = slugifiedKeywords.some(kw => kw === part.toLowerCase());
+          return isKeywordMatch ? (
+            <strong key={i} style={{ fontWeight: 800 }}>{part}</strong>
+          ) : (
+            part
+          );
+        })}
+      </>
+    );
+  };
+
+  return (
+    <Card padding="400">
+      <BlockStack gap="400">
+        <Text as="h3" variant="headingMd" fontWeight="bold">
+          Preview
+        </Text>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: '#1a0dab', fontSize: '20px', lineHeight: '1.3', marginBottom: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {renderHighlighted(displayTitle, focusKeywords)}
+            </div>
+            <div style={{ color: '#006621', fontSize: '14px', lineHeight: '1.3', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {renderUrlHighlighted(url, focusKeywords)}
+            </div>
+            <div style={{ color: '#545454', fontSize: '14px', lineHeight: '1.4' }}>
+              {renderHighlighted(displayDesc, focusKeywords)}
+            </div>
+          </div>
+          {imageUrl && (
+            <div style={{ width: '104px', height: '104px', flexShrink: 0, borderRadius: '8px', overflow: 'hidden', backgroundColor: '#f8f9fa' }}>
+              <img src={imageUrl} alt="Thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            </div>
+          )}
+        </div>
+        {onEdit && (
+          <InlineStack>
+            <Button size="micro" onClick={onEdit}>Edit Snippet</Button>
+          </InlineStack>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}

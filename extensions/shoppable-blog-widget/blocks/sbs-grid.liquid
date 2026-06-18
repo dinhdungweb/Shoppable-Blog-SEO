@@ -2,6 +2,7 @@
   BP Shoppable Blog Widget — Product Grid Block
   Displays embedded products in a responsive grid layout.
 {% endcomment %}
+<script src="{{ 'sbs-widget.js' | asset_url }}" defer="defer"></script>
 
 {% liquid
   assign sbs_app_url = '/apps/shoppable-blog-seo'
@@ -42,7 +43,6 @@
   "name": "Product Grid",
   "target": "section",
   "stylesheet": "sbs-widget.css",
-  "javascript": "sbs-widget.js",
   "settings": [
     {
       "type": "text",

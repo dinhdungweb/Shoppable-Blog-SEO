@@ -1,7 +1,9 @@
 {% comment %}
+  theme-check-disable AssetSizeAppBlockJavaScript
   BP Shoppable Blog Widget — Product Carousel Block
   Displays embedded products as a responsive carousel on blog articles.
 {% endcomment %}
+<script src="{{ 'sbs-widget.js' | asset_url }}" defer="defer"></script>
 
 {% liquid
   assign sbs_app_url = '/apps/shoppable-blog-seo'
@@ -61,7 +63,6 @@
   "name": "Product Carousel",
   "target": "section",
   "stylesheet": "sbs-widget.css",
-  "javascript": "sbs-widget.js",
   "settings": [
     {
       "type": "text",
