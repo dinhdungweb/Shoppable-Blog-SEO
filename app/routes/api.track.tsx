@@ -2,6 +2,13 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
 
+const TRACK_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Cache-Control": "no-store",
+};
+
 // Public API endpoint for tracking widget events
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") {
@@ -10,40 +17,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     const body = await request.json();
-    const { shop, articleId, productId, eventType, sessionId, referrer } = body;
-    const blockId = cleanProductBlockId(body.blockId);
-
-    if (!shop || !articleId || !productId || !eventType) {
-      return json({ error: "Missing required fields" }, { status: 400 });
-    }
-
-    const validEventTypes = ["impression", "click", "add_to_cart", "purchase"];
-    if (!validEventTypes.includes(eventType)) {
-      return json({ error: "Invalid event type" }, { status: 400 });
-    }
-
-    await prisma.widgetEvent.create({
-      data: {
-        shop,
-        articleId,
-        productId,
-        blockId,
-        eventType,
-        sessionId: sessionId || null,
-        referrer: referrer || null,
-      },
+    return await recordWidgetEvent({
+      shop: body.shop,
+      articleId: body.articleId,
+      productId: body.productId,
+      blockId: body.blockId,
+      eventType: body.eventType,
+      sessionId: body.sessionId,
+      referrer: body.referrer,
     });
-
-    return json(
-      { success: true },
-      {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
-        },
-      },
-    );
   } catch (error) {
     console.error("Track event error:", error);
     return json({ error: "Internal server error" }, { status: 500 });
@@ -76,6 +58,11 @@ async function recordWidgetEvent({
     return json({ error: "Invalid event type" }, { status: 400 });
   }
 
+  const shouldTrack = await shouldRecordTracking(shop);
+  if (!shouldTrack) {
+    return json({ success: true, skipped: true }, { headers: TRACK_HEADERS });
+  }
+
   await prisma.widgetEvent.create({
     data: {
       shop,
@@ -91,12 +78,7 @@ async function recordWidgetEvent({
   return json(
     { success: true },
     {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Cache-Control": "no-store",
-      },
+      headers: TRACK_HEADERS,
     },
   );
 }
@@ -124,13 +106,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   return json(null, {
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
+    headers: TRACK_HEADERS,
   });
 };
+
+async function shouldRecordTracking(shop: string) {
+  const config = await prisma.shopConfig.findUnique({
+    where: { shop },
+    select: {
+      appStatus: true,
+      enableConversionTracking: true,
+    },
+  });
+
+  return !config || (config.appStatus && config.enableConversionTracking);
+}
 
 function cleanProductBlockId(value?: string | null) {
   const trimmed = (value || "").trim();

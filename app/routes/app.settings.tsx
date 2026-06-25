@@ -1,7 +1,7 @@
-import { useCallback, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -29,9 +29,10 @@ import {
   ExitIcon,
   DeleteIcon,
 } from "@shopify/polaris-icons";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { ShoppableDisplayPreview } from "../components/ShoppableDisplayPreview";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -54,18 +55,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const formData = await request.formData();
+  const maxProducts = Math.max(1, Math.min(12, Number(formData.get("maxProducts") || 6) || 6));
+  const gridColumns = Math.max(2, Math.min(4, Number(formData.get("gridColumns") || 3) || 3));
+  const carouselItemsVisible = Math.max(1, Math.min(5, Number(formData.get("carouselItemsVisible") || 4) || 4));
 
   const updates = {
     defaultBlog: formData.get("defaultBlog") as string,
     language: formData.get("language") as string,
     market: formData.get("market") as string,
     appStatus: formData.get("appStatus") === "true",
-    productCardLayout: formData.get("productCardLayout") as string,
+    widgetStyle: pickFormChoice(formData, "widgetStyle", ["carousel", "grid"], "carousel"),
+    primaryColor: formData.get("primaryColor") as string,
+    productCardLayout: pickFormChoice(formData, "productCardLayout", ["Standard", "Compact", "Minimal", "Featured"], "Standard"),
     cardPosition: formData.get("cardPosition") as string,
     buttonText: formData.get("buttonText") as string,
     showPrice: formData.get("showPrice") === "true",
+    showAddToCart: formData.get("showAddToCart") === "true",
     showVariantSelector: formData.get("showVariantSelector") === "true",
     openInNewTab: formData.get("openInNewTab") === "true",
+    maxProducts,
+    imageAspectRatio: pickFormChoice(formData, "imageAspectRatio", ["Square", "Portrait", "Wide"], "Square"),
+    imageFit: pickFormChoice(formData, "imageFit", ["Cover", "Contain"], "Cover"),
+    cardDensity: pickFormChoice(formData, "cardDensity", ["Compact", "Comfortable", "Spacious"], "Comfortable"),
+    gridColumns,
+    textAlignment: pickFormChoice(formData, "textAlignment", ["Left", "Center"], "Left"),
+    buttonStyle: pickFormChoice(formData, "buttonStyle", ["Solid", "Outline", "Subtle", "Link"], "Solid"),
+    shadowStyle: pickFormChoice(formData, "shadowStyle", ["None", "Soft", "Lifted"], "Soft"),
+    showCarouselArrows: formData.get("showCarouselArrows") === "true",
+    showCarouselDots: formData.get("showCarouselDots") === "true",
+    carouselItemsVisible,
+    borderRadius: formData.get("borderRadius") as string,
+    customCss: formData.get("customCss") as string,
     metaTitleTemplate: formData.get("metaTitleTemplate") as string,
     metaDescriptionTemplate: formData.get("metaDescriptionTemplate") as string,
     urlHandleRules: formData.get("urlHandleRules") as string,
@@ -90,12 +110,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ success: true, updates });
 };
 
+function pickFormChoice(formData: FormData, key: string, allowed: string[], fallback: string) {
+  const value = String(formData.get(key) || "");
+  return allowed.includes(value) ? value : fallback;
+}
+
 // --- CUSTOM TOGGLE COMPONENT ---
-const CustomToggle = ({ checked, label, description, onChange }: { checked: boolean, label: string, description?: string, onChange: (val: boolean) => void }) => (
-  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+const CustomToggle = ({
+  checked,
+  label,
+  description,
+  disabled = false,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  description?: string;
+  disabled?: boolean;
+  onChange: (val: boolean) => void;
+}) => (
+  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', opacity: disabled ? 0.6 : 1 }}>
     <div 
-      onClick={() => onChange(!checked)}
-      style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: checked ? '#29845A' : '#C9CCCF', position: 'relative', flexShrink: 0, marginTop: '2px', cursor: 'pointer' }}
+      onClick={() => {
+        if (!disabled) onChange(!checked);
+      }}
+      style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: checked ? '#29845A' : '#C9CCCF', position: 'relative', flexShrink: 0, marginTop: '2px', cursor: disabled ? 'not-allowed' : 'pointer' }}
     >
        <div style={{ width: '16px', height: '16px', borderRadius: '8px', backgroundColor: '#fff', position: 'absolute', top: '2px', right: checked ? '2px' : 'auto', left: checked ? 'auto' : '2px', transition: 'all 0.2s' }} />
     </div>
@@ -109,6 +148,7 @@ const CustomToggle = ({ checked, label, description, onChange }: { checked: bool
 export default function Settings() {
   const { config } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const navigate = useNavigate();
   const shopify = useAppBridge();
 
   const [formState, setFormState] = useState(config);
@@ -137,7 +177,8 @@ export default function Settings() {
     const data = new FormData();
     for (const key in formState) {
       if (key !== 'id' && key !== 'shop' && key !== 'createdAt' && key !== 'updatedAt') {
-        data.append(key, String(formState[key as keyof typeof formState]));
+        const value = formState[key as keyof typeof formState];
+        data.append(key, value == null ? '' : String(value));
       }
     }
     fetcher.submit(data, { method: 'POST' });
@@ -156,7 +197,7 @@ export default function Settings() {
         <InlineStack align="space-between" blockAlign="center">
           <BlockStack gap="100">
             <Text as="h1" variant="headingLg" fontWeight="bold">Settings</Text>
-            <Text as="p" variant="bodyMd" tone="subdued">Configure how the app works for your store, including SEO rules, tracking, and AI content preferences.</Text>
+            <Text as="p" variant="bodyMd" tone="subdued">Configure how the app works for your store, including SEO rules, tracking, and upcoming AI content preferences.</Text>
           </BlockStack>
           <InlineStack gap="300" blockAlign="center">
             {!hasChanges && (
@@ -195,7 +236,7 @@ export default function Settings() {
                   <InlineStack align="space-between" blockAlign="center">
                     <BlockStack gap="0">
                        <Text as="h3" variant="bodyMd" fontWeight="bold">App status</Text>
-                       <Text as="p" variant="bodySm" tone="subdued">The app is working properly.</Text>
+                       <Text as="p" variant="bodySm" tone="subdued">Controls storefront widget output and tracking collection.</Text>
                     </BlockStack>
                     <InlineStack gap="200" blockAlign="center">
                       <div style={{ backgroundColor: formState.appStatus ? '#E8F5E9' : '#F1F2F3', color: formState.appStatus ? '#29845A' : '#6D7175', padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold' }}>
@@ -251,23 +292,26 @@ export default function Settings() {
               {/* CARD 5: AI writing rules */}
               <Card padding="400">
                 <BlockStack gap="400">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={MagicIcon} tone="base" /></div>
-                    <Text as="h2" variant="headingMd" fontWeight="bold">AI writing rules</Text>
-                  </div>
-                  <Text as="p" variant="bodyMd" tone="subdued">Guide AI content generation to match your brand.</Text>
+                  <InlineStack align="space-between" blockAlign="center" gap="200">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={MagicIcon} tone="base" /></div>
+                      <Text as="h2" variant="headingMd" fontWeight="bold">AI writing rules</Text>
+                    </div>
+                    <Badge tone="attention">Coming soon</Badge>
+                  </InlineStack>
+                  <Text as="p" variant="bodyMd" tone="subdued">AI content generation is not connected yet. These controls are reserved for a future AI integration.</Text>
                   
                   <InlineGrid columns={2} gap="400">
-                    <Select label="Brand tone" options={['Professional', 'Casual', 'Friendly']} value={formState.brandTone} onChange={(v) => handleChange('brandTone', v)} />
-                    <Select label="Default content structure" options={['Introduction, H2 sections, Conclusion']} value={formState.defaultContentStructure} onChange={(v) => handleChange('defaultContentStructure', v)} />
+                    <Select label="Brand tone" options={['Professional', 'Casual', 'Friendly']} value={formState.brandTone} onChange={(v) => handleChange('brandTone', v)} disabled />
+                    <Select label="Default content structure" options={['Introduction, H2 sections, Conclusion']} value={formState.defaultContentStructure} onChange={(v) => handleChange('defaultContentStructure', v)} disabled />
                   </InlineGrid>
 
                   <BlockStack gap="300">
-                    <CustomToggle checked={formState.autoGenerateAltText} onChange={(v) => handleChange('autoGenerateAltText', v)} label="Auto-generate alt text for images" description="Generate descriptive alt text for all images" />
-                    <CustomToggle checked={formState.requireApproval} onChange={(v) => handleChange('requireApproval', v)} label="Require approval before publish" description="Review AI-suggested content before publishing" />
+                    <CustomToggle checked={formState.autoGenerateAltText} onChange={(v) => handleChange('autoGenerateAltText', v)} label="Auto-generate alt text for images" description="Coming soon with AI integration" disabled />
+                    <CustomToggle checked={formState.requireApproval} onChange={(v) => handleChange('requireApproval', v)} label="Require approval before publish" description="Coming soon with AI-suggested content" disabled />
                   </BlockStack>
 
-                  <TextField label="Forbidden words" placeholder="Enter words to avoid (comma separated)" helpText="These words will be avoided in AI-generated content" value={formState.forbiddenWords} onChange={(v) => handleChange('forbiddenWords', v)} autoComplete="off" />
+                  <TextField label="Forbidden words" placeholder="Enter words to avoid (comma separated)" helpText="Coming soon with AI-generated content" value={formState.forbiddenWords} onChange={(v) => handleChange('forbiddenWords', v)} autoComplete="off" disabled />
                 </BlockStack>
               </Card>
 
@@ -281,42 +325,22 @@ export default function Settings() {
               {/* CARD 2: Shoppable blog display */}
               <Card padding="400">
                 <BlockStack gap="400">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={StoreIcon} tone="base" /></div>
-                    <Text as="h2" variant="headingMd" fontWeight="bold">Shoppable blog display</Text>
-                  </div>
-                  <Text as="p" variant="bodyMd" tone="subdued">Control how products appear in your blog posts.</Text>
-                  
-                  <InlineGrid columns={2} gap="400">
-                    <BlockStack gap="400">
-                      <Select label="Product card layout" options={['Standard', 'Compact']} value={formState.productCardLayout} onChange={(v) => handleChange('productCardLayout', v)} />
-                      <Select label="Card position in article" options={['After paragraph', 'End of article']} value={formState.cardPosition} onChange={(v) => handleChange('cardPosition', v)} />
-                      <TextField label="Button text" value={formState.buttonText} onChange={(v) => handleChange('buttonText', v)} autoComplete="off" />
-                      
-                      <BlockStack gap="300">
-                        <CustomToggle checked={formState.showPrice} onChange={(v) => handleChange('showPrice', v)} label="Show price" />
-                        <CustomToggle checked={formState.showVariantSelector} onChange={(v) => handleChange('showVariantSelector', v)} label="Show variant selector" />
-                        <CustomToggle checked={formState.openInNewTab} onChange={(v) => handleChange('openInNewTab', v)} label="Open product in new tab" description="Links will open in a new browser tab" />
-                      </BlockStack>
-                    </BlockStack>
-
-                    <BlockStack gap="200">
-                      <Text as="span" variant="bodyMd" fontWeight="semibold">Live preview</Text>
-                      <div style={{ padding: '16px', backgroundColor: '#F9FAFB', borderRadius: '8px', border: '1px solid #EBEBEB' }}>
-                        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-                          <div style={{ width: '80px', height: '80px', backgroundColor: '#EBEBEB', borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
-                            <img src="https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_medium.png" alt="Ring" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-                          </div>
-                          <BlockStack gap="100">
-                            <Text as="span" variant="bodyMd" fontWeight="bold">14k Gold Solitaire Ring</Text>
-                            {formState.showPrice && <Text as="span" variant="bodyMd">$1,250.00</Text>}
-                            <Text as="p" tone="subdued" variant="bodySm">Timeless 14k gold ring with a brilliant-cut diamond.</Text>
-                            <div style={{ marginTop: '8px' }}><Button size="micro">{formState.buttonText || "View product"}</Button></div>
-                          </BlockStack>
-                        </div>
+                  <InlineStack align="space-between" blockAlign="start" gap="400">
+                    <BlockStack gap="300">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={StoreIcon} tone="base" /></div>
+                        <Text as="h2" variant="headingMd" fontWeight="bold">Shoppable blog display</Text>
                       </div>
+                      <Text as="p" variant="bodyMd" tone="subdued">Product layout, carousel/grid behavior, card styling, buttons, and live preview now have a dedicated screen.</Text>
+                      <InlineStack gap="200">
+                        <Badge tone="info">{formState.widgetStyle === 'grid' ? 'Grid' : 'Carousel'}</Badge>
+                        <Badge>{formState.productCardLayout || 'Standard'}</Badge>
+                        <Badge>{formState.maxProducts || 6} products</Badge>
+                      </InlineStack>
                     </BlockStack>
-                  </InlineGrid>
+                    <Button onClick={() => navigate('/app/settings/shoppable')}>Open display settings</Button>
+                  </InlineStack>
+                  <ShoppableDisplayPreview config={formState} showHeader={false} />
                 </BlockStack>
               </Card>
 
@@ -340,10 +364,10 @@ export default function Settings() {
 
                   <InlineGrid columns={2} gap="400">
                     <BlockStack gap="100">
-                      <Select label="UTM rules" options={['Auto-append to product links']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} />
+                      <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} />
                       <Text as="p" variant="bodySm" tone="subdued">Appends UTM parameters to outbound links</Text>
                     </BlockStack>
-                    <Select label="Attribution window" options={['7 days', '30 days']} value={formState.attributionWindow} onChange={(v) => handleChange('attributionWindow', v)} />
+                    <Select label="Attribution window (coming soon)" options={['7 days', '30 days']} value={formState.attributionWindow} onChange={(v) => handleChange('attributionWindow', v)} disabled />
                   </InlineGrid>
 
                   <div style={{ padding: '16px', border: '1px solid #EBEBEB', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -414,11 +438,14 @@ export default function Settings() {
                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                         <Icon source={DeleteIcon} tone="critical" />
                         <BlockStack gap="0">
-                           <Text as="span" fontWeight="bold">Delete generated data</Text>
-                           <Text as="span" variant="bodySm" tone="subdued">Permanently delete all AI-generated content and metadata.</Text>
+                           <InlineStack gap="200" blockAlign="center">
+                             <Text as="span" fontWeight="bold">Delete AI-generated data</Text>
+                             <Badge tone="attention">Coming soon</Badge>
+                           </InlineStack>
+                           <Text as="span" variant="bodySm" tone="subdued">Available after AI-generated content is connected.</Text>
                         </BlockStack>
                      </div>
-                     <Button tone="critical" variant="plain">Delete data</Button>
+                     <Button tone="critical" variant="plain" disabled>Delete data</Button>
                   </InlineStack>
 
                 </BlockStack>

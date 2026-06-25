@@ -7,6 +7,7 @@ import {
   useFetcher,
 } from "@remix-run/react";
 import {
+  Badge,
   Page,
   Card,
   Text,
@@ -630,13 +631,9 @@ export default function BlogManager() {
                   </IndexTable.Cell>
                   <IndexTable.Cell>
                     {post.publishedAt ? (
-                      <div style={{ padding: '4px 10px', borderRadius: '100px', backgroundColor: '#E8F5E9', color: '#29845A', display: 'inline-block', fontSize: '12px', fontWeight: 'bold' }}>
-                        Published
-                      </div>
+                      <Badge tone="success">Published</Badge>
                     ) : (
-                      <div style={{ padding: '4px 10px', borderRadius: '100px', backgroundColor: '#F4F6F8', color: '#5C5F62', display: 'inline-block', fontSize: '12px', fontWeight: 'bold' }}>
-                        Draft
-                      </div>
+                      <Badge tone="attention">Draft</Badge>
                     )}
                   </IndexTable.Cell>
                   <IndexTable.Cell>

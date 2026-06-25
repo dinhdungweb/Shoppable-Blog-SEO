@@ -15,6 +15,7 @@ import {
   InlineGrid,
   InlineStack,
   Layout,
+  Modal,
   Page,
   ProgressBar,
   Tabs,
@@ -88,6 +89,12 @@ type IssueGroup = {
   fix: string;
   actionLabel: string;
   examples: string[];
+  targetPostId: string;
+  affectedPosts: Array<{
+    id: string;
+    title: string;
+    blogTitle: string;
+  }>;
 };
 
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
@@ -320,6 +327,7 @@ export default function SEOOptimizer() {
   const shopify = useAppBridge();
   const scanFetcher = useFetcher<typeof action>();
   const [selectedTab, setSelectedTab] = useState(0);
+  const [activeIssue, setActiveIssue] = useState<IssueGroup | null>(null);
   const selectedCategory = CATEGORY_TABS[selectedTab]?.id || "all";
   const visibleIssues = useMemo(
     () => issueGroups.filter((issue) => selectedCategory === "all" || issue.category === selectedCategory),
@@ -347,6 +355,25 @@ export default function SEOOptimizer() {
     { name: "Medium impact", value: issueStats.Medium, color: DONUT_COLORS.Medium },
     { name: "Low impact", value: issueStats.Low, color: DONUT_COLORS.Low },
   ];
+  const goToPost = (postId: string) => navigate(getPostTarget(postId));
+  const handleIssueAction = (issue: IssueGroup) => {
+    if (issue.category === "schema") {
+      navigate("/app/settings");
+      return;
+    }
+
+    if (issue.affectedPosts.length > 1) {
+      setActiveIssue(issue);
+      return;
+    }
+
+    if (issue.targetPostId) {
+      goToPost(issue.targetPostId);
+      return;
+    }
+
+    navigate("/app/blogs");
+  };
 
   return (
     <Page fullWidth>
@@ -483,7 +510,7 @@ export default function SEOOptimizer() {
                             </div>
                           </IndexTable.Cell>
                           <IndexTable.Cell>
-                            <Button size="micro" onClick={() => navigate(getIssueTarget(issue))}>
+                            <Button size="micro" onClick={() => handleIssueAction(issue)}>
                               {issue.actionLabel}
                             </Button>
                           </IndexTable.Cell>
@@ -555,14 +582,14 @@ export default function SEOOptimizer() {
                     <Text as="h2" variant="headingMd" fontWeight="bold">
                       SEO Assistant
                     </Text>
-                    <Badge tone="magic">AI</Badge>
+                    <Badge tone="attention">Coming soon</Badge>
                   </InlineStack>
                   <Text as="p" variant="bodyMd" tone="subdued">
-                    Recommendations are based on the current scan and linked product data.
+                    AI guidance is not connected yet. The recommendations below are rule-based from the current scan and linked product data.
                   </Text>
                   <BlockStack gap="300">
                     {issueGroups.slice(0, 4).map((issue) => (
-                      <AssistantItem key={issue.id} issue={issue} onAction={() => navigate(getIssueTarget(issue))} />
+                      <AssistantItem key={issue.id} issue={issue} onAction={() => handleIssueAction(issue)} />
                     ))}
                     {!issueGroups.length && (
                       <InlineStack gap="200" blockAlign="center">
@@ -645,7 +672,9 @@ export default function SEOOptimizer() {
                               </Text>
                             </BlockStack>
                           </InlineStack>
-                          <Badge tone={post.score < 60 ? "critical" : "warning"}>{`${post.issues.length} issues`}</Badge>
+                          <Button size="micro" onClick={() => goToPost(post.id)}>
+                            Review
+                          </Button>
                         </InlineStack>
                       ))
                     ) : (
@@ -660,6 +689,43 @@ export default function SEOOptimizer() {
           </Layout.Section>
         </Layout>
       </BlockStack>
+      <Modal
+        open={Boolean(activeIssue)}
+        onClose={() => setActiveIssue(null)}
+        title={activeIssue ? `${activeIssue.issue} (${activeIssue.affected} posts)` : "Affected posts"}
+        secondaryActions={[
+          {
+            content: "Close",
+            onAction: () => setActiveIssue(null),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="200">
+            {(activeIssue?.affectedPosts || []).map((post) => (
+              <div key={post.id} className="bp-seo-affected-post-row">
+                <BlockStack gap="050">
+                  <Text as="span" variant="bodyMd" fontWeight="semibold">
+                    {post.title}
+                  </Text>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {post.blogTitle}
+                  </Text>
+                </BlockStack>
+                <Button
+                  size="micro"
+                  onClick={() => {
+                    setActiveIssue(null);
+                    goToPost(post.id);
+                  }}
+                >
+                  {activeIssue?.actionLabel || "Review"}
+                </Button>
+              </div>
+            ))}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
@@ -760,9 +826,11 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
                 url
                 altText
               }
-              seo {
-                title
-                description
+              seoTitle: metafield(namespace: "global", key: "title_tag") {
+                value
+              }
+              seoDescription: metafield(namespace: "global", key: "description_tag") {
+                value
               }
               blog {
                 id
@@ -790,9 +858,11 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
                 url
                 altText
               }
-              seo {
-                title
-                description
+              seoTitle: metafield(namespace: "global", key: "title_tag") {
+                value
+              }
+              seoDescription: metafield(namespace: "global", key: "description_tag") {
+                value
               }
               blog {
                 id
@@ -821,8 +891,8 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
       summary: article.summary || "",
       imageUrl: article.image?.url || "",
       imageAlt: article.image?.altText || "",
-      seoTitle: article.seo?.title || "",
-      seoDescription: article.seo?.description || "",
+      seoTitle: article.seoTitle?.value || "",
+      seoDescription: article.seoDescription?.value || "",
       blogId: article.blog?.id || blog.id,
       blogTitle: article.blog?.title || blog.title || "Blog",
       blogHandle: article.blog?.handle || blog.handle || "",
@@ -1019,10 +1089,13 @@ function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
         fix: issue.fix,
         actionLabel: getActionLabel(issue.category),
         examples: [],
+        targetPostId: post.id,
+        affectedPosts: [],
       };
 
       group.affected += 1;
       if (group.examples.length < 3) group.examples.push(post.title);
+      group.affectedPosts.push({ id: post.id, title: post.title, blogTitle: post.blogTitle });
       map.set(issue.type, group);
     });
   });
@@ -1056,9 +1129,8 @@ function getActionLabel(category: SeoCategory) {
   return "Review";
 }
 
-function getIssueTarget(issue: IssueGroup) {
-  if (issue.category === "schema") return "/app/settings";
-  return "/app/blogs";
+function getPostTarget(postId: string) {
+  return `/app/blogs/${encodeURIComponent(postId)}`;
 }
 
 function getImpactWeight(impact: Impact) {
@@ -1124,6 +1196,7 @@ export function links() {
           .bp-seo-issue-table {
             max-width: 100%;
             overflow-x: auto;
+            overflow-y: hidden;
           }
           .bp-seo-issue-table table {
             min-width: 940px;
@@ -1139,6 +1212,17 @@ export function links() {
             width: 220px;
             max-width: 220px;
             min-width: 0;
+          }
+          .bp-seo-affected-post-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--p-color-border-secondary);
+          }
+          .bp-seo-affected-post-row:last-child {
+            border-bottom: 0;
           }
         `),
     },

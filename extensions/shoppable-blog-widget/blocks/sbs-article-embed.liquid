@@ -23,7 +23,6 @@
   data-shop="{{ shop.permanent_domain }}"
   data-app-url="{{ sbs_app_url }}"
   data-default-style="{{ block.settings.default_style }}"
-  data-heading="{{ block.settings.heading | escape }}"
   hidden
 ></div>
 
@@ -52,12 +51,6 @@
           "label": "Grid"
         }
       ]
-    },
-    {
-      "type": "text",
-      "id": "heading",
-      "label": "Default heading",
-      "default": "Shop Products from This Article"
     },
     {
       "type": "paragraph",

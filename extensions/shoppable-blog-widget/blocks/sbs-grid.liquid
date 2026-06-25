@@ -26,10 +26,6 @@
   data-columns="{{ block.settings.columns }}"
   id="bp-widget-{{ block.id }}"
 >
-  <div class="bp-widget__header">
-    <h3 class="bp-widget__title">{{ block.settings.heading }}</h3>
-  </div>
-
   <div class="bp-grid__container">
     <div class="bp-widget__loading">
       <div class="bp-widget__spinner"></div>
@@ -44,12 +40,6 @@
   "target": "section",
   "stylesheet": "sbs-widget.css",
   "settings": [
-    {
-      "type": "text",
-      "id": "heading",
-      "label": "Heading",
-      "default": "Featured Products"
-    },
     {
       "type": "range",
       "id": "columns",

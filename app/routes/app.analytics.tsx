@@ -1124,6 +1124,7 @@ export function links() {
           .bp-analytics-table-scroll {
             max-width: 100%;
             overflow-x: auto;
+            overflow-y: hidden;
           }
           .bp-analytics-table-scroll table {
             min-width: 860px;

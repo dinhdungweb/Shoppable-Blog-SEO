@@ -48,6 +48,16 @@ model ShopConfig {
   showPrice            Boolean  @default(true)
   showVariantSelector  Boolean  @default(true)
   openInNewTab         Boolean  @default(true)
+  imageAspectRatio     String   @default("Square")
+  imageFit             String   @default("Cover")
+  cardDensity          String   @default("Comfortable")
+  gridColumns          Int      @default(3)
+  textAlignment        String   @default("Left")
+  buttonStyle          String   @default("Solid")
+  shadowStyle          String   @default("Soft")
+  showCarouselArrows   Boolean  @default(true)
+  showCarouselDots     Boolean  @default(true)
+  carouselItemsVisible Int      @default(4)
 
   // SEO rules
   metaTitleTemplate       String   @default("{{title}} - {{blog}} | {{store}}")

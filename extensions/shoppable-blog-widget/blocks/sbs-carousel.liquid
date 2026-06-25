@@ -26,13 +26,6 @@
   data-style="carousel"
   id="bp-widget-{{ block.id }}"
 >
-  <div class="bp-widget__header">
-    <h3 class="bp-widget__title">{{ block.settings.heading }}</h3>
-    {% if block.settings.show_subtitle %}
-      <p class="bp-widget__subtitle">{{ block.settings.subtitle }}</p>
-    {% endif %}
-  </div>
-
   <div class="bp-carousel__wrapper">
     <button class="bp-carousel__nav bp-carousel__prev" aria-label="Previous">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -64,24 +57,6 @@
   "target": "section",
   "stylesheet": "sbs-widget.css",
   "settings": [
-    {
-      "type": "text",
-      "id": "heading",
-      "label": "Heading",
-      "default": "Shop Products from This Article"
-    },
-    {
-      "type": "checkbox",
-      "id": "show_subtitle",
-      "label": "Show subtitle",
-      "default": true
-    },
-    {
-      "type": "text",
-      "id": "subtitle",
-      "label": "Subtitle",
-      "default": "Handpicked products mentioned in this article"
-    },
     {
       "type": "paragraph",
       "content": "Product data is loaded automatically through the app proxy."

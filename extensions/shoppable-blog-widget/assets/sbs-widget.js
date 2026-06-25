@@ -56,15 +56,17 @@
   function parseMarker(tokenA, tokenB, config) {
     let style = config.dataset.defaultStyle || "carousel";
     let blockId = DEFAULT_BLOCK_ID;
+    let styleLocked = false;
 
     if (tokenA === "grid" || tokenA === "carousel") {
       style = tokenA;
       blockId = cleanBlockId(tokenB);
+      styleLocked = true;
     } else {
       blockId = cleanBlockId(tokenA);
     }
 
-    return { style: style === "grid" ? "grid" : "carousel", blockId };
+    return { style: style === "grid" ? "grid" : "carousel", blockId, styleLocked };
   }
 
   function createWidget(config, marker, index) {
@@ -77,42 +79,46 @@
     widget.dataset.appUrl = config.dataset.appUrl || "/apps/shoppable-blog-seo";
     widget.dataset.style = style;
     widget.dataset.blockId = marker.blockId;
+    widget.dataset.styleLocked = marker.styleLocked ? "true" : "false";
     widget.id = `bp-marker-widget-${Date.now()}-${index}`;
 
-    const heading = config.dataset.heading || "Shop Products from This Article";
-    widget.innerHTML =
-      style === "grid"
-        ? `
-          <div class="bp-widget__header">
-            <h3 class="bp-widget__title">${escapeHtml(heading)}</h3>
-          </div>
-          <div class="bp-grid__container">
-            ${loadingMarkup()}
-          </div>
-        `
-        : `
-          <div class="bp-widget__header">
-            <h3 class="bp-widget__title">${escapeHtml(heading)}</h3>
-          </div>
-          <div class="bp-carousel__wrapper">
-            <button class="bp-carousel__nav bp-carousel__prev" aria-label="Previous">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-            <div class="bp-carousel__track">
-              ${loadingMarkup()}
-            </div>
-            <button class="bp-carousel__nav bp-carousel__next" aria-label="Next">
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <path d="M7.5 5L12.5 10L7.5 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-          </div>
-          <div class="bp-carousel__dots"></div>
-        `;
+    widget.innerHTML = widgetShellMarkup(style);
 
     return widget;
+  }
+
+  function widgetShellMarkup(style) {
+    return style === "grid"
+      ? `
+        <div class="bp-grid__container">
+          ${loadingMarkup()}
+        </div>
+      `
+      : `
+        <div class="bp-carousel__wrapper">
+          <button class="bp-carousel__nav bp-carousel__prev" aria-label="Previous">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div class="bp-carousel__track">
+            ${loadingMarkup()}
+          </div>
+          <button class="bp-carousel__nav bp-carousel__next" aria-label="Next">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M7.5 5L12.5 10L7.5 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+        <div class="bp-carousel__dots"></div>
+      `;
+  }
+
+  function rebuildWidgetShell(widget, style) {
+    widget.classList.toggle("bp-grid", style === "grid");
+    widget.classList.toggle("bp-carousel", style !== "grid");
+    widget.dataset.style = style;
+    widget.innerHTML = widgetShellMarkup(style);
   }
 
   function loadWidgets() {
@@ -167,13 +173,23 @@
       }
 
       const payload = await response.json();
+      if (payload.config && payload.config.appStatus === false) {
+        hideWidget(widget);
+        return;
+      }
+
+      const config = payload.config || {};
       if (!payload.products || payload.products.length === 0) {
         showEmpty(widget);
         return;
       }
 
-      renderProducts(widget, payload.products, payload.config || {}, style);
-      setupCarousel(widget, style);
+      applyWidgetConfig(widget, config);
+      const effectiveStyle =
+        widget.dataset.styleLocked === "true" ? style : normalizeWidgetStyle(config.widgetStyle || style);
+      if (effectiveStyle !== style) rebuildWidgetShell(widget, effectiveStyle);
+      renderProducts(widget, payload.products, config, effectiveStyle);
+      setupCarousel(widget, effectiveStyle, config);
       trackEvent(appUrl, shop, articleId, blockId, "all", "impression");
     } catch (error) {
       console.error("[SBS Widget] Failed to load products", error);
@@ -187,22 +203,33 @@
     if (!container) return;
 
     container.innerHTML = "";
-    if (style === "grid") container.setAttribute("data-columns", widget.dataset.columns || "3");
+    const cardLayout = normalizeCardLayout(config.productCardLayout);
+    widget.classList.toggle("bp-widget--compact", cardLayout === "compact");
+
+    if (style === "grid") {
+      container.setAttribute("data-columns", normalizeGridColumns(config.gridColumns || widget.dataset.columns || "3"));
+    } else {
+      container.setAttribute("data-visible", normalizeCarouselItemsVisible(config.carouselItemsVisible || "4"));
+    }
+
     products.forEach((product) => {
-      container.appendChild(createProductCard(widget, product, config));
+      container.appendChild(createProductCard(widget, product, { ...config, productCardLayout: cardLayout }));
     });
   }
 
   function createProductCard(widget, product, config) {
     const card = document.createElement("div");
-    card.className = "bp-product-card";
+    const cardLayout = normalizeCardLayout(config.productCardLayout);
+    card.className = `bp-product-card bp-product-card--${cardLayout}`;
     card.setAttribute("role", "article");
     card.setAttribute("aria-label", product.productTitle || "Product");
 
-    const productUrl = `/products/${product.productHandle}`;
+    const productUrl = productUrlFor(product, config, widget);
+    const productLinkAttrs = productLinkAttributes(productUrl, product.productId, config);
+    const ctaText = buttonText(config);
     let html = "";
 
-    if (product.productImage) {
+    if (product.productImage && cardLayout !== "minimal") {
       html += `
         <div class="bp-product-card__image-wrapper">
           <img
@@ -220,7 +247,7 @@
     html += '<div class="bp-product-card__body">';
     html += `
       <h4 class="bp-product-card__title">
-        <a href="${productUrl}" data-product-id="${escapeHtml(product.productId)}">${escapeHtml(product.productTitle)}</a>
+        <a ${productLinkAttrs}>${escapeHtml(product.productTitle)}</a>
       </h4>
     `;
 
@@ -230,22 +257,20 @@
 
     if (config.showAddToCart !== false) {
       html += `
-        <button
+        <a
           class="bp-product-card__cta"
-          data-product-id="${escapeHtml(product.productId)}"
-          data-product-handle="${escapeHtml(product.productHandle)}"
-          aria-label="Add ${escapeHtml(product.productTitle)} to cart"
+          ${productLinkAttrs}
+          aria-label="${escapeHtml(ctaText)}: ${escapeHtml(product.productTitle)}"
         >
-          Add to Cart
-        </button>
+          ${escapeHtml(ctaText)}
+        </a>
       `;
     }
 
     html += "</div>";
     card.innerHTML = html;
 
-    card.addEventListener("click", (event) => {
-      if (event.target.closest(".bp-product-card__cta")) return;
+    card.addEventListener("click", () => {
       trackEvent(
         widget.dataset.appUrl,
         widget.dataset.shop,
@@ -256,19 +281,10 @@
       );
     });
 
-    const cta = card.querySelector(".bp-product-card__cta");
-    if (cta) {
-      cta.addEventListener("click", async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        await addToCart(cta, product, widget);
-      });
-    }
-
     return card;
   }
 
-  function setupCarousel(widget, style) {
+  function setupCarousel(widget, style, config = {}) {
     if (style !== "carousel") return;
 
     const track = widget.querySelector(CAROUSEL_TRACK_SELECTOR);
@@ -280,10 +296,20 @@
     const cards = track.querySelectorAll(".bp-product-card");
     if (cards.length === 0) return;
 
-    const step = () => cards[0].offsetWidth + 16;
-    if (prev) prev.addEventListener("click", () => track.scrollBy({ left: -step(), behavior: "smooth" }));
-    if (next) next.addEventListener("click", () => track.scrollBy({ left: step(), behavior: "smooth" }));
-    if (!dots || cards.length <= 1) return;
+    const step = () => cards[0].offsetWidth + carouselGap(track);
+    if (config.showCarouselArrows === false) {
+      if (prev) prev.hidden = true;
+      if (next) next.hidden = true;
+    } else {
+      if (prev) prev.addEventListener("click", () => animateCarouselTo(track, track.scrollLeft - step()));
+      if (next) next.addEventListener("click", () => animateCarouselTo(track, track.scrollLeft + step()));
+    }
+
+    setupCarouselDrag(track);
+    if (!dots || cards.length <= 1 || config.showCarouselDots === false) {
+      if (dots) dots.hidden = true;
+      return;
+    }
 
     const visibleCards = Math.floor(track.offsetWidth / step()) || 1;
     const pageCount = Math.ceil(cards.length / visibleCards);
@@ -294,7 +320,7 @@
       dot.className = `bp-carousel__dot${page === 0 ? " bp-carousel__dot--active" : ""}`;
       dot.setAttribute("aria-label", `Page ${page + 1}`);
       dot.addEventListener("click", () => {
-        track.scrollTo({ left: page * visibleCards * step(), behavior: "smooth" });
+        animateCarouselTo(track, page * visibleCards * step());
       });
       dots.appendChild(dot);
     }
@@ -307,53 +333,215 @@
     });
   }
 
-  async function addToCart(button, product, widget) {
-    const originalText = button.textContent;
-    button.disabled = true;
-    button.textContent = "Adding...";
+  function animateCarouselTo(track, targetLeft) {
+    const maxLeft = Math.max(0, track.scrollWidth - track.clientWidth);
+    const target = Math.max(0, Math.min(targetLeft, maxLeft));
+    const start = track.scrollLeft;
+    const distance = target - start;
 
-    try {
-      const productResponse = await fetch(`/products/${product.productHandle}.js`);
-      const productJson = await productResponse.json();
-      if (!productJson.variants || productJson.variants.length === 0) {
-        throw new Error("No variants available");
+    if (Math.abs(distance) < 1) return;
+
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      track.scrollLeft = target;
+      return;
+    }
+
+    if (track._bpCarouselAnimationFrame) {
+      window.cancelAnimationFrame(track._bpCarouselAnimationFrame);
+    }
+
+    const duration = Math.min(520, Math.max(280, Math.abs(distance) * 0.55));
+    let startTime = 0;
+    track.classList.add("bp-carousel__track--animating");
+
+    const easeOutCubic = (progress) => 1 - Math.pow(1 - progress, 3);
+    const tick = (timestamp) => {
+      if (!startTime) startTime = timestamp;
+
+      const progress = Math.min(1, (timestamp - startTime) / duration);
+      track.scrollLeft = start + distance * easeOutCubic(progress);
+
+      if (progress < 1) {
+        track._bpCarouselAnimationFrame = window.requestAnimationFrame(tick);
+        return;
       }
 
-      const variantId = productJson.variants[0].id;
-      const cartResponse = await fetch("/cart/add.js", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: [{ id: variantId, quantity: 1 }] }),
-      });
-      if (!cartResponse.ok) throw new Error("Cart error");
+      track.scrollLeft = target;
+      track.classList.remove("bp-carousel__track--animating");
+      track._bpCarouselAnimationFrame = null;
+    };
 
-      button.textContent = "Added!";
-      button.classList.add("bp-product-card__cta--added");
-      trackEvent(
-        widget.dataset.appUrl,
-        widget.dataset.shop,
-        widget.dataset.articleId,
-        cleanBlockId(widget.dataset.blockId),
-        product.productId,
-        "add_to_cart",
-      );
+    track._bpCarouselAnimationFrame = window.requestAnimationFrame(tick);
+  }
 
-      if (typeof window.refreshCart === "function") window.refreshCart();
-      document.dispatchEvent(new CustomEvent("cart:item-added", { detail: { variantId, quantity: 1 } }));
+  function setupCarouselDrag(track) {
+    let pointerDown = false;
+    let dragging = false;
+    let startX = 0;
+    let startScrollLeft = 0;
+    let suppressClickUntil = 0;
 
-      setTimeout(() => {
-        button.textContent = originalText;
-        button.classList.remove("bp-product-card__cta--added");
-        button.disabled = false;
-      }, 2000);
-    } catch (error) {
-      console.error("[SBS Widget] Add to cart failed", error);
-      button.textContent = "Error - Try Again";
-      button.disabled = false;
-      setTimeout(() => {
-        button.textContent = originalText;
-      }, 2000);
+    track.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || event.button !== 0) return;
+      pointerDown = true;
+      dragging = false;
+      startX = event.clientX;
+      startScrollLeft = track.scrollLeft;
+      track.classList.add("bp-carousel__track--dragging");
+      track.setPointerCapture(event.pointerId);
+    });
+
+    track.addEventListener("pointermove", (event) => {
+      if (!pointerDown) return;
+
+      const deltaX = event.clientX - startX;
+      if (Math.abs(deltaX) > 4) dragging = true;
+      if (!dragging) return;
+
+      event.preventDefault();
+      track.scrollLeft = startScrollLeft - deltaX;
+    });
+
+    const endDrag = (event) => {
+      if (!pointerDown) return;
+      pointerDown = false;
+      track.classList.remove("bp-carousel__track--dragging");
+      if (dragging) suppressClickUntil = Date.now() + 250;
+      if (track.hasPointerCapture(event.pointerId)) track.releasePointerCapture(event.pointerId);
+    };
+
+    track.addEventListener("pointerup", endDrag);
+    track.addEventListener("pointercancel", endDrag);
+    track.addEventListener(
+      "click",
+      (event) => {
+        if (Date.now() > suppressClickUntil) return;
+        event.preventDefault();
+        event.stopPropagation();
+      },
+      true,
+    );
+  }
+
+  function normalizeCardLayout(value) {
+    const layout = String(value || "").toLowerCase();
+    if (["compact", "minimal", "featured"].includes(layout)) return layout;
+    return "standard";
+  }
+
+  function carouselGap(track) {
+    const styles = window.getComputedStyle(track);
+    const gap = parseFloat(styles.columnGap || styles.gap || "16");
+    return Number.isFinite(gap) ? gap : 16;
+  }
+
+  function normalizeWidgetStyle(value) {
+    return String(value || "").toLowerCase() === "grid" ? "grid" : "carousel";
+  }
+
+  function normalizeGridColumns(value) {
+    const columns = Number(value || 3);
+    if (columns === 2 || columns === 3 || columns === 4) return String(columns);
+    return "3";
+  }
+
+  function normalizeCarouselItemsVisible(value) {
+    const items = Number(value || 4);
+    if (items >= 1 && items <= 5) return String(items);
+    return "4";
+  }
+
+  function buttonText(config) {
+    const text = String(config.buttonText || "").trim();
+    return text || "View product";
+  }
+
+  function productUrlFor(product, config, widget) {
+    const baseUrl = `/products/${product.productHandle}`;
+    if (!shouldAppendUtm(config)) return baseUrl;
+
+    const params = new URLSearchParams({
+      utm_source: "blog",
+      utm_medium: "shoppable_blog",
+      utm_campaign: "shoppable_blog_products",
+      utm_content: cleanBlockId(widget.dataset.blockId),
+    });
+
+    return `${baseUrl}?${params.toString()}`;
+  }
+
+  function shouldAppendUtm(config) {
+    return String(config.utmRules || "").toLowerCase() !== "do not append";
+  }
+
+  function productLinkAttributes(url, productId, config) {
+    const targetAttrs = config.openInNewTab === false ? "" : ' target="_blank" rel="noopener noreferrer"';
+    return `href="${escapeHtml(url)}" data-product-id="${escapeHtml(productId)}"${targetAttrs}`;
+  }
+
+  function applyWidgetConfig(widget, config) {
+    const primaryColor = normalizeCssColor(config.primaryColor);
+    if (primaryColor) {
+      widget.style.setProperty("--bp-primary", primaryColor);
+      widget.style.setProperty("--bp-primary-hover", primaryColor);
     }
+
+    const borderRadius = normalizeCssSize(config.borderRadius);
+    if (borderRadius) {
+      widget.style.setProperty("--bp-radius", borderRadius);
+      widget.style.setProperty("--bp-radius-sm", borderRadius);
+    }
+
+    replaceClassByPrefix(widget, "bp-density--", normalizeToken(config.cardDensity, ["compact", "comfortable", "spacious"], "comfortable"));
+    replaceClassByPrefix(widget, "bp-image--", normalizeToken(config.imageAspectRatio, ["square", "portrait", "wide"], "square"));
+    replaceClassByPrefix(widget, "bp-fit--", normalizeToken(config.imageFit, ["cover", "contain"], "cover"));
+    replaceClassByPrefix(widget, "bp-align--", normalizeToken(config.textAlignment, ["left", "center"], "left"));
+    replaceClassByPrefix(widget, "bp-button--", normalizeToken(config.buttonStyle, ["solid", "outline", "subtle", "link"], "solid"));
+    replaceClassByPrefix(widget, "bp-shadow--", normalizeToken(config.shadowStyle, ["none", "soft", "lifted"], "soft"));
+
+    injectCustomCss(config.customCss);
+  }
+
+  function normalizeToken(value, allowed, fallback) {
+    const token = String(value || "").toLowerCase().replace(/[^a-z0-9-]/g, "");
+    return allowed.includes(token) ? token : fallback;
+  }
+
+  function replaceClassByPrefix(element, prefix, value) {
+    Array.from(element.classList).forEach((className) => {
+      if (className.startsWith(prefix)) element.classList.remove(className);
+    });
+    element.classList.add(`${prefix}${value}`);
+  }
+
+  function normalizeCssColor(value) {
+    const color = String(value || "").trim();
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color)) return color;
+    return "";
+  }
+
+  function normalizeCssSize(value) {
+    const size = String(value || "").trim();
+    if (/^\d+(\.\d+)?(px|rem|em|%)$/.test(size)) return size;
+    return "";
+  }
+
+  function injectCustomCss(css) {
+    const customCss = String(css || "").trim();
+    let style = document.getElementById("bp-widget-custom-css");
+
+    if (!customCss) {
+      if (style) style.remove();
+      return;
+    }
+
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "bp-widget-custom-css";
+      document.head.appendChild(style);
+    }
+
+    style.textContent = customCss;
   }
 
   function trackEvent(appUrl, shop, articleId, blockId, productId, eventType) {
@@ -413,6 +601,11 @@
   function showEmpty(widget) {
     const loading = widget.querySelector(LOADING_SELECTOR);
     if (loading) loading.innerHTML = '<p class="bp-widget__empty">No products to display.</p>';
+  }
+
+  function hideWidget(widget) {
+    widget.innerHTML = "";
+    widget.style.display = "none";
   }
 
   function showError(widget, message) {

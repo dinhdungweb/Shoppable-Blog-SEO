@@ -1836,7 +1836,7 @@ function ShopifyContentEditor({
           <TextField
             label="Title"
             value={title}
-            suffix={<Icon source={MagicIcon} tone="subdued" />}
+            suffix={<Badge tone="attention">Soon</Badge>}
             onChange={onTitleChange}
             autoComplete="off"
           />
@@ -2483,10 +2483,11 @@ function RichArticleEditor({
           <button
             type="button"
             className="bp-editor-icon-button"
-            title="Writing assistant"
+            title="Writing assistant coming soon"
+            disabled
             onMouseDown={(event) => event.preventDefault()}
           >
-            <Icon source={MagicIcon} tone="base" />
+            <Icon source={MagicIcon} tone="subdued" />
           </button>
           <span className="bp-editor-separator" />
           <select
@@ -3343,7 +3344,7 @@ function RecommendationsCard({
           {recommendations.map((issue) => (
             <InlineStack key={issue.type} gap="300" align="start" wrap={false}>
               <span className="bp-action-icon">
-                <Icon source={issue.type === "products" ? LinkIcon : MagicIcon} tone="magic" />
+                <Icon source={issue.type === "products" ? LinkIcon : SearchIcon} tone={issue.type === "products" ? "magic" : "base"} />
               </span>
               <BlockStack gap="150">
                 <Text as="span" variant="bodyMd">
@@ -4792,6 +4793,11 @@ const DETAIL_STYLES = `
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+}
+
+.bp-editor-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .bp-editor-list-button,

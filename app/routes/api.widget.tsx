@@ -2,26 +2,86 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
 
-// Public API endpoint for the theme extension to fetch embedded products
-// This route does NOT require authentication — it serves public storefront data
-export const loader = async ({ request, params }: LoaderFunctionArgs) => {
+const DEFAULT_WIDGET_CONFIG = {
+  appStatus: true,
+  widgetStyle: "carousel",
+  primaryColor: "#6366f1",
+  productCardLayout: "Standard",
+  buttonText: "View product",
+  showPrice: true,
+  showRating: true,
+  showAddToCart: true,
+  openInNewTab: true,
+  imageAspectRatio: "Square",
+  imageFit: "Cover",
+  cardDensity: "Comfortable",
+  gridColumns: 3,
+  textAlignment: "Left",
+  buttonStyle: "Solid",
+  shadowStyle: "Soft",
+  showCarouselArrows: true,
+  showCarouselDots: true,
+  carouselItemsVisible: 4,
+  borderRadius: "8px",
+  customCss: "",
+  utmRules: "Auto-append to product links",
+  seoAutoSchema: true,
+  maxProducts: 6,
+};
+
+const WIDGET_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Cache-Control": "public, max-age=60",
+};
+
+// Public API endpoint for the theme extension to fetch embedded products.
+// This route does not require authentication because it serves storefront data.
+export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const articleId = url.searchParams.get("articleId");
   const blockId = cleanProductBlockId(url.searchParams.get("blockId"));
-  const shop =
-    url.searchParams.get("shop") ||
-    request.headers.get("x-shopify-shop-domain");
+  const shop = url.searchParams.get("shop") || request.headers.get("x-shopify-shop-domain");
 
   if (!articleId || !shop) {
-    return json(
-      { error: "Missing articleId or shop parameter" },
-      { status: 400 },
-    );
+    return json({ error: "Missing articleId or shop parameter" }, { status: 400 });
+  }
+
+  const config =
+    (await prisma.shopConfig.findUnique({
+      where: { shop },
+      select: {
+        appStatus: true,
+        widgetStyle: true,
+        primaryColor: true,
+        productCardLayout: true,
+        buttonText: true,
+        showPrice: true,
+        showRating: true,
+        showAddToCart: true,
+        openInNewTab: true,
+        imageAspectRatio: true,
+        imageFit: true,
+        cardDensity: true,
+        gridColumns: true,
+        textAlignment: true,
+        buttonStyle: true,
+        shadowStyle: true,
+        showCarouselArrows: true,
+        showCarouselDots: true,
+        carouselItemsVisible: true,
+        borderRadius: true,
+        customCss: true,
+        utmRules: true,
+        seoAutoSchema: true,
+        maxProducts: true,
+      },
+    })) || DEFAULT_WIDGET_CONFIG;
+
+  if (!config.appStatus) {
+    return json({ products: [], config: { ...config, appStatus: false } }, { headers: WIDGET_HEADERS });
   }
 
   const articleIds = getArticleIdCandidates(articleId);
-
-  // Fetch embedded products for this article
   let products = await prisma.articleProduct.findMany({
     where: {
       shop,
@@ -66,39 +126,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     });
   }
 
-  // Fetch shop config
-  const config = await prisma.shopConfig.findUnique({
-    where: { shop },
-    select: {
-      widgetStyle: true,
-      primaryColor: true,
-      showPrice: true,
-      showRating: true,
-      showAddToCart: true,
-      seoAutoSchema: true,
-      maxProducts: true,
-    },
-  });
-
   return json(
     {
-      products: products.slice(0, config?.maxProducts || 6),
-      config: config || {
-        widgetStyle: "carousel",
-        primaryColor: "#6366f1",
-        showPrice: true,
-        showRating: true,
-        showAddToCart: true,
-        seoAutoSchema: true,
-        maxProducts: 6,
-      },
+      products: products.slice(0, config.maxProducts || DEFAULT_WIDGET_CONFIG.maxProducts),
+      config,
     },
-    {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, max-age=60",
-      },
-    },
+    { headers: WIDGET_HEADERS },
   );
 };
 
