@@ -1056,7 +1056,7 @@ function TocPreview({ config }: { config: any }) {
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
-        <span style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "#374151" }}>
+        <span style={{ fontSize: "14px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#374151" }}>
           {config.tocTitle || CONTENT_NAV_DEFAULTS.tocTitle}
         </span>
         {config.tocAutoInsertEnabled && !isRail && (
