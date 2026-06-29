@@ -1,8 +1,8 @@
 import { ActionFunctionArgs, LoaderFunctionArgs, json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigate, useNavigation } from "@remix-run/react";
-import { Page, Layout, Card, IndexTable, TextField } from "@shopify/polaris";
+import { Page, Layout, Card, IndexTable, TextField, Banner } from "@shopify/polaris";
 import { useState, useCallback } from "react";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 
 interface ArticleData {
   id: string;
@@ -12,10 +12,17 @@ interface ArticleData {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, billing } = await authenticate.admin(request);
   const url = new URL(request.url);
   const idsParam = url.searchParams.get("ids");
   if (!idsParam) return redirect("/app/blogs");
+
+  // ── Plan enforcement: Bulk Review is Growth plan only ─────────────────
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  if (!limits.canBulkReview) {
+    return redirect(`/app/pricing?reason=bulk_edit&plan=${planKey}`);
+  }
+  // ──────────────────────────────────────────────────────────────────────
 
   const idArray = idsParam.split(',').map(id => `gid://shopify/Article/${id}`);
   

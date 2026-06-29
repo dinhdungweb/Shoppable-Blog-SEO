@@ -1,7 +1,7 @@
 {% comment %}
-  BP Shoppable Blog Widget — SEO Schema Block
-  Injects JSON-LD structured data for BlogPosting + Product entities.
-  No visual output — only <script> tags for search engines.
+  BP Shoppable Blog Widget - SEO Schema Block
+  Injects JSON-LD structured data for BlogPosting and optional BreadcrumbList.
+  No visual output, only script tags for search engines.
 {% endcomment %}
 
 {% if article %}
@@ -33,6 +33,7 @@
 }
 </script>
 
+{% if block.settings.include_breadcrumb_schema %}
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -60,6 +61,7 @@
 }
 </script>
 {% endif %}
+{% endif %}
 
 {% schema %}
 {
@@ -68,7 +70,13 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "This block automatically generates BlogPosting and BreadcrumbList JSON-LD structured data. No visual output — optimized for search engines only."
+      "content": "This block automatically generates BlogPosting and optional BreadcrumbList JSON-LD structured data."
+    },
+    {
+      "type": "checkbox",
+      "id": "include_breadcrumb_schema",
+      "label": "Include breadcrumb schema",
+      "default": true
     }
   ]
 }

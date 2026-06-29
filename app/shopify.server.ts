@@ -7,7 +7,8 @@ import {
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { GROWTH_PLAN, PRO_PLAN } from "./pricing-plans";
+import { GROWTH_PLAN, PAID_PLANS, PRO_PLAN, getPlanKey, getLimitsForPlan } from "./pricing-plans";
+import type { PlanKey, PlanLimits } from "./pricing-plans";
 
 export function isBillingTestMode() {
   return process.env.SHOPIFY_BILLING_TEST !== "false";
@@ -30,6 +31,11 @@ const shopify = shopifyApp({
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
   billing: {
+    /**
+     * Shopify Billing API: chỉ define paid plans ở đây.
+     * Free plan được enforce hoàn toàn trong app code (không dùng Billing API cho $0).
+     * Ref: https://shopify.dev/docs/apps/build/billing
+     */
     [PRO_PLAN]: {
       trialDays: 7,
       lineItems: [
@@ -68,3 +74,42 @@ export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;
 export const sessionStorage = shopify.sessionStorage;
+
+/**
+ * Resolve the currently active billing plan name for the authenticated merchant.
+ *
+ * IMPORTANT: Per Shopify docs, billing.check() must NOT be used inside the root
+ * layout to avoid redirect loops. Call this only in individual route loaders/actions
+ * where plan enforcement is needed.
+ *
+ * Returns the Shopify plan name string (e.g. "Shoppable Blog Pro") or "free".
+ */
+export async function getActivePlanName(
+  billing: Awaited<ReturnType<typeof authenticate.admin>>["billing"],
+): Promise<string> {
+  try {
+    const billingCheck = await billing.check({
+      plans: [...PAID_PLANS],
+      isTest: isBillingTestMode(),
+    });
+
+    if (billingCheck.hasActivePayment && billingCheck.appSubscriptions?.[0]?.name) {
+      return billingCheck.appSubscriptions[0].name;
+    }
+  } catch (err) {
+    console.error("[billing] getActivePlanName check failed:", err);
+  }
+  return "free";
+}
+
+/**
+ * Convenience: returns the local plan key and limits in one call.
+ */
+export async function getActivePlanAndLimits(
+  billing: Awaited<ReturnType<typeof authenticate.admin>>["billing"],
+): Promise<{ planKey: PlanKey; planName: string; limits: PlanLimits }> {
+  const planName = await getActivePlanName(billing);
+  const planKey = getPlanKey(planName);
+  const limits = getLimitsForPlan(planName);
+  return { planKey, planName, limits };
+}

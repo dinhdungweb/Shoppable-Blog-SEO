@@ -3,16 +3,22 @@
   Add [[SBS_PRODUCTS]] or block-specific markers such as [[SBS_PRODUCTS:block_abc]] in a blog article body.
 {% endcomment %}
 <script src="{{ 'sbs-widget.js' | asset_url }}" defer="defer"></script>
+{{ 'sbs-content-nav.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'sbs-content-nav.js' | asset_url }}" defer="defer"></script>
 
 {% liquid
   assign sbs_app_url = '/apps/shoppable-blog-seo'
   assign sbs_article_id = ''
+  assign sbs_article_url = canonical_url
   if article
     assign article_id_string = article.id | append: ''
     if article_id_string contains 'gid://'
       assign sbs_article_id = article_id_string
     else
       assign sbs_article_id = article_id_string | prepend: 'gid://shopify/Article/'
+    endif
+    if article.url
+      assign sbs_article_url = article.url | prepend: shop.url
     endif
   endif
 %}
@@ -26,6 +32,21 @@
   hidden
 ></div>
 
+{% if article %}
+  <div
+    class="bp-content-nav-config"
+    data-shop="{{ shop.permanent_domain }}"
+    data-app-url="{{ sbs_app_url }}"
+    data-home-label="{{ block.settings.home_label | escape }}"
+    data-home-url="{{ routes.root_url }}"
+    data-blog-title="{{ blog.title | escape }}"
+    data-blog-url="{{ blog.url }}"
+    data-article-title="{{ article.title | escape }}"
+    data-article-url="{{ sbs_article_url }}"
+    hidden
+  ></div>
+{% endif %}
+
 {% schema %}
 {
   "name": "Shoppable Blog Markers",
@@ -34,7 +55,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Enable this app embed, then place [[SBS_PRODUCTS]], [[SBS_PRODUCTS:carousel]], [[SBS_PRODUCTS:grid]], or block-specific markers like [[SBS_PRODUCTS:block_abc]] inside a blog article body."
+      "content": "Enable this app embed, then place product markers, [[SBS_BREADCRUMBS]], or [[SBS_TOC]] inside a blog article body."
     },
     {
       "type": "select",
@@ -51,6 +72,12 @@
           "label": "Grid"
         }
       ]
+    },
+    {
+      "type": "text",
+      "id": "home_label",
+      "label": "Home label for breadcrumbs",
+      "default": "Home"
     },
     {
       "type": "paragraph",

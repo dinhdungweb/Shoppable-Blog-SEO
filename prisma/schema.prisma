@@ -88,6 +88,28 @@ model ShopConfig {
   maxProducts   Int      @default(6)
   borderRadius  String   @default("8px")
   customCss     String?
+
+  // Content navigation
+  breadcrumbsEnabled          Boolean @default(true)
+  breadcrumbsStyle            String  @default("minimal")
+  breadcrumbsShowHome         Boolean @default(true)
+  breadcrumbsHomeLabel        String  @default("Home")
+  breadcrumbsShowBlog         Boolean @default(true)
+  breadcrumbsCurrentClickable Boolean @default(false)
+  breadcrumbsSeparator        String  @default("/")
+  tocEnabled                  Boolean @default(true)
+  tocAutoInsertEnabled        Boolean @default(true)
+  tocAutoInsertPosition       String  @default("after-title")
+  tocTitle                    String  @default("Table of contents")
+  tocLevels                   String  @default("h2,h3")
+  tocStyle                    String  @default("boxed")
+  tocLayout                   String  @default("vertical")
+  tocNumbering                Boolean @default(false)
+  tocSmoothScroll             Boolean @default(true)
+  tocMobileCollapsed          Boolean @default(true)
+  tocStickyOffset             Int     @default(96)
+  contentNavPrimaryColor      String  @default("#6366f1")
+  contentNavCustomCss         String?
   
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

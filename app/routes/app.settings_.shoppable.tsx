@@ -17,10 +17,12 @@ import {
 import {
   AlertTriangleIcon,
   CheckCircleIcon,
+  LockIcon,
+  StarFilledIcon,
   StoreIcon,
 } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import {
   ShoppableDisplayPreview,
@@ -28,8 +30,11 @@ import {
 } from "../components/ShoppableDisplayPreview";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+
+  // Check plan to determine access to Growth-only features
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
 
   let config = await prisma.shopConfig.findUnique({
     where: { shop },
@@ -41,7 +46,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
-  return { config };
+  return json({ config, canCustomCss: limits.canCustomCss, planKey });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -126,7 +131,7 @@ const CustomToggle = ({
 );
 
 export default function ShoppableDisplaySettings() {
-  const { config } = useLoaderData<typeof loader>();
+  const { config, canCustomCss, planKey } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -410,14 +415,45 @@ export default function ShoppableDisplaySettings() {
                   <CustomToggle checked={formState.openInNewTab !== false} onChange={(v) => handleChange("openInNewTab", v)} label="Open product in new tab" description="Links will open in a new browser tab" />
                 </BlockStack>
                 <Select label="Card position in article (coming soon)" options={["After paragraph", "End of article"]} value={formState.cardPosition} onChange={(v) => handleChange("cardPosition", v)} disabled />
-                <TextField
-                  label="Custom widget CSS"
-                  value={formState.customCss || ""}
-                  onChange={(v) => handleChange("customCss", v)}
-                  autoComplete="off"
-                  multiline={4}
-                  helpText="Advanced storefront CSS injected with the widget."
-                />
+                {canCustomCss ? (
+                  <TextField
+                    label="Custom widget CSS"
+                    value={formState.customCss || ""}
+                    onChange={(v) => handleChange("customCss", v)}
+                    autoComplete="off"
+                    multiline={4}
+                    helpText="Advanced storefront CSS injected with the widget."
+                  />
+                ) : (
+                  <div
+                    style={{
+                      border: "1px dashed #D4D4D4",
+                      borderRadius: "8px",
+                      padding: "16px",
+                      backgroundColor: "#FAFAFA",
+                    }}
+                  >
+                    <InlineStack gap="300" blockAlign="center">
+                      <Icon source={LockIcon} tone="subdued" />
+                      <BlockStack gap="050">
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">
+                          Custom widget CSS
+                        </Text>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          Advanced CSS injection is a{" "}
+                          <strong>Growth plan</strong> feature.
+                        </Text>
+                      </BlockStack>
+                      <Button
+                        size="slim"
+                        icon={StarFilledIcon}
+                        onClick={() => navigate("/app/pricing?reason=custom_css&plan=" + planKey)}
+                      >
+                        Upgrade
+                      </Button>
+                    </InlineStack>
+                  </div>
+                )}
               </BlockStack>
             </Card>
           </BlockStack>

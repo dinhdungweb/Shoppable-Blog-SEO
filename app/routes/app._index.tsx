@@ -47,7 +47,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 
 type DashboardArticle = {
@@ -96,12 +96,16 @@ const RECOMMENDED_ICON_MAP = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
 
+  // Resolve plan limits to determine the analytics window
+  const { planKey, limits } = await getActivePlanAndLimits(billing);
+  const windowDays = limits.analyticsWindowDays; // e.g. 7, 30, or 90
+
   const now = new Date();
-  const currentStart = startOfDay(new Date(now.getTime() - 29 * DAY_MS));
-  const previousStart = startOfDay(new Date(now.getTime() - 59 * DAY_MS));
+  const currentStart = startOfDay(new Date(now.getTime() - (windowDays - 1) * DAY_MS));
+  const previousStart = startOfDay(new Date(now.getTime() - (windowDays * 2 - 1) * DAY_MS));
 
   let blogs: any[] = [];
   let shopifyArticles: any[] = [];
@@ -316,6 +320,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shop,
     shopifyError,
     generatedAt: now.toISOString(),
+    planKey,
+    analyticsWindowDays: windowDays,
     metrics: currentMetrics,
     previousMetrics,
     chartData,
@@ -345,6 +351,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function Dashboard() {
   const {
     shopifyError,
+    planKey,
+    analyticsWindowDays,
     metrics,
     previousMetrics,
     chartData,
@@ -516,7 +524,12 @@ export default function Dashboard() {
                 <Text as="h2" variant="headingMd" fontWeight="bold">
                   Product engagement
                 </Text>
-                <Badge tone="info">Last 30 days</Badge>
+                <InlineStack gap="200" blockAlign="center">
+                  <Badge tone="info">Last {analyticsWindowDays} days</Badge>
+                  {planKey === "free" && (
+                    <Badge tone="attention">Free plan</Badge>
+                  )}
+                </InlineStack>
               </InlineStack>
 
               <Box>

@@ -1,0 +1,151 @@
+{% comment %}
+  Advanced visual breadcrumbs for blog articles.
+  Settings can use global app config or block-level overrides.
+{% endcomment %}
+<script src="{{ 'sbs-content-nav.js' | asset_url }}" defer="defer"></script>
+
+{% liquid
+  assign sbs_app_url = '/apps/shoppable-blog-seo'
+  assign sbs_article_url = canonical_url
+  if article and article.url
+    assign sbs_article_url = article.url | prepend: shop.url
+  endif
+%}
+
+{% if article %}
+  <nav
+    class="bp-content-nav bp-breadcrumbs"
+    data-bp-content-nav="breadcrumbs"
+    data-shop="{{ shop.permanent_domain }}"
+    data-app-url="{{ sbs_app_url }}"
+    data-enabled="{{ block.settings.enabled }}"
+    data-style="{{ block.settings.style }}"
+    data-show-home="{{ block.settings.show_home }}"
+    data-home-label="{{ block.settings.home_label | escape }}"
+    data-home-url="{{ routes.root_url }}"
+    data-show-blog="{{ block.settings.show_blog }}"
+    data-current-clickable="{{ block.settings.current_clickable }}"
+    data-separator="{{ block.settings.separator | escape }}"
+    data-blog-title="{{ blog.title | escape }}"
+    data-blog-url="{{ blog.url }}"
+    data-article-title="{{ article.title | escape }}"
+    data-article-url="{{ sbs_article_url }}"
+  >
+    <ol class="bp-breadcrumbs__list">
+      {% if block.settings.show_home %}
+        <li class="bp-breadcrumbs__item">
+          <a class="bp-breadcrumbs__link" href="{{ routes.root_url }}">{{ block.settings.home_label }}</a>
+        </li>
+      {% endif %}
+      {% if block.settings.show_blog and blog %}
+        <li class="bp-breadcrumbs__item">
+          <span class="bp-breadcrumbs__separator" aria-hidden="true">{{ block.settings.separator }}</span>
+          <a class="bp-breadcrumbs__link" href="{{ blog.url }}">{{ blog.title }}</a>
+        </li>
+      {% endif %}
+      <li class="bp-breadcrumbs__item">
+        <span class="bp-breadcrumbs__separator" aria-hidden="true">{{ block.settings.separator }}</span>
+        <span class="bp-breadcrumbs__current" aria-current="page">{{ article.title }}</span>
+      </li>
+    </ol>
+  </nav>
+
+  <script type="application/ld+json" id="bp-breadcrumbs-jsonld">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {% assign bp_position = 0 %}
+      {% assign bp_has_previous = false %}
+      {% if block.settings.show_home %}
+        {% assign bp_position = bp_position | plus: 1 %}
+        {
+          "@type": "ListItem",
+          "position": {{ bp_position }},
+          "name": {{ block.settings.home_label | json }},
+          "item": {{ shop.url | json }}
+        }
+        {% assign bp_has_previous = true %}
+      {% endif %}
+      {% if block.settings.show_blog and blog %}
+        {% assign bp_position = bp_position | plus: 1 %}
+        {% if bp_has_previous %},{% endif %}
+        {
+          "@type": "ListItem",
+          "position": {{ bp_position }},
+          "name": {{ blog.title | json }},
+          "item": {{ blog.url | prepend: shop.url | json }}
+        }
+        {% assign bp_has_previous = true %}
+      {% endif %}
+      {% assign bp_position = bp_position | plus: 1 %}
+      {% if bp_has_previous %},{% endif %}
+      {
+        "@type": "ListItem",
+        "position": {{ bp_position }},
+        "name": {{ article.title | json }},
+        "item": {{ sbs_article_url | json }}
+      }
+    ]
+  }
+  </script>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Advanced Breadcrumbs",
+  "target": "section",
+  "stylesheet": "sbs-content-nav.css",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enabled",
+      "label": "Show breadcrumbs",
+      "default": true
+    },
+    {
+      "type": "select",
+      "id": "style",
+      "label": "Style",
+      "default": "global",
+      "options": [
+        { "value": "global", "label": "Use app settings" },
+        { "value": "minimal", "label": "Minimal" },
+        { "value": "slash", "label": "Slash" },
+        { "value": "pills", "label": "Pills" },
+        { "value": "boxed", "label": "Boxed" }
+      ]
+    },
+    {
+      "type": "checkbox",
+      "id": "show_home",
+      "label": "Show home link",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "home_label",
+      "label": "Home label",
+      "default": "Home"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_blog",
+      "label": "Show blog link",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "current_clickable",
+      "label": "Make current article clickable",
+      "default": false
+    },
+    {
+      "type": "text",
+      "id": "separator",
+      "label": "Separator",
+      "default": "/"
+    }
+  ]
+}
+{% endschema %}

@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { Form, useActionData, useLoaderData } from "@remix-run/react";
 import {
   Badge,
@@ -18,12 +18,13 @@ import {
 import {
   ChartVerticalIcon,
   CheckCircleIcon,
+  LockIcon,
   MagicIcon,
   ProductIcon,
   StarFilledIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { GROWTH_PLAN, PAID_PLANS, PRO_PLAN } from "../pricing-plans";
+import { GROWTH_PLAN, PAID_PLANS, PRO_PLAN, PLAN_LIMITS } from "../pricing-plans";
 import { authenticate, isBillingTestMode } from "../shopify.server";
 
 type PricingPlan = {
@@ -53,7 +54,13 @@ const PRICING_PLANS: PricingPlan[] = [
       "Rule-based SEO scan",
       "Basic analytics dashboard",
     ],
-    limits: ["Manual workflows", "No priority support"],
+    limits: [
+      `Up to ${PLAN_LIMITS.free.shoppableArticles} shoppable posts`,
+      `${PLAN_LIMITS.free.analyticsWindowDays}-day analytics window`,
+      "No bulk review workflow",
+      "No custom widget CSS",
+      "No priority support",
+    ],
   },
   {
     key: "pro",
@@ -65,13 +72,14 @@ const PRICING_PLANS: PricingPlan[] = [
     badge: "Recommended",
     icon: ChartVerticalIcon,
     features: [
-      "Unlimited shoppable blog posts",
+      `Up to ${PLAN_LIMITS.pro.shoppableArticles} shoppable blog posts`,
+      `${PLAN_LIMITS.pro.analyticsWindowDays}-day analytics window`,
       "Carousel and grid display customization",
       "SEO optimizer with post-level actions",
       "Conversion tracking and attribution",
       "7-day free trial",
     ],
-    limits: ["Best for single-store teams"],
+    limits: ["No bulk review workflow", "No custom widget CSS"],
   },
   {
     key: "growth",
@@ -84,18 +92,31 @@ const PRICING_PLANS: PricingPlan[] = [
     icon: StarFilledIcon,
     features: [
       "Everything in Pro",
+      `${PLAN_LIMITS.growth.analyticsWindowDays}-day analytics window`,
       "Advanced analytics and product performance views",
       "Bulk review workflows",
       "Custom widget CSS controls",
       "Priority support",
       "7-day free trial",
     ],
-    limits: ["AI content tools will remain marked coming soon until connected"],
+    limits: [],
   },
 ];
 
+/** Contextual upgrade reason messages shown via ?reason= query param */
+const UPGRADE_REASON_MESSAGES: Record<string, string> = {
+  bulk_edit:
+    "Bulk Review is a Growth plan feature. Upgrade to review and edit multiple posts at once.",
+  shoppable_articles_free: `Your Free plan allows up to ${PLAN_LIMITS.free.shoppableArticles} shoppable posts. Upgrade to Pro (up to 100 posts) or Growth (unlimited).`,
+  shoppable_articles_pro: `Your Pro plan allows up to ${PLAN_LIMITS.pro.shoppableArticles} shoppable posts. Upgrade to Growth for unlimited shoppable posts.`,
+  custom_css: "Custom widget CSS is a Growth plan feature. Upgrade to control your widget styling.",
+};
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { billing } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const reason = url.searchParams.get("reason") || "";
+  const fromPlan = url.searchParams.get("plan") || "";
 
   let activePlan = "Free";
   let activeSubscription: {
@@ -128,16 +149,44 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     activeSubscription,
     billingError,
     isTestMode: isBillingTestMode(),
+    upgradeReason: reason,
+    fromPlan,
   });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { billing } = await authenticate.admin(request);
+  const { billing, session, redirect } = await authenticate.admin(request);
   const formData = await request.formData();
   const selectedPlan = String(formData.get("plan") || "");
 
   if (selectedPlan === "free") {
-    return redirect("/app/pricing");
+    try {
+      let billingCheck = await billing.check({
+        plans: [...PAID_PLANS],
+        isTest: isBillingTestMode(),
+      });
+
+      if (!billingCheck.hasActivePayment) {
+        billingCheck = await billing.check({
+          plans: [...PAID_PLANS],
+        });
+      }
+
+      const activeSubscription = billingCheck.appSubscriptions?.[0];
+
+      if (billingCheck.hasActivePayment && activeSubscription?.id) {
+        await billing.cancel({
+          subscriptionId: activeSubscription.id,
+          isTest: activeSubscription.test ?? isBillingTestMode(),
+          prorate: true,
+        });
+      }
+
+      return redirect("/app/pricing");
+    } catch (error) {
+      console.error("Billing cancel failed:", error);
+      return json({ error: "Could not switch to the Free plan. Please try again." }, { status: 500 });
+    }
   }
 
   if (!PAID_PLANS.includes(selectedPlan as (typeof PAID_PLANS)[number])) {
@@ -148,14 +197,48 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return billing.request({
     plan: selectedPlan as typeof PRO_PLAN | typeof GROWTH_PLAN,
     isTest: isBillingTestMode(),
-    returnUrl: `${url.origin}/app/pricing`,
+    returnUrl: getBillingReturnUrl(request, url, session.shop),
   });
 };
 
+function getBillingReturnUrl(request: Request, url: URL, shop: string) {
+  const host = getSearchParam(url, request, "host");
+  const apiKey = process.env.SHOPIFY_API_KEY;
+
+  if (apiKey) {
+    const shopAdminSlug = shop.replace(/\.myshopify\.com$/i, "");
+    return `https://admin.shopify.com/store/${encodeURIComponent(shopAdminSlug)}/apps/${encodeURIComponent(apiKey)}/app/pricing`;
+  }
+
+  const fallbackUrl = new URL("/app/pricing", url.origin);
+  fallbackUrl.searchParams.set("shop", shop);
+  if (host) {
+    fallbackUrl.searchParams.set("host", host);
+  }
+
+  return fallbackUrl.toString();
+}
+
+function getSearchParam(url: URL, request: Request, param: string) {
+  const currentValue = url.searchParams.get(param);
+  if (currentValue) return currentValue;
+
+  const referer = request.headers.get("referer");
+  if (!referer) return null;
+
+  try {
+    return new URL(referer).searchParams.get(param);
+  } catch {
+    return null;
+  }
+}
+
 export default function PricingPage() {
-  const { activePlan, activeSubscription, billingError, isTestMode } = useLoaderData<typeof loader>();
+  const { activePlan, activeSubscription, billingError, isTestMode, upgradeReason, fromPlan } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const activePlanKey = getActivePlanKey(activePlan);
+  const upgradeMessage = UPGRADE_REASON_MESSAGES[upgradeReason] || "";
 
   return (
     <Page>
@@ -170,7 +253,8 @@ export default function PricingPage() {
               {activeSubscription?.status && <Badge tone="success">{activeSubscription.status}</Badge>}
             </InlineStack>
             <Text as="p" variant="bodyMd" tone="subdued">
-              Choose the plan that matches how aggressively you want to turn blog content into product discovery and measurable revenue.
+              Choose the plan that matches how aggressively you want to turn blog content into
+              product discovery and measurable revenue.
             </Text>
           </BlockStack>
           <InlineStack gap="200" blockAlign="center">
@@ -180,9 +264,21 @@ export default function PricingPage() {
           </InlineStack>
         </InlineStack>
 
+        {/* Contextual upgrade banner — shown when redirected from a gated feature */}
+        {upgradeMessage && (
+          <Banner
+            tone="warning"
+            title="Upgrade required"
+            action={{ content: "View Growth plan", url: "#growth" }}
+          >
+            <p>{upgradeMessage}</p>
+          </Banner>
+        )}
+
         {isTestMode && (
           <Banner tone="info">
-            Billing is running in test mode. Set <code>SHOPIFY_BILLING_TEST=false</code> before charging production stores.
+            Billing is running in test mode. Set <code>SHOPIFY_BILLING_TEST=false</code> before
+            charging production stores.
           </Banner>
         )}
 
@@ -197,6 +293,7 @@ export default function PricingPage() {
             return (
               <div
                 key={plan.key}
+                id={plan.key}
                 style={{
                   height: "100%",
                   backgroundColor: "#fff",
@@ -207,37 +304,65 @@ export default function PricingPage() {
                 }}
               >
                 <Box padding="400">
-                    <BlockStack gap="300">
-                      <InlineStack align="space-between" blockAlign="center" gap="300">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Icon source={plan.icon} tone={isFeatured ? "magic" : "base"} />
-                          <Text as="h2" variant="headingMd" fontWeight="bold">
-                            {plan.name}
-                          </Text>
-                        </InlineStack>
-                        {plan.badge && <Badge tone={isFeatured ? "magic" : "info"}>{plan.badge}</Badge>}
-                      </InlineStack>
-
-                      <BlockStack gap="100">
-                        <InlineStack gap="150" blockAlign="end">
-                          <Text as="span" variant="headingXl" fontWeight="bold">
-                            {plan.price}
-                          </Text>
-                          <Text as="span" variant="bodyMd" tone="subdued">
-                            {plan.interval}
-                          </Text>
-                        </InlineStack>
-                        <Text as="p" variant="bodyMd" tone="subdued">
-                          {plan.description}
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center" gap="300">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Icon source={plan.icon} tone={isFeatured ? "magic" : "base"} />
+                        <Text as="h2" variant="headingMd" fontWeight="bold">
+                          {plan.name}
                         </Text>
-                      </BlockStack>
+                      </InlineStack>
+                      {plan.badge && (
+                        <Badge tone={isFeatured ? "magic" : "info"}>{plan.badge}</Badge>
+                      )}
+                    </InlineStack>
 
-                      <Divider />
+                    <BlockStack gap="100">
+                      <InlineStack gap="150" blockAlign="end">
+                        <Text as="span" variant="headingXl" fontWeight="bold">
+                          {plan.price}
+                        </Text>
+                        <Text as="span" variant="bodyMd" tone="subdued">
+                          {plan.interval}
+                        </Text>
+                      </InlineStack>
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        {plan.description}
+                      </Text>
+                    </BlockStack>
 
-                      <BlockStack gap="200">
-                        {plan.features.map((feature) => (
+                    <Divider />
+
+                    {/* Features (included) */}
+                    <BlockStack gap="200">
+                      {plan.features.map((feature) => (
+                        <div
+                          key={feature}
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: "8px",
+                            minWidth: 0,
+                          }}
+                        >
+                          <span
+                            style={{ display: "flex", flexShrink: 0, width: "16px", height: "16px" }}
+                          >
+                            <Icon source={CheckCircleIcon} tone="success" />
+                          </span>
+                          <Text as="span" variant="bodyMd">
+                            {feature}
+                          </Text>
+                        </div>
+                      ))}
+                    </BlockStack>
+
+                    {/* Limits (not included) */}
+                    {!!plan.limits.length && (
+                      <BlockStack gap="150">
+                        {plan.limits.map((limit) => (
                           <div
-                            key={feature}
+                            key={limit}
                             style={{
                               display: "flex",
                               alignItems: "flex-start",
@@ -245,33 +370,36 @@ export default function PricingPage() {
                               minWidth: 0,
                             }}
                           >
-                            <span style={{ display: "flex", flexShrink: 0, width: "16px", height: "16px" }}>
-                              <Icon source={CheckCircleIcon} tone="success" />
+                            <span
+                              style={{
+                                display: "flex",
+                                flexShrink: 0,
+                                width: "16px",
+                                height: "16px",
+                              }}
+                            >
+                              <Icon source={LockIcon} tone="subdued" />
                             </span>
-                            <Text as="span" variant="bodyMd">
-                              {feature}
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {limit}
                             </Text>
                           </div>
                         ))}
                       </BlockStack>
+                    )}
 
-                      {!!plan.limits.length && (
-                        <BlockStack gap="150">
-                          {plan.limits.map((limit) => (
-                            <Text key={limit} as="p" variant="bodySm" tone="subdued">
-                              {limit}
-                            </Text>
-                          ))}
-                        </BlockStack>
-                      )}
-
-                      <Form method="post">
-                        <input type="hidden" name="plan" value={plan.billingPlan || plan.key} />
-                        <Button submit fullWidth variant={isFeatured ? "primary" : "secondary"} disabled={isCurrent}>
-                          {isCurrent ? "Current plan" : plan.billingPlan ? "Choose plan" : "Stay on Free"}
-                        </Button>
-                      </Form>
-                    </BlockStack>
+                    <Form method="post">
+                      <input type="hidden" name="plan" value={plan.billingPlan || plan.key} />
+                      <Button
+                        submit
+                        fullWidth
+                        variant={isFeatured ? "primary" : "secondary"}
+                        disabled={isCurrent}
+                      >
+                        {isCurrent ? "Current plan" : plan.billingPlan ? "Choose plan" : "Switch to Free"}
+                      </Button>
+                    </Form>
+                  </BlockStack>
                 </Box>
               </div>
             );
@@ -287,7 +415,8 @@ export default function PricingPage() {
                   AI features are not billed yet
                 </Text>
                 <Text as="p" variant="bodyMd" tone="subdued">
-                  AI generation and AI writing rules remain marked coming soon until an AI provider and usage-cost model are connected.
+                  AI generation and AI writing rules remain marked coming soon until an AI provider
+                  and usage-cost model are connected.
                 </Text>
               </BlockStack>
             </InlineStack>

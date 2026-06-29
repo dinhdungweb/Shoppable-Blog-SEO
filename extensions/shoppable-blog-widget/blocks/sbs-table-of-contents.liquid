@@ -1,0 +1,113 @@
+{% comment %}
+  Advanced table of contents generated from article headings.
+{% endcomment %}
+<script src="{{ 'sbs-content-nav.js' | asset_url }}" defer="defer"></script>
+
+{% liquid
+  assign sbs_app_url = '/apps/shoppable-blog-seo'
+%}
+
+{% if article %}
+  <section
+    class="bp-content-nav bp-toc"
+    data-bp-content-nav="toc"
+    data-shop="{{ shop.permanent_domain }}"
+    data-app-url="{{ sbs_app_url }}"
+    data-enabled="{{ block.settings.enabled }}"
+    data-style="{{ block.settings.style }}"
+    data-title="{{ block.settings.title | escape }}"
+    data-levels="{{ block.settings.levels }}"
+    data-numbering="{{ block.settings.numbering }}"
+    data-layout="{{ block.settings.layout }}"
+    data-smooth-scroll="{{ block.settings.smooth_scroll }}"
+    data-mobile-collapsed="{{ block.settings.mobile_collapsed }}"
+    data-sticky-offset="{{ block.settings.sticky_offset }}"
+  ></section>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Table of Contents",
+  "target": "section",
+  "stylesheet": "sbs-content-nav.css",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enabled",
+      "label": "Show table of contents",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "title",
+      "label": "Title",
+      "default": "Table of contents"
+    },
+    {
+      "type": "select",
+      "id": "layout",
+      "label": "Layout",
+      "default": "global",
+      "options": [
+        { "value": "global", "label": "Use app settings" },
+        { "value": "vertical", "label": "Vertical" },
+        { "value": "horizontal", "label": "Horizontal" },
+        { "value": "multicolumn", "label": "Multi-column" },
+        { "value": "left-rail", "label": "Left rail (sticky)" },
+        { "value": "right-rail", "label": "Right rail (sticky)" }
+      ]
+    },
+    {
+      "type": "select",
+      "id": "style",
+      "label": "Style",
+      "default": "global",
+      "options": [
+        { "value": "global", "label": "Use app settings" },
+        { "value": "simple", "label": "Simple" },
+        { "value": "boxed", "label": "Boxed" },
+        { "value": "collapsible", "label": "Collapsible" }
+      ]
+    },
+    {
+      "type": "select",
+      "id": "levels",
+      "label": "Heading levels",
+      "default": "global",
+      "options": [
+        { "value": "global", "label": "Use app settings" },
+        { "value": "h2", "label": "H2 only" },
+        { "value": "h2,h3", "label": "H2 and H3" },
+        { "value": "h2,h3,h4", "label": "H2, H3 and H4" }
+      ]
+    },
+    {
+      "type": "checkbox",
+      "id": "numbering",
+      "label": "Show numbering",
+      "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "smooth_scroll",
+      "label": "Smooth scroll",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "mobile_collapsed",
+      "label": "Collapse on mobile",
+      "default": true
+    },
+    {
+      "type": "range",
+      "id": "sticky_offset",
+      "min": 0,
+      "max": 240,
+      "step": 8,
+      "label": "Rail sticky offset",
+      "default": 96
+    }
+  ]
+}
+{% endschema %}

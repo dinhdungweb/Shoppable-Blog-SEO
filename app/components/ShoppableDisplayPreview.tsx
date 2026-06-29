@@ -273,9 +273,9 @@ export function ShoppableDisplayPreview({
       <div
         style={{
           padding: "16px",
-          backgroundColor: "#F9FAFB",
+          backgroundColor: "transparent",
           borderRadius: previewRadius,
-          border: "1px solid #EBEBEB",
+          border: 0,
         }}
       >
         {isCarouselMode ? (

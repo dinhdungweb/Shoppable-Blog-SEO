@@ -25,3 +25,13 @@ handle = "shoppable-blog-widget"
   type = "sbs-article-embed"
   name = "Shoppable Blog Markers"
   target = "body"
+
+  [[extensions.blocks]]
+  type = "sbs-breadcrumbs"
+  name = "Advanced Breadcrumbs"
+  target = "section"
+
+  [[extensions.blocks]]
+  type = "sbs-table-of-contents"
+  name = "Table of Contents"
+  target = "section"

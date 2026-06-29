@@ -44,6 +44,7 @@ import {
   CodeIcon,
   DeleteIcon,
   ExternalIcon,
+  HomeIcon,
   ImageIcon,
   LinkIcon,
   ListBulletedIcon,
@@ -65,8 +66,9 @@ import {
   InfoIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
+import { formatLimit } from "../pricing-plans";
 
 type SeoIssue = {
   type: string;
@@ -306,7 +308,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const defaultAuthorName = DEFAULT_AUTHOR_NAME;
   const rawArticleParam = params.blogId || "";
@@ -611,6 +613,37 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const articleHandle = cleanHandle(cleanString(formData.get("articleHandle")));
     const blogId = cleanString(formData.get("blogId"));
     const blockId = cleanProductBlockId(cleanString(formData.get("blockId")));
+
+    // ── Plan limit check ───────────────────────────────────────────────────
+    const { planKey, limits } = await getActivePlanAndLimits(billing);
+
+    // Check shoppableArticles limit: only applies if this article has NO active
+    // products yet (i.e. it would become a new shoppable post).
+    if (limits.shoppableArticles !== Infinity) {
+      const articlesWithProducts = await prisma.articleProduct.groupBy({
+        by: ["articleId"],
+        where: { shop, isActive: true },
+      });
+      const alreadyShoppable = articlesWithProducts.some((a) => a.articleId === articleId);
+      if (!alreadyShoppable && articlesWithProducts.length >= limits.shoppableArticles) {
+        const upgradeTarget = planKey === "free" ? "Pro" : "Growth";
+        const upgradeDesc = planKey === "free"
+          ? "Pro allows up to 100 shoppable posts"
+          : "Growth allows unlimited shoppable posts";
+        return json(
+          {
+            success: false,
+            action: "limit_reached",
+            limitType: "shoppableArticles",
+            limitValue: limits.shoppableArticles,
+            planKey,
+            error: `Your ${planKey === "free" ? "Free" : "Pro"} plan allows up to ${formatLimit(limits.shoppableArticles)} shoppable posts. Upgrade to ${upgradeTarget} — ${upgradeDesc}.`,
+          },
+          { status: 403 },
+        );
+      }
+    }
+    // ──────────────────────────────────────────────────────────────────────
 
     const maxPos = await prisma.articleProduct.findFirst({
       where: { shop, articleId, blockId },
@@ -1053,6 +1086,12 @@ export default function ArticleDetail() {
           ? `${addedCount} product${addedCount === 1 ? "" : "s"} added`
           : "Product selection unchanged",
       );
+    }
+
+    if (fetcherData.action === "limit_reached") {
+      shopify.toast.show(fetcherData.error || "Plan limit reached. Upgrade to continue.", {
+        isError: true,
+      });
     }
 
     if (fetcherData.action === "product_removed") {
@@ -2360,6 +2399,20 @@ function RichArticleEditor({
     onProductBlockInserted?.(blockId);
   };
 
+  const insertBreadcrumbsMarker = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    insertHtml(`<p>[[SBS_BREADCRUMBS]]</p>`);
+  };
+
+  const insertTocMarker = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    insertHtml(`<p>[[SBS_TOC]]</p>`);
+  };
+
   const applyTextColor = (value: string) => {
     if (!value) return;
     runCommand("foreColor", value);
@@ -2667,6 +2720,28 @@ function RichArticleEditor({
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <Icon source={ProductIcon} tone="base" /> Products
+                </div>
+              </button>
+              <button
+                type="button"
+                className="bp-editor-icon-button bp-editor-products-button"
+                title="Insert breadcrumbs marker"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={insertBreadcrumbsMarker}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Icon source={HomeIcon} tone="base" /> Breadcrumbs
+                </div>
+              </button>
+              <button
+                type="button"
+                className="bp-editor-icon-button bp-editor-products-button"
+                title="Insert table of contents marker"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={insertTocMarker}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Icon source={ListBulletedIcon} tone="base" /> TOC
                 </div>
               </button>
             </>

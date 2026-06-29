@@ -11,6 +11,12 @@
     },
     "sbs-article-embed": {
       "name": "Shoppable Blog Markers"
+    },
+    "sbs-breadcrumbs": {
+      "name": "Advanced Breadcrumbs"
+    },
+    "sbs-table-of-contents": {
+      "name": "Table of Contents"
     }
   }
 }
