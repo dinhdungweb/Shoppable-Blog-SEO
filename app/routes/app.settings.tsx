@@ -32,7 +32,7 @@ import {
   HomeIcon,
 } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import {
   ShoppableDisplayPreview,
@@ -52,8 +52,9 @@ import {
 } from "../content-navigation";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
 
   let config = await prisma.shopConfig.findUnique({
     where: { shop },
@@ -65,12 +66,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
-  return { config: { ...config, ...normalizeContentNavConfig(config) } };
+  return {
+    config: { ...config, ...normalizeContentNavConfig(config) },
+    canContentNavigation: limits.canContentNavigation,
+    canCustomCss: limits.canCustomCss,
+    planKey,
+  };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const { limits } = await getActivePlanAndLimits(billing);
   const formData = await request.formData();
   const maxProducts = Math.max(1, Math.min(12, Number(formData.get("maxProducts") || 6) || 6));
   const gridColumns = Math.max(2, Math.min(4, Number(formData.get("gridColumns") || 3) || 3));
@@ -102,7 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     showCarouselDots: formData.get("showCarouselDots") === "true",
     carouselItemsVisible,
     borderRadius: formData.get("borderRadius") as string,
-    customCss: formData.get("customCss") as string,
+    ...(limits.canCustomCss ? { customCss: formData.get("customCss") as string } : {}),
     metaTitleTemplate: formData.get("metaTitleTemplate") as string,
     metaDescriptionTemplate: formData.get("metaDescriptionTemplate") as string,
     urlHandleRules: formData.get("urlHandleRules") as string,
@@ -117,34 +124,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     autoGenerateAltText: formData.get("autoGenerateAltText") === "true",
     requireApproval: formData.get("requireApproval") === "true",
     forbiddenWords: formData.get("forbiddenWords") as string,
-    breadcrumbsEnabled: formData.get("breadcrumbsEnabled") === "true",
-    breadcrumbsStyle: pickValue(
-      formData.get("breadcrumbsStyle"),
-      BREADCRUMB_STYLE_OPTIONS,
-      CONTENT_NAV_DEFAULTS.breadcrumbsStyle,
-    ),
-    breadcrumbsShowHome: formData.get("breadcrumbsShowHome") === "true",
-    breadcrumbsHomeLabel: String(formData.get("breadcrumbsHomeLabel") || "Home").trim() || "Home",
-    breadcrumbsShowBlog: formData.get("breadcrumbsShowBlog") === "true",
-    breadcrumbsCurrentClickable: formData.get("breadcrumbsCurrentClickable") === "true",
-    breadcrumbsSeparator: String(formData.get("breadcrumbsSeparator") || "/").trim().slice(0, 8) || "/",
-    tocEnabled: formData.get("tocEnabled") === "true",
-    tocAutoInsertEnabled: formData.get("tocAutoInsertEnabled") === "true",
-    tocAutoInsertPosition: pickValue(
-      formData.get("tocAutoInsertPosition"),
-      TOC_AUTO_INSERT_POSITION_OPTIONS,
-      CONTENT_NAV_DEFAULTS.tocAutoInsertPosition,
-    ),
-    tocTitle: String(formData.get("tocTitle") || "Table of contents").trim() || "Table of contents",
-    tocLevels: pickValue(formData.get("tocLevels"), TOC_LEVEL_OPTIONS, CONTENT_NAV_DEFAULTS.tocLevels),
-    tocStyle: pickValue(formData.get("tocStyle"), TOC_STYLE_OPTIONS, CONTENT_NAV_DEFAULTS.tocStyle),
-    tocLayout: pickValue(formData.get("tocLayout"), TOC_LAYOUT_OPTIONS, CONTENT_NAV_DEFAULTS.tocLayout),
-    tocNumbering: formData.get("tocNumbering") === "true",
-    tocSmoothScroll: formData.get("tocSmoothScroll") === "true",
-    tocMobileCollapsed: formData.get("tocMobileCollapsed") === "true",
-    tocStickyOffset: clampContentNavNumber(formData.get("tocStickyOffset"), 0, 240, CONTENT_NAV_DEFAULTS.tocStickyOffset),
-    contentNavPrimaryColor: normalizeContentNavHexColor(formData.get("contentNavPrimaryColor")),
-    contentNavCustomCss: String(formData.get("contentNavCustomCss") || ""),
+    ...(limits.canContentNavigation
+      ? {
+          breadcrumbsEnabled: formData.get("breadcrumbsEnabled") === "true",
+          breadcrumbsStyle: pickValue(
+            formData.get("breadcrumbsStyle"),
+            BREADCRUMB_STYLE_OPTIONS,
+            CONTENT_NAV_DEFAULTS.breadcrumbsStyle,
+          ),
+          breadcrumbsShowHome: formData.get("breadcrumbsShowHome") === "true",
+          breadcrumbsHomeLabel: String(formData.get("breadcrumbsHomeLabel") || "Home").trim() || "Home",
+          breadcrumbsShowBlog: formData.get("breadcrumbsShowBlog") === "true",
+          breadcrumbsCurrentClickable: formData.get("breadcrumbsCurrentClickable") === "true",
+          breadcrumbsSeparator: String(formData.get("breadcrumbsSeparator") || "/").trim().slice(0, 8) || "/",
+          tocEnabled: formData.get("tocEnabled") === "true",
+          tocAutoInsertEnabled: formData.get("tocAutoInsertEnabled") === "true",
+          tocAutoInsertPosition: pickValue(
+            formData.get("tocAutoInsertPosition"),
+            TOC_AUTO_INSERT_POSITION_OPTIONS,
+            CONTENT_NAV_DEFAULTS.tocAutoInsertPosition,
+          ),
+          tocTitle: String(formData.get("tocTitle") || "Table of contents").trim() || "Table of contents",
+          tocLevels: pickValue(formData.get("tocLevels"), TOC_LEVEL_OPTIONS, CONTENT_NAV_DEFAULTS.tocLevels),
+          tocStyle: pickValue(formData.get("tocStyle"), TOC_STYLE_OPTIONS, CONTENT_NAV_DEFAULTS.tocStyle),
+          tocLayout: pickValue(formData.get("tocLayout"), TOC_LAYOUT_OPTIONS, CONTENT_NAV_DEFAULTS.tocLayout),
+          tocNumbering: formData.get("tocNumbering") === "true",
+          tocSmoothScroll: formData.get("tocSmoothScroll") === "true",
+          tocMobileCollapsed: formData.get("tocMobileCollapsed") === "true",
+          tocStickyOffset: clampContentNavNumber(formData.get("tocStickyOffset"), 0, 240, CONTENT_NAV_DEFAULTS.tocStickyOffset),
+          contentNavPrimaryColor: normalizeContentNavHexColor(formData.get("contentNavPrimaryColor")),
+          ...(limits.canCustomCss ? { contentNavCustomCss: String(formData.get("contentNavCustomCss") || "") } : {}),
+        }
+      : {}),
   };
 
   await prisma.shopConfig.update({
@@ -191,7 +202,7 @@ const CustomToggle = ({
 );
 
 export default function Settings() {
-  const { config } = useLoaderData<typeof loader>();
+  const { config, canContentNavigation, canCustomCss } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
 
@@ -237,12 +248,20 @@ export default function Settings() {
   const settingsTabs = [
     { id: 'general', content: 'General', panelID: 'general-panel' },
     { id: 'display', content: 'Shoppable display', panelID: 'display-panel' },
-    { id: 'content-navigation', content: 'Content navigation', panelID: 'content-navigation-panel' },
+    ...(canContentNavigation
+      ? [{ id: 'content-navigation', content: 'Content navigation', panelID: 'content-navigation-panel' }]
+      : []),
     { id: 'seo', content: 'SEO rules', panelID: 'seo-panel' },
     { id: 'tracking', content: 'Tracking', panelID: 'tracking-panel' },
     { id: 'ai', content: 'AI writing', panelID: 'ai-panel' },
     { id: 'danger', content: 'Danger zone', panelID: 'danger-panel' },
   ];
+  const selectedTabId = settingsTabs[selectedTab]?.id || 'general';
+  useEffect(() => {
+    if (!settingsTabs[selectedTab]) {
+      setSelectedTab(0);
+    }
+  }, [selectedTab, settingsTabs]);
   const isCarouselMode = (formState.widgetStyle || 'carousel') === 'carousel';
   const primaryColor = normalizeWidgetHexColor(formState.primaryColor);
   const contentNavPrimaryColor = normalizeContentNavHexColor(formState.contentNavPrimaryColor);
@@ -311,8 +330,8 @@ export default function Settings() {
             <Tabs tabs={settingsTabs} selected={selectedTab} onSelect={setSelectedTab} />
           </div>
 
-          <div id={settingsTabs[selectedTab].panelID}>
-          {selectedTab === 0 && (
+          <div id={settingsTabs[selectedTab]?.panelID || 'general-panel'}>
+          {selectedTabId === 'general' && (
             <Card padding="400">
               <BlockStack gap="400">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -350,7 +369,7 @@ export default function Settings() {
             </Card>
           )}
 
-          {selectedTab === 1 && (
+          {selectedTabId === 'display' && (
             <InlineGrid columns={{ xs: 1, lg: 'minmax(380px, 1fr) minmax(420px, 1fr)' }} gap="400">
               <BlockStack gap="400">
                 <Card padding="400">
@@ -539,13 +558,15 @@ export default function Settings() {
                       <CustomToggle checked={formState.showVariantSelector === true} onChange={(v) => handleChange('showVariantSelector', v)} label="Show variant selector" description="Coming soon" disabled />
                       <CustomToggle checked={formState.openInNewTab !== false} onChange={(v) => handleChange('openInNewTab', v)} label="Open product in new tab" />
                     </BlockStack>
-                    <TextField
-                      label="Custom widget CSS"
-                      value={formState.customCss || ''}
-                      onChange={(v) => handleChange('customCss', v)}
-                      autoComplete="off"
-                      multiline={4}
-                    />
+                    {canCustomCss && (
+                      <TextField
+                        label="Custom widget CSS"
+                        value={formState.customCss || ''}
+                        onChange={(v) => handleChange('customCss', v)}
+                        autoComplete="off"
+                        multiline={4}
+                      />
+                    )}
                   </BlockStack>
                 </Card>
               </BlockStack>
@@ -556,7 +577,7 @@ export default function Settings() {
             </InlineGrid>
           )}
 
-          {selectedTab === 2 && (
+          {selectedTabId === 'content-navigation' && (
             <InlineGrid columns={{ xs: 1, lg: 'minmax(380px, 1fr) minmax(420px, 1fr)' }} gap="400">
               <BlockStack gap="400">
                 <Card padding="400">
@@ -749,16 +770,18 @@ export default function Settings() {
                   </BlockStack>
                 </Card>
 
-                <Card padding="400">
-                  <TextField
-                    label="Custom content navigation CSS"
-                    value={formState.contentNavCustomCss || ''}
-                    onChange={(value) => handleChange('contentNavCustomCss', value)}
-                    autoComplete="off"
-                    multiline={5}
-                    helpText="Injected only with breadcrumbs and table of contents."
-                  />
-                </Card>
+                {canCustomCss && (
+                  <Card padding="400">
+                    <TextField
+                      label="Custom content navigation CSS"
+                      value={formState.contentNavCustomCss || ''}
+                      onChange={(value) => handleChange('contentNavCustomCss', value)}
+                      autoComplete="off"
+                      multiline={5}
+                      helpText="Injected only with breadcrumbs and table of contents."
+                    />
+                  </Card>
+                )}
               </BlockStack>
 
               <Card padding="400">
@@ -771,7 +794,7 @@ export default function Settings() {
             </InlineGrid>
           )}
 
-          {selectedTab === 3 && (
+          {selectedTabId === 'seo' && (
             <Card padding="400">
               <BlockStack gap="400">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -808,7 +831,7 @@ export default function Settings() {
             </Card>
           )}
 
-          {selectedTab === 4 && (
+          {selectedTabId === 'tracking' && (
             <Card padding="400">
               <BlockStack gap="400">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -861,7 +884,7 @@ export default function Settings() {
             </Card>
           )}
 
-          {selectedTab === 5 && (
+          {selectedTabId === 'ai' && (
             <Card padding="400">
               <BlockStack gap="400">
                 <InlineStack align="space-between" blockAlign="center" gap="200">
@@ -888,7 +911,7 @@ export default function Settings() {
             </Card>
           )}
 
-          {selectedTab === 6 && (
+          {selectedTabId === 'danger' && (
             <Card padding="400">
               <BlockStack gap="400">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

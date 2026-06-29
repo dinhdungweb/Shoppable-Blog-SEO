@@ -37,7 +37,7 @@ const shopify = shopifyApp({
      * Ref: https://shopify.dev/docs/apps/build/billing
      */
     [PRO_PLAN]: {
-      trialDays: 7,
+      trialDays: 3,
       lineItems: [
         {
           amount: 19,
@@ -47,7 +47,7 @@ const shopify = shopifyApp({
       ],
     },
     [GROWTH_PLAN]: {
-      trialDays: 7,
+      trialDays: 3,
       lineItems: [
         {
           amount: 49,
@@ -82,7 +82,7 @@ export const sessionStorage = shopify.sessionStorage;
  * layout to avoid redirect loops. Call this only in individual route loaders/actions
  * where plan enforcement is needed.
  *
- * Returns the Shopify plan name string (e.g. "Shoppable Blog Pro") or "free".
+ * Returns the Shopify plan name string (e.g. "Pro") or "free".
  */
 export async function getActivePlanName(
   billing: Awaited<ReturnType<typeof authenticate.admin>>["billing"],

@@ -1,6 +1,6 @@
 import { ActionFunctionArgs, LoaderFunctionArgs, json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigate, useNavigation } from "@remix-run/react";
-import { Page, Layout, Card, IndexTable, TextField, Banner } from "@shopify/polaris";
+import { Page, Layout, Card, IndexTable, TextField } from "@shopify/polaris";
 import { useState, useCallback } from "react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 
@@ -56,7 +56,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, billing } = await authenticate.admin(request);
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  if (!limits.canBulkReview) {
+    return json(
+      {
+        error: "Bulk Review is a Growth plan feature.",
+        planKey,
+      },
+      { status: 403 },
+    );
+  }
+
   const formData = await request.formData();
   const payloadStr = formData.get("payload") as string;
   

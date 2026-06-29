@@ -30,7 +30,7 @@ import {
   AlertTriangleIcon, 
 } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 
 function parseMoney(value: string) {
@@ -46,8 +46,9 @@ function formatMoney(value: number) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const { limits } = await getActivePlanAndLimits(billing);
 
   let blogs: any[] = [];
   let shopifyError: string | null = null;
@@ -164,7 +165,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     handle: blog.handle,
   }));
 
-  return { articles: finalArticles, blogs: blogChoices, error: shopifyError, shop };
+  return {
+    articles: finalArticles,
+    blogs: blogChoices,
+    error: shopifyError,
+    shop,
+    canBulkReview: limits.canBulkReview,
+  };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -374,7 +381,7 @@ const TabBadge = ({ label, count, isActive, onClick }: { label: string, count: n
 );
 
 export default function BlogManager() {
-  const { articles } = useLoaderData<typeof loader>();
+  const { articles, canBulkReview } = useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const fetcher = useFetcher();
   const navigate = useNavigate();
@@ -571,13 +578,13 @@ export default function BlogManager() {
                 label: `Showing ${sortedArticles.length === 0 ? 0 : ((page - 1) * itemsPerPage) + 1} to ${Math.min(page * itemsPerPage, sortedArticles.length)} of ${sortedArticles.length} results`
               } : undefined}
               promotedBulkActions={[
-                {
+                ...(canBulkReview ? [{
                   content: 'Bulk edit',
                   onAction: () => {
                     const ids = selectedResources.map(id => id.split('/').pop()).join(',');
                     navigate(`/app/blogs/bulk_edit?ids=${ids}`);
                   },
-                },
+                }] : []),
                 ...(hasPublishedSelected ? [{
                   content: 'Set as draft',
                   onAction: () => {

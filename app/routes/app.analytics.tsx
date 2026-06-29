@@ -42,7 +42,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 
 type Metrics = {
@@ -100,12 +100,14 @@ const INSIGHT_ICON_MAP = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const { limits } = await getActivePlanAndLimits(billing);
+  const windowDays = limits.analyticsWindowDays;
 
   const now = new Date();
-  const currentStart = startOfDay(new Date(now.getTime() - 29 * DAY_MS));
-  const previousStart = startOfDay(new Date(now.getTime() - 59 * DAY_MS));
+  const currentStart = startOfDay(new Date(now.getTime() - (windowDays - 1) * DAY_MS));
+  const previousStart = startOfDay(new Date(now.getTime() - (windowDays * 2 - 1) * DAY_MS));
   let shopifyError = "";
   let articleSources: ArticleSource[] = [];
 
@@ -265,12 +267,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     previousMetrics,
     postRows,
     productRows,
+    compareLabel: `Previous ${windowDays} days`,
   });
 
   return json({
     shopifyError,
-    periodLabel: "Last 30 days",
-    compareLabel: "Previous 30 days",
+    periodLabel: `Last ${windowDays} days`,
+    compareLabel: `Previous ${windowDays} days`,
+    analyticsWindowDays: windowDays,
     metrics: currentMetrics,
     previousMetrics,
     productCtr: getRate(currentMetrics.clicks, currentMetrics.impressions),
@@ -936,11 +940,13 @@ function buildInsights({
   previousMetrics,
   postRows,
   productRows,
+  compareLabel,
 }: {
   currentMetrics: Metrics;
   previousMetrics: Metrics;
   postRows: PostRow[];
   productRows: ProductRow[];
+  compareLabel: string;
 }) {
   const topPost = postRows.find((post) => post.clicks > 0);
   const topProduct = productRows.find((product) => product.clicks > 0);
@@ -971,7 +977,7 @@ function buildInsights({
       iconTone: revenueTrend.isUp ? ("success" as const) : ("info" as const),
       iconKey: "cash" as const,
       title: "Revenue impact",
-      desc: `${formatMoney(currentMetrics.revenue)} estimated revenue, ${revenueTrend.label} vs ${"previous 30 days"}.`,
+      desc: `${formatMoney(currentMetrics.revenue)} estimated revenue, ${revenueTrend.label} vs ${compareLabel.toLowerCase()}.`,
       buttonText: "View posts",
       to: "/app/blogs",
     },

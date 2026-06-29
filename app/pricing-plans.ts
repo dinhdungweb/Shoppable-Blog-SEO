@@ -1,5 +1,7 @@
-export const PRO_PLAN = "Shoppable Blog Pro";
-export const GROWTH_PLAN = "Shoppable Blog Growth";
+export const PRO_PLAN = "Pro";
+export const GROWTH_PLAN = "Growth";
+export const LEGACY_PRO_PLAN = "Shoppable Blog Pro";
+export const LEGACY_GROWTH_PLAN = "Shoppable Blog Growth";
 export const PAID_PLANS = [PRO_PLAN, GROWTH_PLAN] as const;
 
 export type PlanKey = "free" | "pro" | "growth";
@@ -9,6 +11,7 @@ export type PlanKey = "free" | "pro" | "growth";
  * - shoppableArticles: max number of blog posts that can have linked products.
  *   Infinity = unlimited.
  * - analyticsWindowDays: how many past days are shown in analytics / dashboard.
+ * - canContentNavigation: access to breadcrumbs and table of contents settings (Pro+).
  * - canBulkReview: access to Bulk Review workflow (Growth only).
  * - canCustomCss: access to Custom CSS field in widget settings (Growth only).
  */
@@ -16,24 +19,28 @@ export const PLAN_LIMITS = {
   free: {
     shoppableArticles: 3,
     analyticsWindowDays: 7,
+    canContentNavigation: false,
     canBulkReview: false,
     canCustomCss: false,
   },
   pro: {
     shoppableArticles: 100,
     analyticsWindowDays: 30,
+    canContentNavigation: true,
     canBulkReview: false,
     canCustomCss: false,
   },
   growth: {
     shoppableArticles: Infinity,
     analyticsWindowDays: 90,
+    canContentNavigation: true,
     canBulkReview: true,
     canCustomCss: true,
   },
 } as const satisfies Record<PlanKey, {
   shoppableArticles: number;
   analyticsWindowDays: number;
+  canContentNavigation: boolean;
   canBulkReview: boolean;
   canCustomCss: boolean;
 }>;
@@ -45,8 +52,8 @@ export type PlanLimits = typeof PLAN_LIMITS[PlanKey];
  * Returns "free" for any unrecognised / absent plan name.
  */
 export function getPlanKey(activePlanName: string): PlanKey {
-  if (activePlanName === PRO_PLAN) return "pro";
-  if (activePlanName === GROWTH_PLAN) return "growth";
+  if (activePlanName === PRO_PLAN || activePlanName === LEGACY_PRO_PLAN) return "pro";
+  if (activePlanName === GROWTH_PLAN || activePlanName === LEGACY_GROWTH_PLAN) return "growth";
   return "free";
 }
 

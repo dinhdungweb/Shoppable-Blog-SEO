@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import {
   BlockStack,
@@ -44,6 +44,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = session.shop;
   const { limits, planKey } = await getActivePlanAndLimits(billing);
 
+  if (!limits.canContentNavigation) {
+    return redirect(`/app/pricing?reason=content_navigation&plan=${planKey}`);
+  }
+
   let config = await prisma.shopConfig.findUnique({
     where: { shop },
   });
@@ -64,7 +68,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
-  const { limits } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  if (!limits.canContentNavigation) {
+    return json(
+      {
+        success: false,
+        planKey,
+        error: "Breadcrumbs and table of contents are available on Pro and Growth plans.",
+      },
+      { status: 403 },
+    );
+  }
   const formData = await request.formData();
 
   const updates = {

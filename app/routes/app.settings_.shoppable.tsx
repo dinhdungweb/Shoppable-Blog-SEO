@@ -50,8 +50,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const { limits } = await getActivePlanAndLimits(billing);
   const formData = await request.formData();
   const maxProducts = clampNumber(formData.get("maxProducts"), 1, 12, 6);
   const gridColumns = clampNumber(formData.get("gridColumns"), 2, 4, 3);
@@ -79,7 +80,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     showCarouselDots: formData.get("showCarouselDots") === "true",
     carouselItemsVisible,
     borderRadius: formData.get("borderRadius") as string,
-    customCss: formData.get("customCss") as string,
+    ...(limits.canCustomCss ? { customCss: formData.get("customCss") as string } : {}),
   };
 
   await prisma.shopConfig.update({
