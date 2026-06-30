@@ -239,17 +239,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         for (const blockId in blocks) {
           const block = blocks[blockId];
           if (block.type && block.type.includes("sbs-article-embed")) {
-            if (block.disabled !== true) {
+            if (String(block.disabled) !== "true") {
               appEmbedEnabled = true;
+              break;
             }
-            break;
           }
         }
       }
     }
   } catch (error) {
     console.error("Failed to check app embed status:", error);
-    appEmbedEnabled = config.appStatus;
+    appEmbedEnabled = false;
   }
 
   const productCountMap = new Map<string, number>();
