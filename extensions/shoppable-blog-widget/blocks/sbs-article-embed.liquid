@@ -28,7 +28,6 @@
   data-article-id="{{ sbs_article_id }}"
   data-shop="{{ shop.permanent_domain }}"
   data-app-url="{{ sbs_app_url }}"
-  data-default-style="{{ block.settings.default_style }}"
   hidden
 ></div>
 
@@ -37,7 +36,6 @@
     class="bp-content-nav-config"
     data-shop="{{ shop.permanent_domain }}"
     data-app-url="{{ sbs_app_url }}"
-    data-home-label="{{ block.settings.home_label | escape }}"
     data-home-url="{{ routes.root_url }}"
     data-blog-title="{{ blog.title | escape }}"
     data-blog-url="{{ blog.url }}"
@@ -58,30 +56,8 @@
       "content": "Enable this app embed, then place product markers, [[SBS_BREADCRUMBS]], or [[SBS_TOC]] inside a blog article body."
     },
     {
-      "type": "select",
-      "id": "default_style",
-      "label": "Default marker style",
-      "default": "carousel",
-      "options": [
-        {
-          "value": "carousel",
-          "label": "Carousel"
-        },
-        {
-          "value": "grid",
-          "label": "Grid"
-        }
-      ]
-    },
-    {
-      "type": "text",
-      "id": "home_label",
-      "label": "Home label for breadcrumbs",
-      "default": "Home"
-    },
-    {
       "type": "paragraph",
-      "content": "Product data is loaded automatically through the app proxy."
+      "content": "Product data and display styles are loaded automatically and managed from the App settings."
     }
   ]
 }
