@@ -824,9 +824,15 @@ function buildProductRows(
 
   events.forEach((event) => {
     if (event.productId === "all") return;
-    const metrics = metricsMap.get(event.productId) || emptyMetrics();
+    let normalizedProductId = event.productId;
+    if (normalizedProductId && /^\d+$/.test(normalizedProductId)) {
+      normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
+    } else if (normalizedProductId && !normalizedProductId.startsWith("gid://")) {
+      normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
+    }
+    const metrics = metricsMap.get(normalizedProductId) || emptyMetrics();
     addEventToMetrics(metrics, event, priceMap);
-    metricsMap.set(event.productId, metrics);
+    metricsMap.set(normalizedProductId, metrics);
   });
 
   productInfoMap.forEach((info, productId) => {
@@ -877,7 +883,13 @@ function addEventToMetrics(metrics: Metrics, event: TrackedEvent, priceMap: Map<
   if (event.eventType === "add_to_cart") metrics.addToCarts += 1;
   if (event.eventType === "purchase" || event.eventType === "order") {
     metrics.purchases += 1;
-    metrics.revenue += priceMap.get(`${event.articleId}:${event.productId}`) || 0;
+    let normalizedProductId = event.productId;
+    if (normalizedProductId && /^\d+$/.test(normalizedProductId)) {
+      normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
+    } else if (normalizedProductId && !normalizedProductId.startsWith("gid://")) {
+      normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
+    }
+    metrics.revenue += priceMap.get(`${event.articleId}:${normalizedProductId}`) || 0;
   }
 }
 

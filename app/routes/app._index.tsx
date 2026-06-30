@@ -1110,7 +1110,15 @@ function addEventToMetrics(
   if (event.eventType === "add_to_cart") metrics.addToCarts += 1;
   if (event.eventType === "purchase" || event.eventType === "order") {
     metrics.purchases += 1;
-    metrics.revenue += priceMap.get(`${event.articleId}:${event.productId}`) || 0;
+    
+    let normalizedProductId = event.productId;
+    if (normalizedProductId && /^\d+$/.test(normalizedProductId)) {
+      normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
+    } else if (normalizedProductId && !normalizedProductId.startsWith("gid://")) {
+      normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
+    }
+    
+    metrics.revenue += priceMap.get(`${event.articleId}:${normalizedProductId}`) || 0;
   }
 
   return metrics;

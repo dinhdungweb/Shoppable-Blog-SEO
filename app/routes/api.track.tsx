@@ -71,11 +71,19 @@ async function recordWidgetEvent({
     return json({ success: true, skipped: true }, { headers: TRACK_HEADERS });
   }
 
+  // Normalize productId to ensure it has the gid://shopify/Product/ prefix
+  let normalizedProductId = productId;
+  if (productId && /^\d+$/.test(productId)) {
+    normalizedProductId = `gid://shopify/Product/${productId}`;
+  } else if (productId && !productId.startsWith("gid://")) {
+    normalizedProductId = `gid://shopify/Product/${productId}`;
+  }
+
   await prisma.widgetEvent.create({
     data: {
       shop,
       articleId,
-      productId,
+      productId: normalizedProductId,
       blockId: cleanProductBlockId(blockId),
       eventType,
       sessionId: sessionId || null,
