@@ -296,9 +296,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         }`,
         {
           variables: {
-            webPixel: {
-              settings: null
-            }
+            webPixel: {}
           }
         }
       );
@@ -306,6 +304,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       if (pixelCreateResult.data?.webPixelCreate?.userErrors?.length > 0) {
         console.error("Web pixel creation errors:", pixelCreateResult.data.webPixelCreate.userErrors);
         webPixelError = pixelCreateResult.data.webPixelCreate.userErrors.map((e: any) => e.message).join(", ");
+      } else if (pixelCreateResult.errors?.length > 0) {
+        console.error("GraphQL errors:", pixelCreateResult.errors);
+        webPixelError = pixelCreateResult.errors.map((e: any) => e.message).join(", ");
       } else {
         webPixelEnabled = true;
       }
@@ -782,6 +783,8 @@ function ProgressItem({ label, done, actionUrl, actionLabel }: { label: string; 
       </InlineStack>
       {done ? (
         <Badge tone="success">Done</Badge>
+      ) : actionLabel?.startsWith("Error:") ? (
+        <Badge tone="critical">{actionLabel}</Badge>
       ) : actionUrl ? (
         <Button size="micro" url={actionUrl} target="_blank">{actionLabel || "Enable"}</Button>
       ) : (
