@@ -25,6 +25,8 @@ const shopify = shopifyApp({
     "read_themes",
     "read_files",
     "write_files",
+    "write_pixels",
+    "read_customer_events"
   ],
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
