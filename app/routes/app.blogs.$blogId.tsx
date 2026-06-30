@@ -3982,7 +3982,7 @@ function makeEmptyArticle(blog?: any, authorName = DEFAULT_AUTHOR_NAME) {
     summary: "",
     publishedAt: null,
     updatedAt: null,
-    isPublished: false,
+    isPublished: true,
     templateSuffix: "",
     image: null,
     author: { name: authorName },
