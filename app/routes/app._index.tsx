@@ -265,19 +265,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const pixelCheckResponse = await admin.graphql(
       `#graphql
       query {
-        webPixels {
-          edges {
-            node {
-              id
-            }
-          }
+        webPixel {
+          id
         }
       }`
     );
     const pixelCheckResult: any = await pixelCheckResponse.json();
-    const existingPixels = pixelCheckResult.data?.webPixels?.edges || [];
     
-    if (existingPixels.length > 0) {
+    if (pixelCheckResult.data?.webPixel?.id) {
       webPixelEnabled = true;
     } else {
       // Create it since it doesn't exist
