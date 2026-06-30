@@ -404,14 +404,16 @@
       dragging = false;
       startX = event.clientX;
       startScrollLeft = track.scrollLeft;
-      track.classList.add("bp-carousel__track--dragging");
     });
 
     track.addEventListener("pointermove", (event) => {
       if (!pointerDown) return;
 
       const deltaX = event.clientX - startX;
-      if (Math.abs(deltaX) > 4) dragging = true;
+      if (!dragging && Math.abs(deltaX) > 4) {
+        dragging = true;
+        track.classList.add("bp-carousel__track--dragging");
+      }
       if (!dragging) return;
 
       event.preventDefault();
