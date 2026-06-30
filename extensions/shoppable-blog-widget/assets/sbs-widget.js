@@ -273,6 +273,13 @@
     card.innerHTML = html;
 
     card.addEventListener("click", (event) => {
+      // If we are suppressing clicks due to dragging, stop here
+      if (card.closest(".bp-carousel__track") && card.closest(".bp-carousel__track")._suppressClickUntil > Date.now()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       trackEvent(
         widget.dataset.appUrl,
         widget.dataset.shop,
@@ -282,13 +289,13 @@
         "click",
       );
       
-      // Navigate if they clicked the card itself (not directly on an <a> tag)
-      if (!event.target.closest("a")) {
-        if (config.openInNewTab === false) {
-          window.location.href = productUrl;
-        } else {
-          window.open(productUrl, "_blank", "noopener,noreferrer");
-        }
+      event.preventDefault();
+      event.stopPropagation();
+      
+      if (config.openInNewTab === false) {
+        window.location.href = productUrl;
+      } else {
+        window.open(productUrl, "_blank", "noopener,noreferrer");
       }
     });
 
@@ -390,7 +397,6 @@
     let dragging = false;
     let startX = 0;
     let startScrollLeft = 0;
-    let suppressClickUntil = 0;
 
     track.addEventListener("pointerdown", (event) => {
       if (event.pointerType !== "mouse" || event.button !== 0) return;
@@ -416,20 +422,11 @@
       if (!pointerDown) return;
       pointerDown = false;
       track.classList.remove("bp-carousel__track--dragging");
-      if (dragging) suppressClickUntil = Date.now() + 250;
+      if (dragging) track._suppressClickUntil = Date.now() + 250;
     };
 
     track.addEventListener("pointerup", endDrag);
     track.addEventListener("pointercancel", endDrag);
-    track.addEventListener(
-      "click",
-      (event) => {
-        if (Date.now() > suppressClickUntil) return;
-        event.preventDefault();
-        event.stopPropagation();
-      },
-      true,
-    );
   }
 
   function normalizeCardLayout(value) {
