@@ -276,6 +276,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { article, audit };
   });
 
+  const articleIds = articles.map((a) => a.id);
+
+  // Clean up obsolete records for deleted articles
+  await prisma.articleSEO.deleteMany({
+    where: { shop, articleId: { notIn: articleIds } },
+  });
+  await prisma.articleProduct.deleteMany({
+    where: { shop, articleId: { notIn: articleIds } },
+  });
+
   await Promise.all(
     audits.map(({ article, audit }) =>
       prisma.articleSEO.upsert({
