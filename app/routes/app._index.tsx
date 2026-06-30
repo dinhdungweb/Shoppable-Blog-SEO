@@ -224,14 +224,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   let appEmbedEnabled = false;
   let appEmbedError = "";
   try {
-    const themesResponse = await admin.rest.get({ path: "themes" });
+    const themesResponse = await fetch(`https://${session.shop}/admin/api/2025-01/themes.json`, {
+      headers: { "X-Shopify-Access-Token": session.accessToken || "" }
+    });
     const themesResult = await themesResponse.json();
     const mainTheme = themesResult.themes?.find((t: any) => t.role === "main");
 
     if (mainTheme) {
-      const assetResponse = await admin.rest.get({
-        path: `themes/${mainTheme.id}/assets`,
-        query: { "asset[key]": "config/settings_data.json" }
+      const assetResponse = await fetch(`https://${session.shop}/admin/api/2025-01/themes/${mainTheme.id}/assets.json?asset[key]=config/settings_data.json`, {
+        headers: { "X-Shopify-Access-Token": session.accessToken || "" }
       });
       const assetResult = await assetResponse.json();
       if (assetResult.asset?.value) {
