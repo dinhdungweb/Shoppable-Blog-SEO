@@ -9,6 +9,14 @@ const TRACK_HEADERS = {
   "Cache-Control": "no-store",
 };
 
+// Handle CORS preflight
+export const options = () => {
+  return new Response(null, {
+    status: 204,
+    headers: TRACK_HEADERS,
+  });
+};
+
 // Public API endpoint for tracking widget events
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") {
@@ -28,7 +36,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   } catch (error) {
     console.error("Track event error:", error);
-    return json({ error: "Internal server error" }, { status: 500 });
+    return json({ error: "Internal server error" }, { status: 500, headers: TRACK_HEADERS });
   }
 };
 
@@ -50,12 +58,12 @@ async function recordWidgetEvent({
   referrer?: string | null;
 }) {
   if (!shop || !articleId || !productId || !eventType) {
-    return json({ error: "Missing required fields" }, { status: 400 });
+    return json({ error: "Missing required fields" }, { status: 400, headers: TRACK_HEADERS });
   }
 
   const validEventTypes = ["impression", "click", "add_to_cart", "purchase"];
   if (!validEventTypes.includes(eventType)) {
-    return json({ error: "Invalid event type" }, { status: 400 });
+    return json({ error: "Invalid event type" }, { status: 400, headers: TRACK_HEADERS });
   }
 
   const shouldTrack = await shouldRecordTracking(shop);

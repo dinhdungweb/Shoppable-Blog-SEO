@@ -1,7 +1,7 @@
 import { register } from "@shopify/web-pixels-extension";
 
 register(({ analytics, browser, init }) => {
-  const TRACK_API_URL = "https://shopable-blog.bluepeaks.top/api/shoppable-blog-seo/track";
+  const TRACK_API_URL = "https://shopable-blog.bluepeaks.top/api/track";
   const STORAGE_KEY = "sbs_attribution";
 
   // Configuration for attribution window (7 days in milliseconds)
@@ -65,7 +65,7 @@ register(({ analytics, browser, init }) => {
       
       // If the user came from the Shoppable Blog Widget
       if (utmMedium === "shoppable_blog") {
-        const articleId = url.searchParams.get("utm_term") || "";
+        const articleId = url.searchParams.get("utm_term") || "unknown";
         const blockId = url.searchParams.get("utm_content") || "default";
         
         if (articleId) {
