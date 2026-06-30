@@ -259,6 +259,63 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     appEmbedEnabled = false;
   }
 
+  let webPixelEnabled = false;
+  let webPixelError = "";
+  try {
+    const pixelCheckResponse = await admin.graphql(
+      `#graphql
+      query {
+        webPixels {
+          edges {
+            node {
+              id
+            }
+          }
+        }
+      }`
+    );
+    const pixelCheckResult: any = await pixelCheckResponse.json();
+    const existingPixels = pixelCheckResult.data?.webPixels?.edges || [];
+    
+    if (existingPixels.length > 0) {
+      webPixelEnabled = true;
+    } else {
+      // Create it since it doesn't exist
+      const pixelCreateResponse = await admin.graphql(
+        `#graphql
+        mutation webPixelCreate($webPixel: WebPixelInput!) {
+          webPixelCreate(webPixel: $webPixel) {
+            webPixel {
+              id
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+        {
+          variables: {
+            webPixel: {
+              settings: null
+            }
+          }
+        }
+      );
+      const pixelCreateResult: any = await pixelCreateResponse.json();
+      if (pixelCreateResult.data?.webPixelCreate?.userErrors?.length > 0) {
+        console.error("Web pixel creation errors:", pixelCreateResult.data.webPixelCreate.userErrors);
+        webPixelError = pixelCreateResult.data.webPixelCreate.userErrors.map((e: any) => e.message).join(", ");
+      } else {
+        webPixelEnabled = true;
+      }
+    }
+  } catch (error: any) {
+    console.error("Failed to check/create web pixel:", error);
+    webPixelError = error?.message || String(error);
+    webPixelEnabled = false;
+  }
+
   const productCountMap = new Map<string, number>();
   const productPriceMap = new Map<string, number>();
 
@@ -345,6 +402,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       done: appEmbedEnabled,
       actionUrl: appEmbedEnabled ? undefined : `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${process.env.SHOPIFY_API_KEY}/sbs-article-embed`,
       actionLabel: appEmbedError ? `Error: ${appEmbedError}` : "Enable"
+    },
+    {
+      label: "Conversion tracking (Web Pixel) active",
+      done: webPixelEnabled,
+      actionLabel: webPixelError ? `Error: ${webPixelError}` : undefined
     },
     { label: "Products linked to posts", done: linkedProducts.length > 0 },
     { label: "Tracking events received", done: everEventCount > 0 },
