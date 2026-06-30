@@ -222,6 +222,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   ]);
 
   let appEmbedEnabled = false;
+  let appEmbedError = "";
   try {
     const themesResponse = await admin.rest.get({ path: "themes" });
     const themesResult = await themesResponse.json();
@@ -245,10 +246,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             }
           }
         }
+      } else {
+         appEmbedError = "No asset value found in response";
       }
+    } else {
+       appEmbedError = "No main theme found";
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Failed to check app embed status:", error);
+    appEmbedError = error?.message || String(error);
     appEmbedEnabled = false;
   }
 
@@ -337,7 +343,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       label: "App enabled in theme", 
       done: appEmbedEnabled,
       actionUrl: appEmbedEnabled ? undefined : `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${process.env.SHOPIFY_API_KEY}/sbs-article-embed`,
-      actionLabel: "Enable"
+      actionLabel: appEmbedError ? `Error: ${appEmbedError}` : "Enable"
     },
     { label: "Products linked to posts", done: linkedProducts.length > 0 },
     { label: "Tracking events received", done: everEventCount > 0 },
