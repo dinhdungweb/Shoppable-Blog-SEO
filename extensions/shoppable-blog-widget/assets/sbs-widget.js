@@ -399,7 +399,6 @@
       startX = event.clientX;
       startScrollLeft = track.scrollLeft;
       track.classList.add("bp-carousel__track--dragging");
-      track.setPointerCapture(event.pointerId);
     });
 
     track.addEventListener("pointermove", (event) => {
@@ -418,7 +417,6 @@
       pointerDown = false;
       track.classList.remove("bp-carousel__track--dragging");
       if (dragging) suppressClickUntil = Date.now() + 250;
-      if (track.hasPointerCapture(event.pointerId)) track.releasePointerCapture(event.pointerId);
     };
 
     track.addEventListener("pointerup", endDrag);
