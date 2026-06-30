@@ -221,6 +221,37 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.widgetEvent.count({ where: { shop } }),
   ]);
 
+  let appEmbedEnabled = false;
+  try {
+    const themesResponse = await admin.rest.get({ path: "themes" });
+    const themesResult = await themesResponse.json();
+    const mainTheme = themesResult.themes?.find((t: any) => t.role === "main");
+
+    if (mainTheme) {
+      const assetResponse = await admin.rest.get({
+        path: `themes/${mainTheme.id}/assets`,
+        query: { "asset[key]": "config/settings_data.json" }
+      });
+      const assetResult = await assetResponse.json();
+      if (assetResult.asset?.value) {
+        const settingsData = JSON.parse(assetResult.asset.value);
+        const blocks = settingsData?.current?.blocks || {};
+        for (const blockId in blocks) {
+          const block = blocks[blockId];
+          if (block.type && block.type.includes("sbs-article-embed")) {
+            if (block.disabled !== true) {
+              appEmbedEnabled = true;
+            }
+            break;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Failed to check app embed status:", error);
+    appEmbedEnabled = config.appStatus;
+  }
+
   const productCountMap = new Map<string, number>();
   const productPriceMap = new Map<string, number>();
 
@@ -302,7 +333,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const averageSeoScore = getAverageSeoScore(articles);
   const setupItems = [
     { label: "Blog connected", done: blogs.length > 0 },
-    { label: "App enabled", done: config.appStatus },
+    { 
+      label: "App enabled in theme", 
+      done: appEmbedEnabled,
+      actionUrl: appEmbedEnabled ? undefined : `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${process.env.SHOPIFY_API_KEY}/sbs-article-embed`,
+      actionLabel: "Enable"
+    },
     { label: "Products linked to posts", done: linkedProducts.length > 0 },
     { label: "Tracking events received", done: everEventCount > 0 },
     { label: "First shoppable post published", done: shoppablePublishedCount > 0 },
@@ -406,7 +442,7 @@ export default function Dashboard() {
               <ProgressBar progress={setup.progress} tone={setup.progress === 100 ? "success" : "primary"} size="small" />
               <BlockStack gap="300">
                 {setup.items.map((item) => (
-                  <ProgressItem key={item.label} label={item.label} done={item.done} />
+                  <ProgressItem key={item.label} label={item.label} done={item.done} actionUrl={item.actionUrl} actionLabel={item.actionLabel} />
                 ))}
               </BlockStack>
             </BlockStack>
@@ -666,7 +702,7 @@ export default function Dashboard() {
   );
 }
 
-function ProgressItem({ label, done }: { label: string; done: boolean }) {
+function ProgressItem({ label, done, actionUrl, actionLabel }: { label: string; done: boolean; actionUrl?: string; actionLabel?: string }) {
   return (
     <InlineStack align="space-between" blockAlign="center">
       <InlineStack gap="200" blockAlign="center">
@@ -675,7 +711,13 @@ function ProgressItem({ label, done }: { label: string; done: boolean }) {
           {label}
         </Text>
       </InlineStack>
-      <Badge tone={done ? "success" : "new"}>{done ? "Done" : "Pending"}</Badge>
+      {done ? (
+        <Badge tone="success">Done</Badge>
+      ) : actionUrl ? (
+        <Button size="micro" url={actionUrl} target="_blank">{actionLabel || "Enable"}</Button>
+      ) : (
+        <Badge tone="new">Pending</Badge>
+      )}
     </InlineStack>
   );
 }
