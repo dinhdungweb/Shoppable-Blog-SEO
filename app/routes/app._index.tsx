@@ -303,7 +303,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         {
           variables: {
             webPixel: {
-              settings: "{}"
+              settings: JSON.stringify({ accountID: shop })
             }
           }
         }
