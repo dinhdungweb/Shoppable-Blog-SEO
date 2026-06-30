@@ -404,7 +404,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     (article) => article.productCount > 0 && article.impressions >= 10 && getCtr(article.clicks, article.impressions) < 1,
   ).length;
   const averageSeoScore = getAverageSeoScore(articles);
-  const setupItems = [
+
+  type SetupItem = {
+    label: string;
+    done: boolean;
+    actionUrl?: string;
+    actionLabel?: string;
+  };
+
+  const setupItems: SetupItem[] = [
     { label: "Blog connected", done: blogs.length > 0 },
     { 
       label: "App enabled in theme", 
@@ -639,7 +647,7 @@ export default function Dashboard() {
                   Product engagement
                 </Text>
                 <InlineStack gap="200" blockAlign="center">
-                  <Badge tone="info">Last {analyticsWindowDays} days</Badge>
+                  <Badge tone="info">{`Last ${analyticsWindowDays} days`}</Badge>
                   {planKey === "free" && (
                     <Badge tone="attention">Free plan</Badge>
                   )}
@@ -1082,21 +1090,27 @@ function buildChartData(
   start: Date,
   end: Date,
 ) {
-  const points = new Map<string, ChartPoint>();
+  const days: ChartPoint[] = [];
+  const normalizedStart = startOfDay(start).getTime();
+  const normalizedEnd = startOfDay(end).getTime();
 
-  for (let date = new Date(start); date <= end; date = new Date(date.getTime() + DAY_MS)) {
-    const key = date.toISOString().slice(0, 10);
-    points.set(key, { date: formatShortDate(date), ...emptyMetrics() });
+  for (let time = normalizedStart; time <= normalizedEnd; time += DAY_MS) {
+    days.push({
+      date: formatShortDate(new Date(time)),
+      ...emptyMetrics(),
+    });
   }
 
   events.forEach((event) => {
-    const key = event.createdAt.toISOString().slice(0, 10);
-    const point = points.get(key);
-    if (point) addEventToMetrics(point, event, priceMap);
+    const index = Math.floor((startOfDay(event.createdAt).getTime() - normalizedStart) / DAY_MS);
+    if (index >= 0 && index < days.length) {
+      addEventToMetrics(days[index], event, priceMap);
+    }
   });
 
-  return Array.from(points.values());
+  return days;
 }
+
 
 function emptyMetrics(): PeriodMetrics {
   return {
