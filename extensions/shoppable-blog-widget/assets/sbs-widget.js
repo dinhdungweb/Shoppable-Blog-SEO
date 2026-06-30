@@ -232,14 +232,16 @@
     if (product.productImage && cardLayout !== "minimal") {
       html += `
         <div class="bp-product-card__image-wrapper">
-          <img
-            class="bp-product-card__image"
-            src="${escapeHtml(product.productImage)}"
-            alt="${escapeHtml(product.productTitle)}"
-            loading="lazy"
-            width="300"
-            height="300"
-          />
+          <a ${productLinkAttrs} aria-hidden="true" tabindex="-1">
+            <img
+              class="bp-product-card__image"
+              src="${escapeHtml(product.productImage)}"
+              alt="${escapeHtml(product.productTitle)}"
+              loading="lazy"
+              width="300"
+              height="300"
+            />
+          </a>
         </div>
       `;
     }
@@ -270,7 +272,7 @@
     html += "</div>";
     card.innerHTML = html;
 
-    card.addEventListener("click", () => {
+    card.addEventListener("click", (event) => {
       trackEvent(
         widget.dataset.appUrl,
         widget.dataset.shop,
@@ -279,6 +281,15 @@
         product.productId,
         "click",
       );
+      
+      // Navigate if they clicked the card itself (not directly on an <a> tag)
+      if (!event.target.closest("a")) {
+        if (config.openInNewTab === false) {
+          window.location.href = productUrl;
+        } else {
+          window.open(productUrl, "_blank", "noopener,noreferrer");
+        }
+      }
     });
 
     return card;
