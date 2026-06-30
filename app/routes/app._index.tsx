@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import { useEffect } from "react";
 import {
   Badge,
   Banner,
@@ -16,8 +17,10 @@ import {
   InlineStack,
   Page,
   ProgressBar,
+  Spinner,
   Text,
   Thumbnail,
+  Layout,
 } from "@shopify/polaris";
 import {
   AlertCircleIcon,
@@ -159,7 +162,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         })),
       );
     }
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message?.includes("Missing access token")) {
+      return json({ needsRevalidation: true });
+    }
     console.error("Overview Shopify query failed:", error);
     shopifyError = "Could not load Shopify blog posts.";
   }
@@ -471,6 +477,33 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function Dashboard() {
+  const data = useLoaderData<any>();
+  const navigate = useNavigate();
+  const revalidator = useRevalidator();
+
+  useEffect(() => {
+    if (data?.needsRevalidation && revalidator.state === "idle") {
+      revalidator.revalidate();
+    }
+  }, [data, revalidator]);
+
+  if (data?.needsRevalidation) {
+    return (
+      <Page>
+        <Layout>
+          <Layout.Section>
+            <Card padding="400">
+              <BlockStack gap="400" inlineAlign="center">
+                <Spinner size="large" />
+                <Text as="p" variant="bodyMd">Loading your dashboard...</Text>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
+  }
+
   const {
     shopifyError,
     planKey,
@@ -482,8 +515,7 @@ export default function Dashboard() {
     setup,
     recentPosts,
     recommendedActions,
-  } = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
+  } = data;
 
   const productCtr = getCtr(metrics.clicks, metrics.impressions);
 
