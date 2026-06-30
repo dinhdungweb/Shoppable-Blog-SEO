@@ -261,21 +261,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   let webPixelEnabled = false;
   let webPixelError = "";
+  
   try {
-    const pixelCheckResponse = await admin.graphql(
-      `#graphql
-      query {
-        webPixel {
-          id
-        }
-      }`
-    );
-    const pixelCheckResult: any = await pixelCheckResponse.json();
+    // 1. Check if it exists
+    let exists = false;
+    try {
+      const pixelCheckResponse = await admin.graphql(
+        `#graphql
+        query {
+          webPixel {
+            id
+          }
+        }`
+      );
+      const pixelCheckResult: any = await pixelCheckResponse.json();
+      if (pixelCheckResult.data?.webPixel?.id) {
+        exists = true;
+      }
+    } catch (checkError: any) {
+      // admin.graphql throws if response has GraphQL errors (e.g. "No web pixel was found")
+      console.log("Pixel check error (likely not found):", checkError.message);
+    }
     
-    if (pixelCheckResult.data?.webPixel?.id) {
+    if (exists) {
       webPixelEnabled = true;
     } else {
-      // Create it since it doesn't exist
+      // 2. Create it since it doesn't exist
       const pixelCreateResponse = await admin.graphql(
         `#graphql
         mutation webPixelCreate($webPixel: WebPixelInput!) {
