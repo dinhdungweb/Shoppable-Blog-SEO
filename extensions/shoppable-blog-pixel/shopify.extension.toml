@@ -1,0 +1,9 @@
+name = "shoppable-blog-pixel"
+type = "web_pixel_extension"
+uid = "b3f39514-0df5-5c34-92c2-9c78e48412b72fcc38e5"
+
+runtime_context = "strict"
+
+[settings]
+type = "object"
+

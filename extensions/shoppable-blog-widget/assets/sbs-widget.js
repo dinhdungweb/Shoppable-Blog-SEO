@@ -471,11 +471,14 @@
     const baseUrl = `/products/${product.productHandle}`;
     if (!shouldAppendUtm(config)) return baseUrl;
 
+    const rawArticleId = (widget.dataset.articleId || "").split("/").pop() || "";
+
     const params = new URLSearchParams({
       utm_source: "blog",
       utm_medium: "shoppable_blog",
       utm_campaign: "shoppable_blog_products",
       utm_content: cleanBlockId(widget.dataset.blockId),
+      ...(rawArticleId ? { utm_term: rawArticleId } : {})
     });
 
     return `${baseUrl}?${params.toString()}`;
