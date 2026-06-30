@@ -2,7 +2,7 @@
 
 client_id = "138ef9418d0be545a3a246a0dfc4b365"
 name = "Shoppable Blog & SEO"
-application_url = "https://shopify.dev/apps/default-app-home"
+application_url = "https://shopable-blog.bluepeaks.top"
 embedded = true
 
 [build]
@@ -16,9 +16,13 @@ api_version = "2024-07"
 scopes = "read_content,read_files,read_products,read_themes,write_app_proxy,write_content,write_files"
 
 [auth]
-redirect_urls = [ "https://shopify.dev/apps/default-app-home/auth/callback" ]
+redirect_urls = [
+  "https://shopable-blog.bluepeaks.top/auth/callback",
+  "https://shopable-blog.bluepeaks.top/auth/shopify/callback",
+  "https://shopable-blog.bluepeaks.top/api/auth/callback"
+]
 
 [app_proxy]
-url = "https://shopify.dev/apps/default-app-home/api"
+url = "https://shopable-blog.bluepeaks.top/api"
 subpath = "shoppable-blog-seo"
 prefix = "apps"
