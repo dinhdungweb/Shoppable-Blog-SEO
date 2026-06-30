@@ -302,7 +302,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         }`,
         {
           variables: {
-            webPixel: {}
+            webPixel: {
+              settings: "{}"
+            }
           }
         }
       );
