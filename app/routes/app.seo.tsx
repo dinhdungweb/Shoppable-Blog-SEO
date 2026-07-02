@@ -56,6 +56,15 @@ type ArticleInput = {
   blogHandle: string;
 };
 
+type StoredSeoInput = {
+  articleId: string;
+  seoScore?: number | null;
+  metaTitle?: string | null;
+  metaDescription?: string | null;
+  focusKeyword?: string | null;
+  lastAnalyzedAt?: Date | null;
+};
+
 type SeoIssue = {
   type: string;
   category: SeoCategory;
@@ -140,6 +149,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         seoScore: true,
         metaTitle: true,
         metaDescription: true,
+        focusKeyword: true,
         issues: true,
         lastAnalyzedAt: true,
       },
@@ -203,8 +213,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const auditedPosts = Array.from(articleMap.values())
     .map((article) => {
       const productCount = productCountMap.get(article.id) || 0;
-      const audit = auditArticle(article, productCount, config);
       const stored = storedSeoMap.get(article.id);
+      const audit = auditArticle(article, productCount, config, stored);
 
       return {
         ...article,
@@ -249,7 +259,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "Unsupported action" }, { status: 400 });
   }
 
-  const [articles, linkedProducts, config] = await Promise.all([
+  const [articles, linkedProducts, config, seoRows] = await Promise.all([
     fetchShopifyArticles(admin),
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
@@ -260,6 +270,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       update: {},
       create: { shop },
     }),
+    prisma.articleSEO.findMany({
+      where: { shop },
+      select: {
+        articleId: true,
+        seoScore: true,
+        metaTitle: true,
+        metaDescription: true,
+        focusKeyword: true,
+        lastAnalyzedAt: true,
+      },
+    }),
   ]);
 
   const productCountMap = new Map<string, number>();
@@ -267,8 +288,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     productCountMap.set(product.articleId, (productCountMap.get(product.articleId) || 0) + 1);
   });
 
+  const storedSeoMap = new Map(seoRows.map((row) => [row.articleId, row]));
   const audits = articles.map((article) => {
-    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config);
+    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, storedSeoMap.get(article.id));
     return { article, audit };
   });
 
@@ -283,15 +305,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   await Promise.all(
-    audits.map(({ article, audit }) =>
-      prisma.articleSEO.upsert({
+    audits.map(({ article, audit }) => {
+      const stored = storedSeoMap.get(article.id);
+      const metaTitle = stored?.metaTitle || article.seoTitle || null;
+      const metaDescription = stored?.metaDescription || article.seoDescription || null;
+
+      return prisma.articleSEO.upsert({
         where: { articleId: article.id },
         update: {
           shop,
           articleTitle: article.title,
           seoScore: audit.score,
-          metaTitle: article.seoTitle || null,
-          metaDescription: article.seoDescription || null,
+          metaTitle,
+          metaDescription,
           issues: JSON.stringify(audit.issues),
           lastAnalyzedAt: new Date(),
         },
@@ -300,13 +326,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           articleId: article.id,
           articleTitle: article.title,
           seoScore: audit.score,
-          metaTitle: article.seoTitle || null,
-          metaDescription: article.seoDescription || null,
+          metaTitle,
+          metaDescription,
           issues: JSON.stringify(audit.issues),
           lastAnalyzedAt: new Date(),
         },
-      }),
-    ),
+      });
+    }),
   );
 
   return json({
@@ -854,17 +880,20 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
   );
 }
 
-function auditArticle(article: ArticleInput, productCount: number, config: { addBlogSchema?: boolean; addProductSchema?: boolean }) {
+function auditArticle(
+  article: ArticleInput,
+  productCount: number,
+  config: { addBlogSchema?: boolean; addProductSchema?: boolean },
+  storedSeo?: StoredSeoInput | null,
+) {
   const issues: SeoIssue[] = [];
-  let score = 100;
-  const seoTitle = article.seoTitle.trim();
-  const seoDescription = article.seoDescription.trim();
+  const seoTitle = textValue(storedSeo?.metaTitle) || article.seoTitle.trim();
+  const seoDescription = textValue(storedSeo?.metaDescription) || article.seoDescription.trim();
   const bodyText = stripHtml(`${article.summary || ""} ${article.body || ""}`);
   const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
 
-  const addIssue = (issue: SeoIssue, penalty: number) => {
+  const addIssue = (issue: SeoIssue, _penalty: number) => {
     issues.push(issue);
-    score -= penalty;
   };
 
   if (!seoDescription) {
@@ -1022,9 +1051,92 @@ function auditArticle(article: ArticleInput, productCount: number, config: { add
   }
 
   return {
-    score: Math.max(0, Math.min(100, Math.round(score))),
+    score: calculateBlogDetailSeoScore(article, productCount, storedSeo),
     issues,
   };
+}
+
+function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number, storedSeo?: StoredSeoInput | null) {
+  let score = 100;
+  const title = textValue(storedSeo?.metaTitle) || article.title || "";
+  const summary = textValue(storedSeo?.metaDescription) || article.summary || "";
+  const body = article.body || "";
+  const text = stripHtml(body);
+  const wordCount = text ? text.split(/\s+/).length : 0;
+  const linkCount = (body.match(/<a\s/gi) || []).length;
+  const hasImage = Boolean(article.imageUrl);
+  const imageAlt = article.imageAlt || "";
+  const focusKeyword = textValue(storedSeo?.focusKeyword);
+
+  const titleLower = title.toLowerCase();
+  const summaryLower = summary.toLowerCase();
+  const handleLower = (article.handle || "").toLowerCase();
+  const bodyLower = text.toLowerCase();
+  const first10Words = text
+    .split(/\s+/)
+    .slice(0, Math.max(20, Math.floor(wordCount * 0.1)))
+    .join(" ")
+    .toLowerCase();
+
+  if (wordCount < 250) score -= 15;
+  else if (wordCount < 600) score -= 5;
+
+  if (linkCount < 1) score -= 5;
+  if (!article.handle || article.handle.length > 75) score -= 2;
+
+  const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
+  if (!hasImage && !hasMediaInBody) score -= 5;
+
+  const paragraphs = body.split(/<\/p>/i);
+  const longParagraphs = paragraphs.filter((paragraph) => stripHtml(paragraph).split(/\s+/).length > 120);
+  if (longParagraphs.length > 0) score -= 3;
+
+  if (!/\d/.test(title)) score -= 2;
+
+  if (focusKeyword) {
+    const keywords = focusKeyword
+      .split(",")
+      .map((keyword) => keyword.trim().toLowerCase())
+      .filter(Boolean);
+
+    keywords.forEach((keyword, index) => {
+      const isPrimary = index === 0;
+      const occurrences = bodyLower.split(keyword).length - 1;
+      const density = wordCount > 0 ? ((occurrences * keyword.split(" ").length) / wordCount) * 100 : 0;
+      const inTitle = titleLower.includes(keyword);
+      const inSummary = summaryLower.includes(keyword);
+      const inHandle = handleLower.includes(slugifyKeyword(keyword));
+      const inFirst10 = first10Words.includes(keyword);
+
+      if (isPrimary) {
+        if (!inTitle) score -= 10;
+        if (!inSummary) score -= 5;
+        if (!inHandle) score -= 5;
+        if (!inFirst10) score -= 5;
+        if (occurrences === 0) score -= 15;
+
+        const headingRegex = /<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi;
+        let foundInHeading = false;
+        let match;
+        while ((match = headingRegex.exec(body)) !== null) {
+          if (match[1].toLowerCase().includes(keyword)) {
+            foundInHeading = true;
+            break;
+          }
+        }
+        if (!foundInHeading) score -= 2;
+
+        if (occurrences > 0 && (density < 0.5 || density > 2.5)) score -= 2;
+        if (hasImage && !imageAlt.toLowerCase().includes(keyword)) score -= 2;
+      } else if (occurrences === 0) {
+        score -= 3;
+      }
+    });
+  } else {
+    score -= 30;
+  }
+
+  return Math.max(0, Math.min(100, score));
 }
 
 function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
@@ -1128,6 +1240,19 @@ function formatDate(value: string) {
 
 function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function slugifyKeyword(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function cleanText(value: unknown) {
