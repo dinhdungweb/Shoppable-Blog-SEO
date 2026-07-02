@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
 import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
@@ -6,6 +7,7 @@ import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../shopify.server";
+import { scheduleCrispChatLoad } from "../utils/crisp-chat";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -15,11 +17,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
+function CrispChatLoader() {
+  useEffect(() => {
+    return scheduleCrispChatLoad();
+  }, []);
+
+  return null;
+}
+
 export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
+      <CrispChatLoader />
       <NavMenu>
         <Link to="/app" rel="home">
           Dashboard
