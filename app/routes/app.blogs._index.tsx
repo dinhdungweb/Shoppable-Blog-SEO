@@ -48,7 +48,7 @@ function formatMoney(value: number) {
 
 const BLOG_MANAGER_PAGE_SIZE = 20;
 
-type BlogManagerStatus = "all" | "published" | "draft";
+type BlogManagerStatus = "all" | "published" | "draft" | "needs_seo" | "no_products" | "high_traffic";
 type BlogManagerSort = "date_desc" | "date_asc" | "title_asc" | "title_desc";
 
 function cleanParam(value: string | null) {
@@ -57,7 +57,15 @@ function cleanParam(value: string | null) {
 }
 
 function getStatusParam(value: string | null): BlogManagerStatus {
-  if (value === "published" || value === "draft") return value;
+  if (
+    value === "published" ||
+    value === "draft" ||
+    value === "needs_seo" ||
+    value === "no_products" ||
+    value === "high_traffic"
+  ) {
+    return value;
+  }
   return "all";
 }
 
@@ -94,6 +102,26 @@ function buildArticleSearchQuery({
   if (status === "draft") parts.push("published_status:unpublished");
 
   return parts.length ? parts.join(" ") : null;
+}
+
+function articleMatchesTab(article: any, status: BlogManagerStatus) {
+  if (status === "published") return Boolean(article.publishedAt);
+  if (status === "draft") return !article.publishedAt;
+  if (status === "needs_seo") return article.seoScore === null || article.seoScore === undefined || article.seoScore < 60;
+  if (status === "no_products") return !article.productCount;
+  if (status === "high_traffic") return (article.clicks || 0) >= 100;
+  return true;
+}
+
+function buildTabCounts(articles: any[]) {
+  return {
+    all: articles.length,
+    published: articles.filter((article) => articleMatchesTab(article, "published")).length,
+    draft: articles.filter((article) => articleMatchesTab(article, "draft")).length,
+    needsSeo: articles.filter((article) => articleMatchesTab(article, "needs_seo")).length,
+    noProducts: articles.filter((article) => articleMatchesTab(article, "no_products")).length,
+    highTraffic: articles.filter((article) => articleMatchesTab(article, "high_traffic")).length,
+  };
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -280,6 +308,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     clicks: clickMap.get(article.id) || 0,
     revenue: revenueMap.get(article.id) || 0,
   }));
+  const tabCounts = buildTabCounts(finalArticles);
+  const visibleArticles = finalArticles.filter((article) => articleMatchesTab(article, status));
 
   const blogChoices = blogs.map((blog) => ({
     id: blog.id,
@@ -288,8 +318,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }));
 
   return {
-    articles: finalArticles,
+    articles: visibleArticles,
     blogs: blogChoices,
+    tabCounts,
     filters: {
       search: search || "",
       blogId: blogId || "all",
@@ -516,7 +547,7 @@ const TabBadge = ({ label, count, isActive, onClick }: { label: string, count?: 
 );
 
 export default function BlogManager() {
-  const { articles, blogs, filters, pagination, canBulkReview } = useLoaderData<typeof loader>();
+  const { articles, blogs, tabCounts, filters, pagination, canBulkReview } = useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const fetcher = useFetcher();
   const navigate = useNavigate();
@@ -688,9 +719,12 @@ export default function BlogManager() {
               
               {/* TABS (Left) */}
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', flexWrap: 'nowrap' }}>
-                <TabBadge label="All" isActive={filters.status === 'all'} onClick={() => updateFilters({ status: 'all' })} />
-                <TabBadge label="Published" isActive={filters.status === 'published'} onClick={() => updateFilters({ status: 'published' })} />
-                <TabBadge label="Draft" isActive={filters.status === 'draft'} onClick={() => updateFilters({ status: 'draft' })} />
+                <TabBadge label="All" count={tabCounts.all} isActive={filters.status === 'all'} onClick={() => updateFilters({ status: 'all' })} />
+                <TabBadge label="Published" count={tabCounts.published} isActive={filters.status === 'published'} onClick={() => updateFilters({ status: 'published' })} />
+                <TabBadge label="Draft" count={tabCounts.draft} isActive={filters.status === 'draft'} onClick={() => updateFilters({ status: 'draft' })} />
+                <TabBadge label="Needs SEO" count={tabCounts.needsSeo} isActive={filters.status === 'needs_seo'} onClick={() => updateFilters({ status: 'needs_seo' })} />
+                <TabBadge label="No products linked" count={tabCounts.noProducts} isActive={filters.status === 'no_products'} onClick={() => updateFilters({ status: 'no_products' })} />
+                <TabBadge label="High traffic" count={tabCounts.highTraffic} isActive={filters.status === 'high_traffic'} onClick={() => updateFilters({ status: 'high_traffic' })} />
               </div>
 
               {/* FILTERS (Right) */}

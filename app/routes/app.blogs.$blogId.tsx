@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ClipboardEvent as ReactClipboardEvent,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
 } from "react";
@@ -128,6 +129,48 @@ type ProductBlockOption = {
 };
 
 const EDITOR_BLOCK_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"]);
+const EDITOR_PASTE_DROP_TAGS = new Set(["script", "style", "meta", "link", "object", "embed", "iframe", "svg"]);
+const EDITOR_PASTE_UNWRAP_TAGS = new Set([
+  "span",
+  "font",
+  "div",
+  "section",
+  "article",
+  "main",
+  "header",
+  "footer",
+  "figure",
+  "figcaption",
+  "center",
+]);
+const EDITOR_PASTE_ALLOWED_TAG_MAP = new Map([
+  ["p", "p"],
+  ["h1", "h1"],
+  ["h2", "h2"],
+  ["h3", "h3"],
+  ["h4", "h4"],
+  ["h5", "h5"],
+  ["h6", "h6"],
+  ["blockquote", "blockquote"],
+  ["ul", "ul"],
+  ["ol", "ol"],
+  ["li", "li"],
+  ["br", "br"],
+  ["strong", "strong"],
+  ["b", "strong"],
+  ["em", "em"],
+  ["i", "em"],
+  ["u", "u"],
+  ["a", "a"],
+  ["img", "img"],
+  ["table", "table"],
+  ["thead", "thead"],
+  ["tbody", "tbody"],
+  ["tfoot", "tfoot"],
+  ["tr", "tr"],
+  ["td", "td"],
+  ["th", "th"],
+]);
 
 const DEFAULT_PRODUCT_BLOCK_ID = "default";
 const IMAGE_FILE_PAGE_SIZE = 50;
@@ -2727,6 +2770,22 @@ function RichArticleEditor({
     [emitChange, saveSelection],
   );
 
+  const handleEditorPaste = useCallback(
+    (event: ReactClipboardEvent<HTMLDivElement>) => {
+      const html = event.clipboardData.getData("text/html");
+      const text = event.clipboardData.getData("text/plain");
+      const sanitizedHtml = sanitizeEditorPasteHtml(html, text);
+
+      if (!sanitizedHtml) return;
+
+      event.preventDefault();
+      document.execCommand("insertHTML", false, sanitizedHtml);
+      emitChange();
+      saveSelection();
+    },
+    [emitChange, saveSelection],
+  );
+
   const handleEditorClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
     
@@ -3035,6 +3094,7 @@ function RichArticleEditor({
           aria-label="Blog post content"
           data-placeholder={placeholder}
           onKeyDown={handleEditorKeyDown}
+          onPaste={handleEditorPaste}
           onDoubleClick={handleEditorDoubleClick}
           onClick={handleEditorClick}
           onInput={emitChange}
@@ -4674,6 +4734,171 @@ function normalizeEditorUrl(value: string) {
   } catch {
     return "";
   }
+}
+
+function sanitizeEditorPasteHtml(html: string, plainText: string) {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return "";
+  }
+
+  if (!html.trim()) {
+    return plainTextToEditorHtml(plainText);
+  }
+
+  const parser = new DOMParser();
+  const parsed = parser.parseFromString(html, "text/html");
+  const fragment = document.createDocumentFragment();
+
+  Array.from(parsed.body.childNodes).forEach((child) => {
+    const sanitized = sanitizeEditorPasteNode(child);
+    if (sanitized) fragment.appendChild(sanitized);
+  });
+
+  const wrapper = document.createElement("div");
+  wrapper.appendChild(fragment);
+  cleanupPastedHtml(wrapper);
+
+  return wrapper.innerHTML.trim() || plainTextToEditorHtml(plainText);
+}
+
+function sanitizeEditorPasteNode(node: Node): Node | null {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return document.createTextNode(node.textContent || "");
+  }
+
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return null;
+  }
+
+  const source = node as HTMLElement;
+  const sourceTag = source.tagName.toLowerCase();
+
+  if (EDITOR_PASTE_DROP_TAGS.has(sourceTag)) return null;
+
+  const children = document.createDocumentFragment();
+  Array.from(source.childNodes).forEach((child) => {
+    const sanitized = sanitizeEditorPasteNode(child);
+    if (sanitized) children.appendChild(sanitized);
+  });
+
+  if (EDITOR_PASTE_UNWRAP_TAGS.has(sourceTag)) {
+    return applyInlinePasteStyle(source, children);
+  }
+
+  const targetTag = EDITOR_PASTE_ALLOWED_TAG_MAP.get(sourceTag);
+  if (!targetTag) {
+    return children;
+  }
+
+  const target = document.createElement(targetTag);
+
+  if (targetTag === "br") return target;
+
+  if (targetTag === "a") {
+    const href = normalizePastedEditorHref(source.getAttribute("href") || "");
+    if (!href) return children;
+    target.setAttribute("href", href);
+    if (/^https?:\/\//i.test(href)) {
+      target.setAttribute("target", "_blank");
+      target.setAttribute("rel", "noopener noreferrer");
+    }
+  }
+
+  if (targetTag === "img") {
+    const src = normalizePastedImageSrc(source.getAttribute("src") || "");
+    if (!src) return null;
+    target.setAttribute("src", src);
+    const alt = source.getAttribute("alt") || source.getAttribute("title") || "";
+    if (alt) target.setAttribute("alt", alt);
+  }
+
+  if (targetTag === "table") {
+    target.setAttribute("class", "bp-editor-content-table");
+  }
+
+  target.appendChild(children);
+  return target;
+}
+
+function applyInlinePasteStyle(source: HTMLElement, node: Node) {
+  const style = source.getAttribute("style") || "";
+  const tag = source.tagName.toLowerCase();
+  let current = node;
+
+  if ((tag === "span" || tag === "font") && pasteStyleHasUnderline(style)) {
+    current = wrapPastedNode("u", current);
+  }
+
+  if ((tag === "span" || tag === "font") && pasteStyleHasItalic(style)) {
+    current = wrapPastedNode("em", current);
+  }
+
+  if ((tag === "span" || tag === "font") && pasteStyleHasBold(style)) {
+    current = wrapPastedNode("strong", current);
+  }
+
+  return current;
+}
+
+function wrapPastedNode(tagName: string, node: Node) {
+  const wrapper = document.createElement(tagName);
+  wrapper.appendChild(node);
+  return wrapper;
+}
+
+function pasteStyleHasBold(style: string) {
+  const fontWeight = style.match(/font-weight\s*:\s*([^;]+)/i)?.[1]?.trim().toLowerCase() || "";
+  if (!fontWeight) return false;
+  if (fontWeight === "bold" || fontWeight === "bolder") return true;
+  const numericWeight = Number(fontWeight);
+  return Number.isFinite(numericWeight) && numericWeight >= 600;
+}
+
+function pasteStyleHasItalic(style: string) {
+  return /font-style\s*:\s*italic/i.test(style);
+}
+
+function pasteStyleHasUnderline(style: string) {
+  return /text-decoration(?:-line)?\s*:\s*[^;]*underline/i.test(style);
+}
+
+function normalizePastedEditorHref(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || /^(javascript|data|vbscript):/i.test(trimmed)) return "";
+  if (/^(https?:|mailto:|tel:|#|\/)/i.test(trimmed)) return trimmed;
+  return normalizeEditorUrl(trimmed);
+}
+
+function normalizePastedImageSrc(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || /^(javascript|data|vbscript):/i.test(trimmed)) return "";
+  if (/^\/\//.test(trimmed)) return `https:${trimmed}`;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : "";
+}
+
+function plainTextToEditorHtml(value: string) {
+  const text = value.trim();
+  if (!text) return "";
+
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .map((paragraph) => {
+      const lines = paragraph
+        .split("\n")
+        .map((line) => escapeHtml(line))
+        .join("<br>");
+      return `<p>${lines || "<br>"}</p>`;
+    })
+    .join("");
+}
+
+function cleanupPastedHtml(wrapper: HTMLElement) {
+  wrapper.querySelectorAll("p, h1, h2, h3, h4, h5, h6, blockquote, li, td, th").forEach((element) => {
+    if (!element.textContent?.trim() && !element.querySelector("img, table, br")) {
+      element.innerHTML = "<br>";
+    }
+  });
 }
 
 function makeEditorVideoHtml(value: string) {
