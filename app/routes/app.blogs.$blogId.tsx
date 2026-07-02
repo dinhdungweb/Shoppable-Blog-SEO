@@ -41,6 +41,8 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ClipboardCheckIcon,
+  ClipboardIcon,
   CodeIcon,
   DeleteIcon,
   ExternalIcon,
@@ -3114,11 +3116,17 @@ function ProductsPanel({
             <Text as="span" variant="bodySm" fontWeight="semibold">
               Short code
             </Text>
-            <div className="bp-product-block-shortcode-row">
+            <div className="bp-product-block-shortcode-control">
               <code className="bp-product-block-shortcode">{selectedShortcode}</code>
-              <Button size="micro" onClick={copyShortcode}>
-                {shortcodeCopied ? "Copied" : "Copy"}
-              </Button>
+              <button
+                type="button"
+                className="bp-product-block-shortcode-copy"
+                aria-label={shortcodeCopied ? "Shortcode copied" : "Copy shortcode"}
+                title={shortcodeCopied ? "Copied" : "Copy shortcode"}
+                onClick={copyShortcode}
+              >
+                <Icon source={shortcodeCopied ? ClipboardCheckIcon : ClipboardIcon} tone={shortcodeCopied ? "success" : "base"} />
+              </button>
             </div>
           </BlockStack>
         </InlineGrid>
@@ -5168,11 +5176,16 @@ const DETAIL_STYLES = `
   border: 0;
 }
 
-.bp-product-block-shortcode-row {
+.bp-product-block-shortcode-control {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 36px;
   align-items: center;
+  min-height: 34px;
+  width: 100%;
+  border: 1px solid var(--p-color-border);
+  border-radius: 6px;
+  background: var(--p-color-bg-surface-secondary);
+  overflow: hidden;
 }
 
 .bp-product-block-shortcode {
@@ -5182,14 +5195,29 @@ const DETAIL_STYLES = `
   box-sizing: border-box;
   width: 100%;
   padding: 5px 10px;
-  border: 1px solid var(--p-color-border);
-  border-radius: 6px;
-  background: var(--p-color-bg-surface-secondary);
+  border: 0;
+  background: transparent;
   color: var(--p-color-text);
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   white-space: nowrap;
   overflow-x: auto;
+}
+
+.bp-product-block-shortcode-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 34px;
+  border: 0;
+  border-left: 1px solid var(--p-color-border);
+  background: transparent;
+  cursor: pointer;
+}
+
+.bp-product-block-shortcode-copy:hover {
+  background: var(--p-color-bg-surface-hover);
 }
 
 .bp-score-ring {
