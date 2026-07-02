@@ -280,6 +280,7 @@
         return;
       }
 
+      publishAttribution(widget, product.productId);
       trackEvent(
         widget.dataset.appUrl,
         widget.dataset.shop,
@@ -300,6 +301,20 @@
     });
 
     return card;
+  }
+
+  function publishAttribution(widget, productId) {
+    try {
+      const analytics = window.Shopify && window.Shopify.analytics;
+      if (!analytics || typeof analytics.publish !== "function") return;
+
+      analytics.publish("shoppable_blog:product_selected", {
+        shop: widget.dataset.shop || "",
+        articleId: widget.dataset.articleId || "",
+        blockId: cleanBlockId(widget.dataset.blockId),
+        productId: productId || "",
+      });
+    } catch (error) {}
   }
 
   function setupCarousel(widget, style, config = {}) {

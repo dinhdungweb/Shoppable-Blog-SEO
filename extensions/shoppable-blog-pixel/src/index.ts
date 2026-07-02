@@ -3,6 +3,7 @@ import { register } from "@shopify/web-pixels-extension";
 register(({ analytics, browser, init, settings }) => {
   const TRACK_API_URL = "https://shopable-blog.bluepeaks.top/api/track";
   const STORAGE_KEY = "sbs_attribution";
+  const ATTRIBUTION_EVENT = "shoppable_blog:product_selected";
 
   // Configuration for attribution window (7 days in milliseconds)
   const ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -32,10 +33,13 @@ register(({ analytics, browser, init, settings }) => {
     }
   }
 
-  async function setAttribution(articleId: string, blockId: string) {
+  async function setAttribution(articleId: unknown, blockId: unknown) {
+    const normalizedArticleId = normalizeArticleId(articleId);
+    if (!normalizedArticleId) return;
+
     try {
       await browser.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        articleId: normalizeArticleId(articleId),
+        articleId: normalizedArticleId,
         blockId: cleanBlockId(blockId),
         timestamp: Date.now()
       }));
@@ -68,8 +72,8 @@ register(({ analytics, browser, init, settings }) => {
 
   function getCanonicalShop() {
     return (
-      normalizeShopDomain(settings?.accountID) ||
       normalizeShopDomain(init.data?.shop?.myshopifyDomain) ||
+      normalizeShopDomain(settings?.accountID) ||
       normalizeShopDomain(init.context.document.location.hostname)
     );
   }
@@ -118,6 +122,12 @@ register(({ analytics, browser, init, settings }) => {
         }
       }
     } catch (e) {}
+  });
+
+  // 1b. Capture direct widget interactions before the customer leaves the blog page.
+  analytics.subscribe(ATTRIBUTION_EVENT, async (event) => {
+    const data = (event as any).customData || {};
+    await setAttribution(data.articleId, data.blockId);
   });
 
   // 2. Listen to add to cart
