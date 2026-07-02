@@ -36,6 +36,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { auditSeo as runSeoAudit } from "../seo-audit";
+import { fetchShopDomains } from "../shopify-domains.server";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -123,6 +124,7 @@ const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
+  const shopDomains = await fetchShopDomains(admin, shop);
   let shopifyError = "";
   let articles: ArticleInput[] = [];
 
@@ -218,7 +220,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .map((article) => {
       const productCount = productCountMap.get(article.id) || 0;
       const stored = storedSeoMap.get(article.id);
-      const audit = auditArticle(article, productCount, config, stored, shop);
+      const audit = auditArticle(article, productCount, config, stored, shop, shopDomains);
 
       return {
         ...article,
@@ -263,7 +265,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "Unsupported action" }, { status: 400 });
   }
 
-  const [articles, linkedProducts, config, seoRows] = await Promise.all([
+  const [articles, linkedProducts, config, seoRows, shopDomains] = await Promise.all([
     fetchShopifyArticles(admin),
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
@@ -285,6 +287,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         lastAnalyzedAt: true,
       },
     }),
+    fetchShopDomains(admin, shop),
   ]);
 
   const productCountMap = new Map<string, number>();
@@ -295,7 +298,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const storedSeoMap = new Map(seoRows.map((row) => [row.articleId, row]));
   const audits = articles.map((article) => {
     const stored = storedSeoMap.get(article.id);
-    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, stored, shop);
+    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, stored, shop, shopDomains);
     return { article, audit };
   });
 
@@ -894,6 +897,7 @@ function auditArticle(
   config: { addBlogSchema?: boolean; addProductSchema?: boolean },
   storedSeo?: StoredSeoInput | null,
   shopDomain?: string,
+  shopDomains: string[] = [],
 ) {
   const issues: SeoIssue[] = [];
   const seoTitle = getEffectiveSeoTitle(storedSeo?.metaTitle, article);
@@ -901,7 +905,7 @@ function auditArticle(
   const body = article.body || "";
   const bodyText = stripHtml(body);
   const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
-  const linkStats = analyzeLinks(body, shopDomain);
+  const linkStats = analyzeLinks(body, shopDomain, shopDomains);
   const headings = getHeadingTexts(body);
   const hasToc = hasTableOfContents(body) || headings.length >= 3;
   const bodyImageAltText = getBodyImageAltText(body);
@@ -1409,12 +1413,18 @@ function auditArticle(
   }
 
   return {
-    score: calculateBlogDetailSeoScore(article, productCount, storedSeo, shopDomain),
+    score: calculateBlogDetailSeoScore(article, productCount, storedSeo, shopDomain, shopDomains),
     issues,
   };
 }
 
-function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number, storedSeo?: StoredSeoInput | null, shopDomain?: string) {
+function calculateBlogDetailSeoScore(
+  article: ArticleInput,
+  productCount: number,
+  storedSeo?: StoredSeoInput | null,
+  shopDomain?: string,
+  shopDomains: string[] = [],
+) {
   const title = getEffectiveSeoTitle(storedSeo?.metaTitle, article);
   const summary = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
   return runSeoAudit({
@@ -1427,12 +1437,13 @@ function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number
     productCount,
     focusKeyword: textValue(storedSeo?.focusKeyword),
     shopDomain,
+    shopDomains,
   }).score;
 }
 
-function analyzeLinks(body: string, shopDomain?: string) {
+function analyzeLinks(body: string, shopDomain?: string, shopDomains: string[] = []) {
   const stats = { internal: 0, external: 0, dofollowExternal: 0 };
-  const shopHost = normalizeHost(shopDomain || "");
+  const shopHosts = buildShopHosts(shopDomain, shopDomains);
   const anchorRegex = /<a\b([^>]*)>/gi;
   let match: RegExpExecArray | null;
 
@@ -1444,7 +1455,7 @@ function analyzeLinks(body: string, shopDomain?: string) {
     const rel = getHtmlAttribute(attrs, "rel").toLowerCase();
     const isNoFollow = /\b(nofollow|sponsored|ugc)\b/i.test(rel);
 
-    if (isInternalHref(href, shopHost)) {
+    if (isInternalHref(href, shopHosts)) {
       stats.internal += 1;
     } else {
       stats.external += 1;
@@ -1460,17 +1471,28 @@ function getHtmlAttribute(attrs: string, name: string) {
   return match?.[2] || match?.[3] || match?.[4] || "";
 }
 
-function isInternalHref(href: string, shopHost: string) {
+function isInternalHref(href: string, shopHosts: Set<string>) {
   const trimmed = href.trim();
   if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("/")) return true;
 
   try {
     const url = new URL(trimmed);
     const host = normalizeHost(url.hostname);
-    return Boolean(shopHost && (host === shopHost || host.endsWith(`.${shopHost}`)));
+    return Array.from(shopHosts).some((shopHost) => host === shopHost || host.endsWith(`.${shopHost}`));
   } catch {
     return true;
   }
+}
+
+function buildShopHosts(shopDomain?: string, shopDomains: string[] = []) {
+  const hosts = new Set<string>();
+
+  [shopDomain, ...shopDomains].forEach((domain) => {
+    const host = normalizeHost(domain || "");
+    if (host) hosts.add(host);
+  });
+
+  return hosts;
 }
 
 function normalizeHost(value: string) {

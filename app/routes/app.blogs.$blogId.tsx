@@ -72,6 +72,7 @@ import prisma from "../db.server";
 import { formatLimit } from "../pricing-plans";
 import { auditSeo as runSeoAudit } from "../seo-audit";
 import type { SeoAuditIssue } from "../seo-audit";
+import { fetchShopDomains } from "../shopify-domains.server";
 
 type SeoIssue = SeoAuditIssue;
 
@@ -153,6 +154,7 @@ type EditorImageSize = (typeof EDITOR_IMAGE_SIZE_OPTIONS)[number]["value"];
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
+  const shopDomains = await fetchShopDomains(admin, shop);
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
   const blogs = await fetchShopifyEditorBlogs(admin);
@@ -169,10 +171,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       imageAlt: "",
       productCount: 0,
       shopDomain: shop,
+      shopDomains,
     });
 
     return json({
       shop,
+      shopDomains,
       isNewPost: true,
       blogs,
       article,
@@ -294,6 +298,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     imageAlt: article.image?.altText || "",
     productCount: embeddedProducts.length,
     shopDomain: shop,
+    shopDomains,
   });
 
   const livePostUrl =
@@ -303,6 +308,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   return json({
     shop,
+    shopDomains,
     article,
     embeddedProducts,
     seoData,
@@ -323,6 +329,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const shopDomains = await fetchShopDomains(admin, shop);
   const defaultAuthorName = DEFAULT_AUTHOR_NAME;
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
@@ -473,6 +480,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         productCount,
         focusKeyword,
         shopDomain: shop,
+        shopDomains,
       });
 
       await prisma.articleSEO.upsert({
@@ -602,6 +610,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       productCount,
       focusKeyword,
       shopDomain: shop,
+      shopDomains,
     });
 
     await prisma.articleSEO.upsert({
@@ -781,6 +790,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       productCount: Number(formData.get("productCount") || "0"),
       focusKeyword,
       shopDomain: shop,
+      shopDomains,
     });
 
     if (isNewPost) {
@@ -845,6 +855,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       productCount,
       focusKeyword,
       shopDomain: shop,
+      shopDomains,
     });
 
     if (isNewPost) {
@@ -951,7 +962,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError } =
+  const { shop, shopDomains, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
@@ -1022,8 +1033,9 @@ export default function ArticleDetail() {
       productCount: embeddedProducts.length,
       focusKeyword,
       shopDomain: shop,
+      shopDomains,
     });
-  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword, shop]);
+  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword, shop, shopDomains]);
 
   const productBlockOptions = useMemo(
     () => buildProductBlockOptions(body, embeddedProducts),
