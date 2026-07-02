@@ -19,7 +19,6 @@ import {
   ProgressBar,
   Spinner,
   Text,
-  Thumbnail,
   Layout,
 } from "@shopify/polaris";
 import {
@@ -795,7 +794,7 @@ export default function Dashboard() {
                 <IndexTable.Row id={post.id} key={post.id} position={index}>
                   <IndexTable.Cell>
                     <InlineStack gap="300" blockAlign="center" wrap={false}>
-                      <Thumbnail source={post.image || ImageIcon} alt={post.imageAlt || post.title} size="small" />
+                      <DashboardThumbnail source={post.image} alt={post.imageAlt || post.title} />
                       <BlockStack gap="050">
                         <Text as="span" variant="bodyMd" fontWeight="semibold">
                           {post.title}
@@ -1045,6 +1044,40 @@ function PerformanceStat({
   );
 }
 
+function DashboardThumbnail({ source, alt }: { source?: string | null; alt: string }) {
+  return (
+    <div
+      style={{
+        width: "40px",
+        height: "40px",
+        borderRadius: "6px",
+        overflow: "hidden",
+        background: "#f1f1f1",
+        border: "1px solid #e3e3e3",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      {source ? (
+        <img
+          src={source}
+          alt={alt}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+          }}
+        />
+      ) : (
+        <Icon source={ImageIcon} tone="subdued" />
+      )}
+    </div>
+  );
+}
+
 function CompactProductLeaderboard({
   title,
   products,
@@ -1063,11 +1096,21 @@ function CompactProductLeaderboard({
           {title}
         </Text>
         {products.length ? (
-          <BlockStack gap="250">
+          <BlockStack gap="300">
             {products.map((product) => (
-              <InlineStack key={`${title}-${product.id}`} align="space-between" blockAlign="center" gap="300" wrap={false}>
-                <InlineStack gap="200" blockAlign="center" wrap={false}>
-                  <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
+              <div
+                key={`${title}-${product.id}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "40px minmax(0, 1fr) auto",
+                  alignItems: "center",
+                  columnGap: "10px",
+                  minHeight: "48px",
+                  padding: "4px 0",
+                }}
+              >
+                <DashboardThumbnail source={product.image} alt={product.title} />
+                <div style={{ minWidth: 0 }}>
                   <BlockStack gap="050">
                     <Text as="span" variant="bodySm" fontWeight="semibold" truncate>
                       {product.title}
@@ -1076,11 +1119,13 @@ function CompactProductLeaderboard({
                       {formatMoney(product.revenue)} revenue
                     </Text>
                   </BlockStack>
-                </InlineStack>
-                <Text as="span" variant="bodySm" fontWeight="bold">
-                  {formatNumber(product[metricKey])} {metricLabel}
-                </Text>
-              </InlineStack>
+                </div>
+                <div style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                  <Text as="span" variant="bodySm" fontWeight="bold">
+                    {formatNumber(product[metricKey])} {metricLabel}
+                  </Text>
+                </div>
+              </div>
             ))}
           </BlockStack>
         ) : (
