@@ -33,10 +33,11 @@ import {
 } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
-import { auditSeo as runSeoAudit } from "../seo-audit";
+import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
+import { normalizeContentNavConfig } from "../content-navigation";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -105,6 +106,14 @@ type IssueGroup = {
   }>;
 };
 
+type SeoAuditConfig = {
+  addBlogSchema?: boolean;
+  addProductSchema?: boolean;
+  canContentNavigation?: boolean;
+  tocEnabled?: boolean;
+  tocAutoInsertEnabled?: boolean;
+};
+
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const DONUT_COLORS = {
   High: "#D82C0D",
@@ -122,9 +131,10 @@ const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const shopDomains = await fetchShopDomains(admin, shop);
+  const { limits } = await getActivePlanAndLimits(billing);
   let shopifyError = "";
   let articles: ArticleInput[] = [];
 
@@ -216,11 +226,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   const storedSeoMap = new Map(seoRows.map((row) => [row.articleId, row]));
+  const contentNavConfig = normalizeContentNavConfig(config);
+  const seoAuditConfig: SeoAuditConfig = {
+    ...config,
+    canContentNavigation: limits.canContentNavigation,
+    tocEnabled: contentNavConfig.tocEnabled,
+    tocAutoInsertEnabled: contentNavConfig.tocAutoInsertEnabled,
+  };
   const auditedPosts = Array.from(articleMap.values())
     .map((article) => {
       const productCount = productCountMap.get(article.id) || 0;
       const stored = storedSeoMap.get(article.id);
-      const audit = auditArticle(article, productCount, config, stored, shop, shopDomains);
+      const audit = auditArticle(article, productCount, seoAuditConfig, stored, shop, shopDomains);
 
       return {
         ...article,
@@ -256,8 +273,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const { limits } = await getActivePlanAndLimits(billing);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -296,9 +314,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   const storedSeoMap = new Map(seoRows.map((row) => [row.articleId, row]));
+  const contentNavConfig = normalizeContentNavConfig(config);
+  const seoAuditConfig: SeoAuditConfig = {
+    ...config,
+    canContentNavigation: limits.canContentNavigation,
+    tocEnabled: contentNavConfig.tocEnabled,
+    tocAutoInsertEnabled: contentNavConfig.tocAutoInsertEnabled,
+  };
   const audits = articles.map((article) => {
     const stored = storedSeoMap.get(article.id);
-    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, stored, shop, shopDomains);
+    const audit = auditArticle(article, productCountMap.get(article.id) || 0, seoAuditConfig, stored, shop, shopDomains);
     return { article, audit };
   });
 
@@ -894,7 +919,7 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
 function auditArticle(
   article: ArticleInput,
   productCount: number,
-  config: { addBlogSchema?: boolean; addProductSchema?: boolean },
+  config: SeoAuditConfig,
   storedSeo?: StoredSeoInput | null,
   shopDomain?: string,
   shopDomains: string[] = [],
@@ -907,7 +932,10 @@ function auditArticle(
   const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
   const linkStats = analyzeLinks(body, shopDomain, shopDomains);
   const headings = getHeadingTexts(body);
-  const hasToc = hasTableOfContents(body) || headings.length >= 3;
+  const hasToc =
+    Boolean(config.canContentNavigation) &&
+    Boolean(config.tocEnabled) &&
+    (hasTableOfContents(body) || (Boolean(config.tocAutoInsertEnabled) && headings.length >= 3));
   const bodyImageAltText = getBodyImageAltText(body);
   const allImageAltText = `${article.imageAlt || ""} ${bodyImageAltText}`.trim();
   const hasAnyImage = Boolean(article.imageUrl) || /<img\b/i.test(body);
@@ -1107,11 +1135,15 @@ function auditArticle(
         type: "missing_toc",
         category: "content",
         label: "Missing table of contents",
-        message: "You don't seem to be using a Table of Contents.",
+        message: config.canContentNavigation
+          ? "You don't seem to be using a Table of Contents."
+          : "Table of Contents is not available on your current plan.",
         severity: "warning",
         impact: "Low",
         effort: "Low",
-        fix: "Add a TOC shortcode or enough H2/H3 sections for the article TOC.",
+        fix: config.canContentNavigation
+          ? "Enable Table of Contents in Settings, or add a TOC shortcode/block."
+          : "Upgrade your plan to use Table of Contents.",
       },
       2,
     );
@@ -1438,6 +1470,9 @@ function calculateBlogDetailSeoScore(
     focusKeyword: textValue(storedSeo?.focusKeyword),
     shopDomain,
     shopDomains,
+    canUseTableOfContents: Boolean(config.canContentNavigation),
+    tocEnabled: Boolean(config.tocEnabled),
+    tocAutoInsertEnabled: Boolean(config.tocAutoInsertEnabled),
   }).score;
 }
 
@@ -1669,12 +1704,7 @@ function getEffectiveSeoDescription(metaDescription: unknown, article: ArticleIn
 }
 
 function slugifyKeyword(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+  return slugifySeoText(value);
 }
 
 function cleanText(value: unknown) {

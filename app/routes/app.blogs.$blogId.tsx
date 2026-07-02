@@ -70,11 +70,18 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { formatLimit } from "../pricing-plans";
-import { auditSeo as runSeoAudit } from "../seo-audit";
+import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import type { SeoAuditIssue } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
+import { normalizeContentNavConfig } from "../content-navigation";
 
 type SeoIssue = SeoAuditIssue;
+
+type SeoTocAuditOptions = {
+  canUseTableOfContents: boolean;
+  tocEnabled: boolean;
+  tocAutoInsertEnabled: boolean;
+};
 
 type ProductMetric = {
   productId: string;
@@ -152,9 +159,11 @@ const EDITOR_IMAGE_SIZE_OPTIONS = [
 type EditorImageSize = (typeof EDITOR_IMAGE_SIZE_OPTIONS)[number]["value"];
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const shopDomains = await fetchShopDomains(admin, shop);
+  const { limits } = await getActivePlanAndLimits(billing);
+  const tocAuditOptions = await getSeoTocAuditOptions(shop, limits.canContentNavigation);
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
   const blogs = await fetchShopifyEditorBlogs(admin);
@@ -172,11 +181,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       productCount: 0,
       shopDomain: shop,
       shopDomains,
+      ...tocAuditOptions,
     });
 
     return json({
       shop,
       shopDomains,
+      tocAuditOptions,
       isNewPost: true,
       blogs,
       article,
@@ -299,6 +310,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     productCount: embeddedProducts.length,
     shopDomain: shop,
     shopDomains,
+    ...tocAuditOptions,
   });
 
   const livePostUrl =
@@ -309,6 +321,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   return json({
     shop,
     shopDomains,
+    tocAuditOptions,
     article,
     embeddedProducts,
     seoData,
@@ -330,6 +343,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const shopDomains = await fetchShopDomains(admin, shop);
+  let activePlanPromise: ReturnType<typeof getActivePlanAndLimits> | null = null;
+  let tocAuditOptionsPromise: Promise<SeoTocAuditOptions> | null = null;
+  const getActivePlan = () => {
+    activePlanPromise ||= getActivePlanAndLimits(billing);
+    return activePlanPromise;
+  };
+  const getTocAuditOptions = () => {
+    tocAuditOptionsPromise ||= getActivePlan().then(({ limits }) =>
+      getSeoTocAuditOptions(shop, limits.canContentNavigation),
+    );
+    return tocAuditOptionsPromise;
+  };
   const defaultAuthorName = DEFAULT_AUTHOR_NAME;
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
@@ -470,6 +495,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         return json({ success: false, error: seoSyncError }, { status: 400 });
       }
 
+      const tocAuditOptions = await getTocAuditOptions();
       const audit = runSeoAudit({
         title: metaTitle,
         handle: article.handle || handle,
@@ -481,6 +507,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         focusKeyword,
         shopDomain: shop,
         shopDomains,
+        ...tocAuditOptions,
       });
 
       await prisma.articleSEO.upsert({
@@ -600,7 +627,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ success: false, error: seoSyncError }, { status: 400 });
     }
 
-    const audit = getSubmittedSeoAudit(formData) || runSeoAudit({
+    const submittedAudit = getSubmittedSeoAudit(formData);
+    const tocAuditOptions = submittedAudit ? null : await getTocAuditOptions();
+    const audit = submittedAudit || runSeoAudit({
       title: metaTitle,
       handle,
       summary: metaDescription,
@@ -611,6 +640,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       focusKeyword,
       shopDomain: shop,
       shopDomains,
+      ...(tocAuditOptions || {}),
     });
 
     await prisma.articleSEO.upsert({
@@ -655,7 +685,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const blockId = cleanProductBlockId(cleanString(formData.get("blockId")));
 
     // ── Plan limit check ───────────────────────────────────────────────────
-    const { planKey, limits } = await getActivePlanAndLimits(billing);
+    const { planKey, limits } = await getActivePlan();
 
     // Check shoppableArticles limit: only applies if this article has NO active
     // products yet (i.e. it would become a new shoppable post).
@@ -780,7 +810,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const imageUrl = cleanString(formData.get("imageUrl"));
     const removeImage = formData.get("removeImage") === "true";
     const hasImage = removeImage ? false : Boolean(imageUrl || formData.get("hasImage") === "true");
-    const audit = getSubmittedSeoAudit(formData) || runSeoAudit({
+    const submittedAudit = getSubmittedSeoAudit(formData);
+    const tocAuditOptions = submittedAudit ? null : await getTocAuditOptions();
+    const audit = submittedAudit || runSeoAudit({
       title: cleanString(formData.get("metaTitle")),
       handle: cleanString(formData.get("handle")),
       summary: cleanString(formData.get("metaDescription")),
@@ -791,6 +823,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       focusKeyword,
       shopDomain: shop,
       shopDomains,
+      ...(tocAuditOptions || {}),
     });
 
     if (isNewPost) {
@@ -845,6 +878,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const suggestedImageAlt = imageAlt || (hasImage ? suggestedTitle : "");
     const focusKeyword = cleanString(formData.get("focusKeyword"));
 
+    const tocAuditOptions = await getTocAuditOptions();
     const audit = runSeoAudit({
       title: suggestedTitle,
       handle,
@@ -856,6 +890,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       focusKeyword,
       shopDomain: shop,
       shopDomains,
+      ...tocAuditOptions,
     });
 
     if (isNewPost) {
@@ -962,7 +997,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, shopDomains, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError } =
+  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
@@ -1034,8 +1069,9 @@ export default function ArticleDetail() {
       focusKeyword,
       shopDomain: shop,
       shopDomains,
+      ...tocAuditOptions,
     });
-  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword, shop, shopDomains]);
+  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword, shop, shopDomains, tocAuditOptions]);
 
   const productBlockOptions = useMemo(
     () => buildProductBlockOptions(body, embeddedProducts),
@@ -4303,6 +4339,17 @@ function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+async function getSeoTocAuditOptions(shop: string, canContentNavigation: boolean): Promise<SeoTocAuditOptions> {
+  const config = await prisma.shopConfig.findUnique({ where: { shop } });
+  const contentNavConfig = normalizeContentNavConfig(config);
+
+  return {
+    canUseTableOfContents: canContentNavigation,
+    tocEnabled: Boolean(contentNavConfig.tocEnabled),
+    tocAutoInsertEnabled: Boolean(contentNavConfig.tocAutoInsertEnabled),
+  };
+}
+
 async function syncArticleSeoMetafields(
   admin: any,
   ownerId: string,
@@ -4413,13 +4460,7 @@ function getSubmittedSeoAudit(formData: FormData): { score: number; issues: SeoI
 }
 
 function cleanHandle(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/^\/?blogs\/[^/]+\//, "")
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+  return slugifySeoText(value.trim().replace(/^\/?blogs\/[^/]+\//i, ""));
 }
 
 function cleanProductBlockId(value?: string | null) {
@@ -5453,16 +5494,7 @@ const DETAIL_STYLES = `
 `;
 
 function slugifyKeyword(kw: string) {
-  return kw
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "D")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return slugifySeoText(kw);
 }
 
 function GoogleSnippetPreview({

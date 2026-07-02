@@ -23,6 +23,9 @@ type SeoAuditInput = {
   focusKeyword?: string;
   shopDomain?: string;
   shopDomains?: string[];
+  canUseTableOfContents?: boolean;
+  tocEnabled?: boolean;
+  tocAutoInsertEnabled?: boolean;
 };
 
 export function auditSeo({
@@ -36,6 +39,9 @@ export function auditSeo({
   focusKeyword,
   shopDomain,
   shopDomains,
+  canUseTableOfContents = true,
+  tocEnabled = true,
+  tocAutoInsertEnabled = false,
 }: SeoAuditInput): { score: number; issues: SeoAuditIssue[]; keywordScores: Record<string, "success" | "warning" | "critical"> } {
   const issues: SeoAuditIssue[] = [];
   let score = 100;
@@ -43,7 +49,8 @@ export function auditSeo({
   const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
   const linkStats = analyzeLinks(body, shopDomain, shopDomains);
   const headings = getHeadingTexts(body);
-  const hasToc = hasTableOfContents(body) || headings.length >= 3;
+  const explicitToc = hasTableOfContents(body);
+  const hasToc = canUseTableOfContents && tocEnabled && (explicitToc || (tocAutoInsertEnabled && headings.length >= 3));
   const bodyImageAltText = getBodyImageAltText(body);
   const allImageAltText = `${imageAlt || ""} ${bodyImageAltText}`.trim();
   const hasAnyImage = hasImage || /<img\b/i.test(body);
@@ -230,7 +237,9 @@ export function auditSeo({
       category: "content_readability",
       type: "toc",
       label: "Table of contents",
-      message: "You don't seem to be using a Table of Contents.",
+      message: canUseTableOfContents
+        ? "You don't seem to be using a Table of Contents."
+        : "Table of Contents is not available on your current plan.",
       severity: "warning",
       impact: "Low",
       effort: "Low",
@@ -241,7 +250,7 @@ export function auditSeo({
       category: "content_readability",
       type: "toc",
       label: "Table of contents",
-      message: "Your content structure can support a Table of Contents.",
+      message: "Your article has an active Table of Contents.",
       severity: "good",
     });
   }
@@ -694,11 +703,19 @@ function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function slugifyKeyword(value: string) {
+export function slugifySeoText(value: string) {
   return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\u0111/g, "d")
+    .replace(/\u0110/g, "D")
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function slugifyKeyword(value: string) {
+  return slugifySeoText(value);
 }
