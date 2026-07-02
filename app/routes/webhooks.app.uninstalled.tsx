@@ -3,15 +3,39 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+  const shopFromHeader =
+    request.headers.get("x-shopify-shop-domain") ||
+    request.headers.get("X-Shopify-Shop-Domain");
 
-  console.log(`Received ${topic} webhook for ${shop}`);
+  try {
+    const { shop, topic } = await authenticate.webhook(request);
+    console.log(`Received ${topic} webhook for ${shop}`);
 
-  // Webhook requests can trigger multiple times and after an app has already been uninstalled.
-  // If this webhook already ran, the session may have been deleted previously.
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
+    const targetShop = shop || shopFromHeader;
+    if (targetShop) {
+      await db.session.deleteMany({ where: { shop: targetShop } });
+    }
+  } catch (error) {
+    console.error(
+      `[Webhook] Error in app/uninstalled for ${shopFromHeader}:`,
+      error,
+    );
+    // If authenticate.webhook fails (e.g. token refresh error on already uninstalled shop),
+    // we still must purge all DB sessions for this shop.
+    if (shopFromHeader) {
+      try {
+        await db.session.deleteMany({ where: { shop: shopFromHeader } });
+        console.log(
+          `[Webhook] Cleaned up sessions for uninstalled shop via header: ${shopFromHeader}`,
+        );
+      } catch (dbError) {
+        console.error(
+          `[Webhook] Failed DB cleanup for ${shopFromHeader}:`,
+          dbError,
+        );
+      }
+    }
   }
 
-  return new Response();
+  return new Response(null, { status: 200 });
 };
