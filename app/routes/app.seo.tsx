@@ -35,6 +35,7 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { auditSeo as runSeoAudit } from "../seo-audit";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -895,7 +896,7 @@ function auditArticle(
   shopDomain?: string,
 ) {
   const issues: SeoIssue[] = [];
-  const seoTitle = getEffectiveSeoTitle(storedSeo?.metaTitle, article.title);
+  const seoTitle = getEffectiveSeoTitle(storedSeo?.metaTitle, article);
   const seoDescription = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
   const body = article.body || "";
   const bodyText = stripHtml(body);
@@ -1414,87 +1415,19 @@ function auditArticle(
 }
 
 function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number, storedSeo?: StoredSeoInput | null, shopDomain?: string) {
-  let score = 100;
-  const title = getEffectiveSeoTitle(storedSeo?.metaTitle, article.title);
+  const title = getEffectiveSeoTitle(storedSeo?.metaTitle, article);
   const summary = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
-  const body = article.body || "";
-  const text = stripHtml(body);
-  const wordCount = text ? text.split(/\s+/).length : 0;
-  const linkStats = analyzeLinks(body, shopDomain);
-  const headings = getHeadingTexts(body);
-  const hasToc = hasTableOfContents(body) || headings.length >= 3;
-  const bodyImageAltText = getBodyImageAltText(body);
-  const allImageAltText = `${article.imageAlt || ""} ${bodyImageAltText}`.trim();
-  const hasAnyImage = Boolean(article.imageUrl) || /<img\b/i.test(body);
-  const hasImage = Boolean(article.imageUrl);
-  const focusKeyword = textValue(storedSeo?.focusKeyword);
-
-  const titleLower = title.toLowerCase();
-  const summaryLower = summary.toLowerCase();
-  const handleLower = (article.handle || "").toLowerCase();
-  const bodyLower = text.toLowerCase();
-  const first10Words = text
-    .split(/\s+/)
-    .slice(0, Math.max(20, Math.floor(wordCount * 0.1)))
-    .join(" ")
-    .toLowerCase();
-
-  if (wordCount < 250) score -= 15;
-  else if (wordCount < 600) score -= 5;
-
-  if (!article.handle || article.handle.length > 75) score -= 2;
-  if (linkStats.external < 1) score -= 3;
-  if (linkStats.dofollowExternal < 1) score -= 2;
-  if (linkStats.internal < 1) score -= 3;
-
-  const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
-  if (!hasImage && !hasMediaInBody) score -= 5;
-
-  const paragraphs = body.split(/<\/p>/i);
-  const longParagraphs = paragraphs.filter((paragraph) => stripHtml(paragraph).split(/\s+/).length > 120);
-  if (longParagraphs.length > 0) score -= 3;
-  if (!hasToc) score -= 2;
-
-  if (!/\d/.test(title)) score -= 2;
-
-  if (focusKeyword) {
-    const keywords = focusKeyword
-      .split(",")
-      .map((keyword) => keyword.trim().toLowerCase())
-      .filter(Boolean);
-
-    keywords.forEach((keyword, index) => {
-      const isPrimary = index === 0;
-      const occurrences = bodyLower.split(keyword).length - 1;
-      const density = wordCount > 0 ? ((occurrences * keyword.split(" ").length) / wordCount) * 100 : 0;
-      const inTitle = titleLower.includes(keyword);
-      const inSummary = summaryLower.includes(keyword);
-      const inHandle = handleLower.includes(slugifyKeyword(keyword));
-      const inFirst10 = first10Words.includes(keyword);
-      const inHeading = headings.some((heading) => heading.toLowerCase().includes(keyword));
-      const inImageAlt = hasAnyImage && allImageAltText.toLowerCase().includes(keyword);
-
-      if (isPrimary) {
-        if (!inTitle) score -= 10;
-        if (!inSummary) score -= 5;
-        if (!inHandle) score -= 5;
-        if (!inFirst10) score -= 5;
-        if (occurrences === 0) score -= 15;
-
-        if (!inHeading) score -= 2;
-
-        if (occurrences > 0 && (density < 0.5 || density > 2.5)) score -= 2;
-        if (!inImageAlt) score -= 2;
-        if (inTitle && titleLower.indexOf(keyword) >= 20) score -= 1;
-      } else if (occurrences === 0) {
-        score -= 3;
-      }
-    });
-  } else {
-    score -= 30;
-  }
-
-  return Math.max(0, Math.min(100, score));
+  return runSeoAudit({
+    title,
+    handle: article.handle || "",
+    summary,
+    body: article.body || "",
+    hasImage: Boolean(article.imageUrl),
+    imageAlt: article.imageAlt || "",
+    productCount,
+    focusKeyword: textValue(storedSeo?.focusKeyword),
+    shopDomain,
+  }).score;
 }
 
 function analyzeLinks(body: string, shopDomain?: string) {
@@ -1697,17 +1630,20 @@ function isLikelyStaleAutoMetaTitle(metaTitle: string, articleTitle: string) {
   );
 }
 
-function getEffectiveSeoTitle(metaTitle: unknown, articleTitle: unknown) {
+function getEffectiveSeoTitle(metaTitle: unknown, article: ArticleInput) {
   const meta = textValue(metaTitle);
-  const title = textValue(articleTitle);
+  const title = textValue(article.title);
 
-  if (!meta || isLikelyStaleAutoMetaTitle(meta, title)) return title;
+  if (meta && !isLikelyStaleAutoMetaTitle(meta, title)) return meta;
 
-  return meta;
+  const shopifySeoTitle = textValue(article.seoTitle);
+  if (shopifySeoTitle && !isLikelyStaleAutoMetaTitle(shopifySeoTitle, title)) return shopifySeoTitle;
+
+  return title;
 }
 
 function getEffectiveSeoDescription(metaDescription: unknown, article: ArticleInput) {
-  return textValue(metaDescription) || textValue(article.summary);
+  return textValue(metaDescription) || textValue(article.seoDescription) || textValue(article.summary);
 }
 
 function slugifyKeyword(value: string) {

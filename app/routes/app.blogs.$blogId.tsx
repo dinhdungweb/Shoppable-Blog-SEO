@@ -70,16 +70,10 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { formatLimit } from "../pricing-plans";
+import { auditSeo as runSeoAudit } from "../seo-audit";
+import type { SeoAuditIssue } from "../seo-audit";
 
-type SeoIssue = {
-  type: string;
-  category?: 'basic' | 'additional' | 'title_readability' | 'content_readability';
-  label: string;
-  message: string;
-  severity: "good" | "info" | "warning" | "critical";
-  impact?: "Low" | "Medium" | "High";
-  effort?: "Low" | "Medium" | "High";
-};
+type SeoIssue = SeoAuditIssue;
 
 type ProductMetric = {
   productId: string;
@@ -166,7 +160,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   if (isNewPost) {
     const article = makeEmptyArticle(blogs[0], defaultAuthorName);
-    const initialAudit = auditSeo({
+    const initialAudit = runSeoAudit({
       title: article.title,
       handle: article.handle,
       summary: article.summary,
@@ -291,7 +285,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     { clicks: 0, impressions: 0, addToCarts: 0, purchases: 0, revenue: 0 },
   );
 
-  const initialAudit = auditSeo({
+  const initialAudit = runSeoAudit({
     title: seoData?.metaTitle || article.seoTitle?.value || article.title || "",
     handle: article.handle || "",
     summary: seoData?.metaDescription || article.seoDescription?.value || article.summary || "",
@@ -469,7 +463,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         return json({ success: false, error: seoSyncError }, { status: 400 });
       }
 
-      const audit = auditSeo({
+      const audit = runSeoAudit({
         title: metaTitle,
         handle: article.handle || handle,
         summary: metaDescription,
@@ -598,7 +592,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ success: false, error: seoSyncError }, { status: 400 });
     }
 
-    const audit = getSubmittedSeoAudit(formData) || auditSeo({
+    const audit = getSubmittedSeoAudit(formData) || runSeoAudit({
       title: metaTitle,
       handle,
       summary: metaDescription,
@@ -777,7 +771,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const imageUrl = cleanString(formData.get("imageUrl"));
     const removeImage = formData.get("removeImage") === "true";
     const hasImage = removeImage ? false : Boolean(imageUrl || formData.get("hasImage") === "true");
-    const audit = getSubmittedSeoAudit(formData) || auditSeo({
+    const audit = getSubmittedSeoAudit(formData) || runSeoAudit({
       title: cleanString(formData.get("metaTitle")),
       handle: cleanString(formData.get("handle")),
       summary: cleanString(formData.get("metaDescription")),
@@ -841,7 +835,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const suggestedImageAlt = imageAlt || (hasImage ? suggestedTitle : "");
     const focusKeyword = cleanString(formData.get("focusKeyword"));
 
-    const audit = auditSeo({
+    const audit = runSeoAudit({
       title: suggestedTitle,
       handle,
       summary: suggestedDescription,
@@ -1018,7 +1012,7 @@ export default function ArticleDetail() {
 
   const { score: seoScore, issues: seoIssues, keywordScores } = useMemo(() => {
     if (!article) return { score: 0, issues: [], keywordScores: {} };
-    return auditSeo({
+    return runSeoAudit({
       title: effectiveMetaTitle || title,
       handle,
       summary: metaDescription || excerpt || "",
@@ -3638,7 +3632,7 @@ function SeoSidebar({
                               <InlineStack>
                                 <Button
                                   size="micro"
-                                  onClick={() => navigate("/app/settings/content-navigation?tab=toc")}
+                                  onClick={() => navigate("/app/settings?tab=content-navigation#toc-settings")}
                                 >
                                   Open TOC settings
                                 </Button>
@@ -4690,295 +4684,6 @@ function makeMetaDescription(title: string, body: string) {
   const text = stripHtml(body);
   const fallback = `Discover ${title.toLowerCase()} with practical styling tips, product ideas, and simple ways to build a look that fits your store.`;
   return truncateText(text.length >= 120 ? text : fallback, 158);
-}
-
-function auditSeo({
-  title,
-  handle,
-  summary,
-  body,
-  hasImage,
-  imageAlt,
-  productCount,
-  focusKeyword,
-  shopDomain,
-}: {
-  title: string;
-  handle: string;
-  summary: string;
-  body: string;
-  hasImage: boolean;
-  imageAlt: string;
-  productCount: number;
-  focusKeyword?: string;
-  shopDomain?: string;
-}): { score: number; issues: SeoIssue[]; keywordScores: Record<string, "success" | "warning" | "critical"> } {
-  const issues: SeoIssue[] = [];
-  let score = 100;
-  const text = stripHtml(body);
-  const wordCount = text ? text.split(/\s+/).length : 0;
-  const linkStats = analyzeLinks(body, shopDomain);
-  const headings = getHeadingTexts(body);
-  const hasToc = hasTableOfContents(body) || headings.length >= 3;
-  const bodyImageAltText = getBodyImageAltText(body);
-  const allImageAltText = `${imageAlt || ""} ${bodyImageAltText}`.trim();
-  const hasAnyImage = hasImage || /<img\b/i.test(body);
-  const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
-  const keywordScores: Record<string, "success" | "warning" | "critical"> = {};
-
-  const titleLower = title.toLowerCase();
-  const summaryLower = summary.toLowerCase();
-  const handleLower = handle.toLowerCase();
-  const bodyLower = text.toLowerCase();
-  const first10Words = text.split(/\s+/).slice(0, Math.max(20, Math.floor(wordCount * 0.1))).join(' ').toLowerCase();
-  const keywords = (focusKeyword || "").split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
-  const primaryKeyword = keywords[0] || "";
-
-  if (wordCount < 250) {
-    issues.push({ category: 'basic', type: "content_length", label: "Content length", message: `Your article is too short (${wordCount} words). Aim for at least 600 words.`, severity: "critical", impact: "High", effort: "Medium" });
-    score -= 15;
-  } else if (wordCount < 600) {
-    issues.push({ category: 'basic', type: "content_length", label: "Content length", message: `Your article is ${wordCount} words. Aim for at least 600 words.`, severity: "warning", impact: "Medium", effort: "Medium" });
-    score -= 5;
-  } else {
-    issues.push({ category: 'basic', type: "content_length", label: "Content length", message: `Great! Your article is ${wordCount} words long.`, severity: "good" });
-  }
-
-  if (!handle || handle.length > 75) {
-    issues.push({ category: 'additional', type: "url_length", label: "URL Length", message: "Your URL is too long. Keep it short and descriptive.", severity: "warning", impact: "Low", effort: "Low" });
-    score -= 2;
-  } else {
-    issues.push({ category: 'additional', type: "url_length", label: "URL Length", message: "Your URL is short and descriptive.", severity: "good" });
-  }
-
-  if (linkStats.external < 1) {
-    issues.push({ category: 'additional', type: "external_links", label: "External links", message: "Link out to external resources.", severity: "warning", impact: "Medium", effort: "Low" });
-    score -= 3;
-  } else {
-    issues.push({ category: 'additional', type: "external_links", label: "External links", message: "You are linking out to external resources.", severity: "good" });
-  }
-
-  if (linkStats.dofollowExternal < 1) {
-    issues.push({ category: 'additional', type: "dofollow_external_links", label: "DoFollow external links", message: "Add DoFollow links pointing to external resources.", severity: "warning", impact: "Low", effort: "Low" });
-    score -= 2;
-  } else {
-    issues.push({ category: 'additional', type: "dofollow_external_links", label: "DoFollow external links", message: "At least one external link is DoFollow.", severity: "good" });
-  }
-
-  if (linkStats.internal < 1) {
-    issues.push({ category: 'additional', type: "internal_links", label: "Internal links", message: "Add internal links in your content.", severity: "warning", impact: "Medium", effort: "Low" });
-    score -= 3;
-  } else {
-    issues.push({ category: 'additional', type: "internal_links", label: "Internal links", message: "Your content includes internal links.", severity: "good" });
-  }
-
-  if (!hasImage && !hasMediaInBody) {
-    issues.push({ category: 'content_readability', type: "media", label: "Media", message: "Add images, products, or videos to make your content more engaging.", severity: "warning", impact: "Medium", effort: "Medium" });
-    score -= 5;
-  } else {
-    issues.push({ category: 'content_readability', type: "media", label: "Media", message: "Your content contains engaging media.", severity: "good" });
-  }
-
-  const paragraphs = body.split(/<\/p>/i);
-  const longParagraphs = paragraphs.filter(p => stripHtml(p).split(/\s+/).length > 120);
-  if (longParagraphs.length > 0) {
-    issues.push({ category: 'content_readability', type: "paragraph_length", label: "Paragraph Length", message: "Some of your paragraphs are too long. Keep them under 120 words.", severity: "warning", impact: "Low", effort: "Low" });
-    score -= 3;
-  } else {
-    issues.push({ category: 'content_readability', type: "paragraph_length", label: "Paragraph Length", message: "Your paragraphs are nicely broken down.", severity: "good" });
-  }
-
-  if (!hasToc) {
-    issues.push({ category: 'content_readability', type: "toc", label: "Table of contents", message: "You don't seem to be using a Table of Contents.", severity: "warning", impact: "Low", effort: "Low" });
-    score -= 2;
-  } else {
-    issues.push({ category: 'content_readability', type: "toc", label: "Table of contents", message: "Your content structure can support a Table of Contents.", severity: "good" });
-  }
-
-  if (/\d/.test(title)) {
-    issues.push({ category: 'title_readability', type: "title_number", label: "Number in Title", message: "Your SEO title contains a number.", severity: "good" });
-  } else {
-    issues.push({ category: 'title_readability', type: "title_number", label: "Number in Title", message: "Consider adding a number to your SEO title to improve CTR.", severity: "warning", impact: "Low", effort: "Low" });
-    score -= 2;
-  }
-
-  if (primaryKeyword) {
-    keywords.forEach((kw, index) => {
-      let kwScore = 100;
-      const isPrimary = index === 0;
-
-      const occurrences = bodyLower.split(kw).length - 1;
-      const density = wordCount > 0 ? (occurrences * kw.split(' ').length / wordCount) * 100 : 0;
-      
-      const inTitle = titleLower.includes(kw);
-      const inSummary = summaryLower.includes(kw);
-      const inHandle = handleLower.includes(slugifyKeyword(kw));
-      const inFirst10 = first10Words.includes(kw);
-      const inHeading = headings.some(heading => heading.toLowerCase().includes(kw));
-      const inImageAlt = hasAnyImage && allImageAltText.toLowerCase().includes(kw);
-
-      if (!inTitle) kwScore -= isPrimary ? 10 : 5;
-      if (!inSummary) kwScore -= isPrimary ? 5 : 2;
-      if (!inHandle) kwScore -= isPrimary ? 5 : 2;
-      
-      if (occurrences === 0) kwScore -= 15;
-      else if (density < 0.5) kwScore -= 5;
-      else if (density > 2.5) kwScore -= 5;
-
-      if (!inFirst10) kwScore -= 5;
-      
-      if (kwScore >= 80) keywordScores[kw] = "success";
-      else if (kwScore >= 50) keywordScores[kw] = "warning";
-      else keywordScores[kw] = "critical";
-
-      if (isPrimary) {
-        if (inTitle) issues.push({ category: 'basic', type: "kw_title", label: "Keyword in Title", message: "Focus Keyword is in the SEO title.", severity: "good" });
-        else { issues.push({ category: 'basic', type: "kw_title", label: "Keyword in Title", message: "Focus Keyword does not appear in the SEO title.", severity: "critical", impact: "High", effort: "Low" }); score -= 10; }
-
-        if (inSummary) issues.push({ category: 'basic', type: "kw_summary", label: "Keyword in Meta", message: "Focus Keyword is in the SEO Meta Description.", severity: "good" });
-        else { issues.push({ category: 'basic', type: "kw_summary", label: "Keyword in Meta", message: "Focus Keyword not found in your SEO Meta Description.", severity: "warning", impact: "Medium", effort: "Low" }); score -= 5; }
-
-        if (inHandle) issues.push({ category: 'basic', type: "kw_url", label: "Keyword in URL", message: "Focus Keyword is in the URL.", severity: "good" });
-        else { issues.push({ category: 'basic', type: "kw_url", label: "Keyword in URL", message: "Focus Keyword not found in the URL.", severity: "warning", impact: "Medium", effort: "Low" }); score -= 5; }
-
-        if (inFirst10) issues.push({ category: 'basic', type: "kw_early", label: "Keyword at Start", message: "Focus Keyword appears in the first 10% of the content.", severity: "good" });
-        else { issues.push({ category: 'basic', type: "kw_early", label: "Keyword at Start", message: "Focus Keyword does not appear in the first 10% of the content.", severity: "warning", impact: "Medium", effort: "Low" }); score -= 5; }
-
-        if (occurrences > 0) issues.push({ category: 'basic', type: "kw_content", label: "Keyword in Content", message: `Focus Keyword appears in the content.`, severity: "good" });
-        else { issues.push({ category: 'basic', type: "kw_content", label: "Keyword in Content", message: "Focus Keyword does not appear in the content.", severity: "critical", impact: "High", effort: "Medium" }); score -= 15; }
-
-        if (inHeading) issues.push({ category: 'additional', type: "kw_heading", label: "Keyword in Subheadings", message: "Focus Keyword found in subheading(s).", severity: "good" });
-        else { issues.push({ category: 'additional', type: "kw_heading", label: "Keyword in Subheadings", message: "Focus Keyword not found in subheading(s) like H2, H3, etc.", severity: "warning", impact: "Low", effort: "Medium" }); score -= 2; }
-
-        if (occurrences > 0) {
-          if (density >= 0.5 && density <= 2.5) {
-            issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: `Keyword density is ${density.toFixed(2)}%, which is great.`, severity: "good" });
-          } else if (density < 0.5) {
-            issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: `Keyword density is ${density.toFixed(2)}%, which is low. Aim for ~1%.`, severity: "warning", impact: "Low", effort: "Medium" });
-            score -= 2;
-          } else {
-            issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: `Keyword density is ${density.toFixed(2)}%, which is high. Don't over-optimize.`, severity: "warning", impact: "Low", effort: "Medium" });
-            score -= 2;
-          }
-        } else {
-          issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: "Keyword Density is 0. Aim for around 1% Keyword Density.", severity: "warning", impact: "Low", effort: "Medium" });
-        }
-
-        if (inImageAlt) issues.push({ category: 'additional', type: "kw_alt", label: "Keyword in Image Alt", message: "Focus Keyword found in image alt attributes.", severity: "good" });
-        else { issues.push({ category: 'additional', type: "kw_alt", label: "Keyword in Image Alt", message: "Add an image with your Focus Keyword as alt text.", severity: "warning", impact: "Low", effort: "Low" }); score -= 2; }
-
-        if (titleLower.indexOf(kw) >= 0 && titleLower.indexOf(kw) < 20) {
-          issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Focus Keyword used at the beginning of SEO title.", severity: "good" });
-        } else {
-          issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Use the Focus Keyword near the beginning of SEO title.", severity: "warning", impact: "Low", effort: "Low" });
-          if (inTitle) score -= 1;
-        }
-
-      } else {
-        if (occurrences === 0) {
-          issues.push({ category: 'additional', type: `secondary_kw_content_${index}`, label: `Secondary Keyword in Content`, message: `Secondary keyword "${kw}" does not appear in the content.`, severity: "warning", impact: "Low", effort: "Low" });
-          score -= 3;
-        } else {
-          issues.push({ category: 'additional', type: `secondary_kw_content_${index}`, label: `Secondary Keyword in Content`, message: `Secondary keyword "${kw}" appears in the content.`, severity: "good" });
-        }
-      }
-    });
-  } else {
-    issues.push({ category: 'basic', type: "kw_title", label: "Keyword in Title", message: "Add Focus Keyword to the SEO title.", severity: "critical", impact: "High", effort: "Low" });
-    issues.push({ category: 'basic', type: "kw_summary", label: "Keyword in Meta", message: "Add Focus Keyword to your SEO Meta Description.", severity: "critical", impact: "Medium", effort: "Low" });
-    issues.push({ category: 'basic', type: "kw_url", label: "Keyword in URL", message: "Use Focus Keyword in the URL.", severity: "critical", impact: "Medium", effort: "Low" });
-    issues.push({ category: 'basic', type: "kw_early", label: "Keyword at Start", message: "Use Focus Keyword at the beginning of your content.", severity: "critical", impact: "Medium", effort: "Low" });
-    issues.push({ category: 'basic', type: "kw_content", label: "Keyword in Content", message: "Use Focus Keyword in the content.", severity: "critical", impact: "High", effort: "Medium" });
-    issues.push({ category: 'additional', type: "kw_missing", label: "Missing Focus Keyword", message: "Set a Focus Keyword for this content.", severity: "critical", impact: "High", effort: "Low" });
-    issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Use the Focus Keyword near the beginning of SEO title.", severity: "critical", impact: "Low", effort: "Low" });
-    score -= 30;
-  }
-
-  return {
-    score: Math.max(0, Math.min(100, score)),
-    issues,
-    keywordScores,
-  };
-}
-
-function analyzeLinks(body: string, shopDomain?: string) {
-  const stats = { internal: 0, external: 0, dofollowExternal: 0 };
-  const shopHost = normalizeHost(shopDomain || "");
-  const anchorRegex = /<a\b([^>]*)>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = anchorRegex.exec(body || "")) !== null) {
-    const attrs = match[1] || "";
-    const href = getHtmlAttribute(attrs, "href").trim();
-    if (!href || /^(mailto:|tel:|sms:|javascript:)/i.test(href)) continue;
-
-    const rel = getHtmlAttribute(attrs, "rel").toLowerCase();
-    const isNoFollow = /\b(nofollow|sponsored|ugc)\b/i.test(rel);
-
-    if (isInternalHref(href, shopHost)) {
-      stats.internal += 1;
-    } else {
-      stats.external += 1;
-      if (!isNoFollow) stats.dofollowExternal += 1;
-    }
-  }
-
-  return stats;
-}
-
-function getHtmlAttribute(attrs: string, name: string) {
-  const match = attrs.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
-  return match?.[2] || match?.[3] || match?.[4] || "";
-}
-
-function isInternalHref(href: string, shopHost: string) {
-  const trimmed = href.trim();
-  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("/")) return true;
-
-  try {
-    const url = new URL(trimmed);
-    const host = normalizeHost(url.hostname);
-    return Boolean(shopHost && (host === shopHost || host.endsWith(`.${shopHost}`)));
-  } catch {
-    return true;
-  }
-}
-
-function normalizeHost(value: string) {
-  return value
-    .replace(/^https?:\/\//i, "")
-    .split(/[/?#]/)[0]
-    .replace(/^www\./i, "")
-    .toLowerCase();
-}
-
-function getHeadingTexts(body: string) {
-  const headings: string[] = [];
-  const headingRegex = /<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = headingRegex.exec(body || "")) !== null) {
-    headings.push(stripHtml(match[1] || ""));
-  }
-
-  return headings;
-}
-
-function hasTableOfContents(body: string) {
-  return /\[\[SBS_TOC(?::[^\]]+)?\]\]/i.test(body) || /data-bp-content-nav=["']toc["']|class=["'][^"']*\bbp-toc\b/i.test(body);
-}
-
-function getBodyImageAltText(body: string) {
-  const alts: string[] = [];
-  const imageRegex = /<img\b([^>]*)>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = imageRegex.exec(body || "")) !== null) {
-    const alt = getHtmlAttribute(match[1] || "", "alt");
-    if (alt) alts.push(alt);
-  }
-
-  return alts.join(" ");
 }
 
 function buildProductMetricMap(groups: any[]) {

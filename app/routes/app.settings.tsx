@@ -55,6 +55,7 @@ import {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const url = new URL(request.url);
   const { limits, planKey } = await getActivePlanAndLimits(billing);
 
   let config = await prisma.shopConfig.findUnique({
@@ -71,9 +72,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     config: { ...config, ...normalizeContentNavConfig(config) },
     canContentNavigation: limits.canContentNavigation,
     canCustomCss: limits.canCustomCss,
+    initialTab: getInitialSettingsTab(url.searchParams.get("tab")),
     planKey,
   };
 };
+
+function getInitialSettingsTab(tab: string | null) {
+  if (tab === "display") return 1;
+  if (tab === "content-navigation" || tab === "toc") return 2;
+  if (tab === "seo") return 3;
+  if (tab === "tracking") return 4;
+  if (tab === "ai") return 5;
+  if (tab === "danger") return 6;
+  return 0;
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
@@ -203,7 +215,7 @@ const CustomToggle = ({
 );
 
 export default function Settings() {
-  const { config, canContentNavigation, canCustomCss } = useLoaderData<typeof loader>();
+  const { config, canContentNavigation, canCustomCss, initialTab, planKey } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
 
@@ -245,7 +257,7 @@ export default function Settings() {
     setFormState(config);
   };
 
-  const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedTab, setSelectedTab] = useState(initialTab);
   const settingsTabs = useMemo(
     () => [
       { id: 'general', content: 'General', panelID: 'general-panel' },
@@ -259,6 +271,9 @@ export default function Settings() {
     [],
   );
   const selectedTabId = settingsTabs[selectedTab]?.id || 'general';
+  useEffect(() => {
+    setSelectedTab(settingsTabs[initialTab] ? initialTab : 0);
+  }, [initialTab, settingsTabs]);
   useEffect(() => {
     if (!settingsTabs[selectedTab]) {
       setSelectedTab(0);
@@ -682,108 +697,110 @@ export default function Settings() {
                   </BlockStack>
                 </Card>
 
-                <Card padding="400">
-                  <BlockStack gap="400">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={ListBulletedIcon} tone="base" /></div>
-                      <Text as="h2" variant="headingMd" fontWeight="bold">Table of contents</Text>
-                    </div>
-                    <CustomToggle
-                      checked={formState.tocEnabled}
-                      label="Enable table of contents"
-                      description="Generated from H2/H3/H4 headings in the article body."
-                      disabled={contentNavigationLocked}
-                      onChange={(value) => handleChange('tocEnabled', value)}
-                    />
-                    <BlockStack gap="500">
+                <div id="toc-settings">
+                  <Card padding="400">
+                    <BlockStack gap="400">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={ListBulletedIcon} tone="base" /></div>
+                        <Text as="h2" variant="headingMd" fontWeight="bold">Table of contents</Text>
+                      </div>
                       <CustomToggle
-                        disabled={tocSettingsDisabled}
-                        checked={formState.tocAutoInsertEnabled}
-                        label="Auto insert TOC"
-                        description="Automatically place the TOC on article pages when no TOC shortcode or TOC block already exists."
-                        onChange={(value) => handleChange('tocAutoInsertEnabled', value)}
+                        checked={formState.tocEnabled}
+                        label="Enable table of contents"
+                        description="Generated from H2/H3/H4 headings in the article body."
+                        disabled={contentNavigationLocked}
+                        onChange={(value) => handleChange('tocEnabled', value)}
                       />
-                      {formState.tocAutoInsertEnabled && (
+                      <BlockStack gap="500">
+                        <CustomToggle
+                          disabled={tocSettingsDisabled}
+                          checked={formState.tocAutoInsertEnabled}
+                          label="Auto insert TOC"
+                          description="Automatically place the TOC on article pages when no TOC shortcode or TOC block already exists."
+                          onChange={(value) => handleChange('tocAutoInsertEnabled', value)}
+                        />
+                        {formState.tocAutoInsertEnabled && (
+                          <Select
+                            label="Auto insert position"
+                            disabled={tocSettingsDisabled}
+                            options={[
+                              { label: 'Under article title', value: 'after-title' },
+                              { label: 'After paragraph 1', value: 'after-paragraph-1' },
+                              { label: 'After paragraph 2', value: 'after-paragraph-2' },
+                              { label: 'After paragraph 3', value: 'after-paragraph-3' },
+                            ]}
+                            value={formState.tocAutoInsertPosition}
+                            onChange={(value) => handleChange('tocAutoInsertPosition', value)}
+                          />
+                        )}
+                      </BlockStack>
+                      <TextField
+                        label="TOC title"
+                        disabled={tocSettingsDisabled}
+                        value={formState.tocTitle}
+                        onChange={(value) => handleChange('tocTitle', value)}
+                        autoComplete="off"
+                      />
+                      <InlineGrid columns={2} gap="300">
                         <Select
-                          label="Auto insert position"
+                          label="TOC layout"
                           disabled={tocSettingsDisabled}
                           options={[
-                            { label: 'Under article title', value: 'after-title' },
-                            { label: 'After paragraph 1', value: 'after-paragraph-1' },
-                            { label: 'After paragraph 2', value: 'after-paragraph-2' },
-                            { label: 'After paragraph 3', value: 'after-paragraph-3' },
+                            { label: 'Vertical', value: 'vertical' },
+                            { label: 'Horizontal', value: 'horizontal' },
+                            { label: 'Multi-column', value: 'multicolumn' },
+                            { label: 'Left rail (sticky)', value: 'left-rail' },
+                            { label: 'Right rail (sticky)', value: 'right-rail' },
                           ]}
-                          value={formState.tocAutoInsertPosition}
-                          onChange={(value) => handleChange('tocAutoInsertPosition', value)}
+                          value={formState.tocLayout || CONTENT_NAV_DEFAULTS.tocLayout}
+                          onChange={(value) => handleChange('tocLayout', value)}
+                        />
+                        <Select
+                          label="TOC style"
+                          disabled={tocSettingsDisabled}
+                          options={[
+                            { label: 'Simple', value: 'simple' },
+                            { label: 'Boxed', value: 'boxed' },
+                            { label: 'Collapsible', value: 'collapsible' },
+                          ]}
+                          value={formState.tocStyle}
+                          onChange={(value) => handleChange('tocStyle', value)}
+                        />
+                      </InlineGrid>
+                      {tocStickyOffsetVisible && (
+                        <TextField
+                          label="Rail sticky offset"
+                          disabled={tocSettingsDisabled}
+                          type="number"
+                          min={0}
+                          max={240}
+                          value={String(formState.tocStickyOffset)}
+                          onChange={(value) => handleChange('tocStickyOffset', Number(value))}
+                          autoComplete="off"
+                          helpText="Pixels from the top when left or right rail layout is active."
                         />
                       )}
+                      <InlineGrid columns={2} gap="300">
+                        <Select
+                          label="Heading levels"
+                          disabled={tocSettingsDisabled}
+                          options={[
+                            { label: 'H2 only', value: 'h2' },
+                            { label: 'H2 and H3', value: 'h2,h3' },
+                            { label: 'H2, H3 and H4', value: 'h2,h3,h4' },
+                          ]}
+                          value={formState.tocLevels}
+                          onChange={(value) => handleChange('tocLevels', value)}
+                        />
+                      </InlineGrid>
+                      <BlockStack gap="250">
+                        <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocNumbering} label="Show numbering" onChange={(value) => handleChange('tocNumbering', value)} />
+                        <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocSmoothScroll} label="Smooth scroll to headings" onChange={(value) => handleChange('tocSmoothScroll', value)} />
+                        <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocMobileCollapsed} label="Collapse on mobile" onChange={(value) => handleChange('tocMobileCollapsed', value)} />
+                      </BlockStack>
                     </BlockStack>
-                    <TextField
-                      label="TOC title"
-                      disabled={tocSettingsDisabled}
-                      value={formState.tocTitle}
-                      onChange={(value) => handleChange('tocTitle', value)}
-                      autoComplete="off"
-                    />
-                    <InlineGrid columns={2} gap="300">
-                      <Select
-                        label="TOC layout"
-                        disabled={tocSettingsDisabled}
-                        options={[
-                          { label: 'Vertical', value: 'vertical' },
-                          { label: 'Horizontal', value: 'horizontal' },
-                          { label: 'Multi-column', value: 'multicolumn' },
-                          { label: 'Left rail (sticky)', value: 'left-rail' },
-                          { label: 'Right rail (sticky)', value: 'right-rail' },
-                        ]}
-                        value={formState.tocLayout || CONTENT_NAV_DEFAULTS.tocLayout}
-                        onChange={(value) => handleChange('tocLayout', value)}
-                      />
-                      <Select
-                        label="TOC style"
-                        disabled={tocSettingsDisabled}
-                        options={[
-                          { label: 'Simple', value: 'simple' },
-                          { label: 'Boxed', value: 'boxed' },
-                          { label: 'Collapsible', value: 'collapsible' },
-                        ]}
-                        value={formState.tocStyle}
-                        onChange={(value) => handleChange('tocStyle', value)}
-                      />
-                    </InlineGrid>
-                    {tocStickyOffsetVisible && (
-                      <TextField
-                        label="Rail sticky offset"
-                        disabled={tocSettingsDisabled}
-                        type="number"
-                        min={0}
-                        max={240}
-                        value={String(formState.tocStickyOffset)}
-                        onChange={(value) => handleChange('tocStickyOffset', Number(value))}
-                        autoComplete="off"
-                        helpText="Pixels from the top when left or right rail layout is active."
-                      />
-                    )}
-                    <InlineGrid columns={2} gap="300">
-                      <Select
-                        label="Heading levels"
-                        disabled={tocSettingsDisabled}
-                        options={[
-                          { label: 'H2 only', value: 'h2' },
-                          { label: 'H2 and H3', value: 'h2,h3' },
-                          { label: 'H2, H3 and H4', value: 'h2,h3,h4' },
-                        ]}
-                        value={formState.tocLevels}
-                        onChange={(value) => handleChange('tocLevels', value)}
-                      />
-                    </InlineGrid>
-                    <BlockStack gap="250">
-                      <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocNumbering} label="Show numbering" onChange={(value) => handleChange('tocNumbering', value)} />
-                      <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocSmoothScroll} label="Smooth scroll to headings" onChange={(value) => handleChange('tocSmoothScroll', value)} />
-                      <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocMobileCollapsed} label="Collapse on mobile" onChange={(value) => handleChange('tocMobileCollapsed', value)} />
-                    </BlockStack>
-                  </BlockStack>
-                </Card>
+                  </Card>
+                </div>
 
                 <Card padding="400">
                   <BlockStack gap="400">
