@@ -218,7 +218,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .map((article) => {
       const productCount = productCountMap.get(article.id) || 0;
       const stored = storedSeoMap.get(article.id);
-      const audit = auditArticle(article, productCount, config, stored);
+      const audit = auditArticle(article, productCount, config, stored, shop);
 
       return {
         ...article,
@@ -295,7 +295,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const storedSeoMap = new Map(seoRows.map((row) => [row.articleId, row]));
   const audits = articles.map((article) => {
     const stored = storedSeoMap.get(article.id);
-    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, stored);
+    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, stored, shop);
     const storedScore = typeof stored?.seoScore === "number" ? stored.seoScore : null;
     const score = storedScore !== null && !isArticleNewerThanSeoScan(article, stored) ? storedScore : audit.score;
 
@@ -316,8 +316,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   await Promise.all(
     audits.map(({ article, audit }) => {
       const stored = storedSeoMap.get(article.id);
-      const metaTitle = getEffectiveSeoTitle(stored?.metaTitle, article.title) || null;
-      const metaDescription = getEffectiveSeoDescription(stored?.metaDescription, article) || null;
+      const metaTitle = textValue(stored?.metaTitle) || null;
+      const metaDescription = textValue(stored?.metaDescription) || null;
 
       return prisma.articleSEO.upsert({
         where: { articleId: article.id },
@@ -897,12 +897,36 @@ function auditArticle(
   productCount: number,
   config: { addBlogSchema?: boolean; addProductSchema?: boolean },
   storedSeo?: StoredSeoInput | null,
+  shopDomain?: string,
 ) {
   const issues: SeoIssue[] = [];
   const seoTitle = getEffectiveSeoTitle(storedSeo?.metaTitle, article.title);
   const seoDescription = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
-  const bodyText = stripHtml(`${article.summary || ""} ${article.body || ""}`);
+  const body = article.body || "";
+  const bodyText = stripHtml(body);
   const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
+  const linkStats = analyzeLinks(body, shopDomain);
+  const headings = getHeadingTexts(body);
+  const hasToc = hasTableOfContents(body) || headings.length >= 3;
+  const bodyImageAltText = getBodyImageAltText(body);
+  const allImageAltText = `${article.imageAlt || ""} ${bodyImageAltText}`.trim();
+  const hasAnyImage = Boolean(article.imageUrl) || /<img\b/i.test(body);
+  const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
+  const focusKeyword = textValue(storedSeo?.focusKeyword);
+  const keywords = focusKeyword
+    .split(",")
+    .map((keyword) => keyword.trim().toLowerCase())
+    .filter(Boolean);
+  const primaryKeyword = keywords[0] || "";
+  const titleLower = seoTitle.toLowerCase();
+  const summaryLower = seoDescription.toLowerCase();
+  const handleLower = (article.handle || "").toLowerCase();
+  const bodyLower = bodyText.toLowerCase();
+  const first10Words = bodyText
+    .split(/\s+/)
+    .slice(0, Math.max(20, Math.floor(wordCount * 0.1)))
+    .join(" ")
+    .toLowerCase();
 
   const addIssue = (issue: SeoIssue, _penalty: number) => {
     issues.push(issue);
@@ -1014,23 +1038,86 @@ function auditArticle(
     );
   }
 
-  if (wordCount > 0 && wordCount < 300) {
+  if (wordCount < 250) {
     addIssue(
       {
         type: "thin_content",
         category: "content",
         label: "Thin content",
-        message: "Short posts can be harder to rank for competitive topics.",
-        severity: "warning",
-        impact: "Medium",
+        message: `Content is only ${wordCount} words long. Aim for at least 600 words.`,
+        severity: "critical",
+        impact: "High",
         effort: "Medium",
         fix: "Add more useful sections, examples, or product context.",
       },
       8,
     );
+  } else if (wordCount < 600) {
+    addIssue(
+      {
+        type: "short_content",
+        category: "content",
+        label: "Short content",
+        message: `Content is ${wordCount} words long. Consider expanding it to 600+ words.`,
+        severity: "warning",
+        impact: "Medium",
+        effort: "Medium",
+        fix: "Add more useful sections, examples, or product context.",
+      },
+      5,
+    );
   }
 
-  if (article.body && !/<h[2-6][^>]*>/i.test(article.body)) {
+  if (!hasMediaInBody && !article.imageUrl) {
+    addIssue(
+      {
+        type: "missing_media",
+        category: "content",
+        label: "Missing media",
+        message: "Add images, products, or videos to improve content readability.",
+        severity: "warning",
+        impact: "Medium",
+        effort: "Medium",
+        fix: "Add a featured image, inline media, or a linked product block.",
+      },
+      5,
+    );
+  }
+
+  const longParagraphs = body.split(/<\/p>/i).filter((paragraph) => stripHtml(paragraph).split(/\s+/).length > 120);
+  if (longParagraphs.length > 0) {
+    addIssue(
+      {
+        type: "long_paragraphs",
+        category: "content",
+        label: "Long paragraphs",
+        message: "Some paragraphs are too long. Keep paragraphs short and easy to scan.",
+        severity: "warning",
+        impact: "Low",
+        effort: "Low",
+        fix: "Split long paragraphs into shorter sections.",
+      },
+      3,
+    );
+  }
+
+  if (!hasToc) {
+    addIssue(
+      {
+        type: "missing_toc",
+        category: "content",
+        label: "Missing table of contents",
+        message: "You don't seem to be using a Table of Contents.",
+        severity: "warning",
+        impact: "Low",
+        effort: "Low",
+        fix: "Add a TOC shortcode or enough H2/H3 sections for the article TOC.",
+      },
+      2,
+    );
+  }
+
+  if (headings.length === 0) {
     addIssue(
       {
         type: "missing_subheadings",
@@ -1043,6 +1130,269 @@ function auditArticle(
         fix: "Add clear H2/H3 sections to structure the article.",
       },
       4,
+    );
+  }
+
+  if (!article.handle || article.handle.length > 75) {
+    addIssue(
+      {
+        type: "long_url",
+        category: "on_page",
+        label: "URL length",
+        message: "URL is too long. Consider shortening it.",
+        severity: "warning",
+        impact: "Low",
+        effort: "Low",
+        fix: "Use a short descriptive URL handle.",
+      },
+      2,
+    );
+  }
+
+  if (linkStats.external < 1) {
+    addIssue(
+      {
+        type: "missing_external_links",
+        category: "content",
+        label: "Missing external links",
+        message: "Link out to external resources.",
+        severity: "warning",
+        impact: "Medium",
+        effort: "Low",
+        fix: "Add a relevant external reference link.",
+      },
+      3,
+    );
+  }
+
+  if (linkStats.dofollowExternal < 1) {
+    addIssue(
+      {
+        type: "missing_dofollow_external_links",
+        category: "content",
+        label: "Missing DoFollow links",
+        message: "Add DoFollow links pointing to external resources.",
+        severity: "warning",
+        impact: "Low",
+        effort: "Low",
+        fix: "Add at least one relevant external link without nofollow/sponsored/ugc.",
+      },
+      2,
+    );
+  }
+
+  if (linkStats.internal < 1) {
+    addIssue(
+      {
+        type: "missing_internal_links",
+        category: "content",
+        label: "Missing internal links",
+        message: "Add internal links in your content.",
+        severity: "warning",
+        impact: "Medium",
+        effort: "Low",
+        fix: "Link to another blog post, collection, product, or page on the store.",
+      },
+      3,
+    );
+  }
+
+  if (!/\d/.test(seoTitle)) {
+    addIssue(
+      {
+        type: "title_number",
+        category: "on_page",
+        label: "Number in SEO title",
+        message: "Your SEO title doesn't contain a number.",
+        severity: "warning",
+        impact: "Low",
+        effort: "Low",
+        fix: "Add a useful number when it fits naturally, like 5 tips or 10 ideas.",
+      },
+      2,
+    );
+  }
+
+  if (primaryKeyword) {
+    const occurrences = bodyLower.split(primaryKeyword).length - 1;
+    const density = wordCount > 0 ? ((occurrences * primaryKeyword.split(" ").length) / wordCount) * 100 : 0;
+    const inTitle = titleLower.includes(primaryKeyword);
+    const inSummary = summaryLower.includes(primaryKeyword);
+    const inHandle = handleLower.includes(slugifyKeyword(primaryKeyword));
+    const inFirst10 = first10Words.includes(primaryKeyword);
+    const inHeading = headings.some((heading) => heading.toLowerCase().includes(primaryKeyword));
+    const inImageAlt = hasAnyImage && allImageAltText.toLowerCase().includes(primaryKeyword);
+
+    if (!inTitle) {
+      addIssue(
+        {
+          type: "focus_keyword_title",
+          category: "on_page",
+          label: "Focus keyword in title",
+          message: "Add Focus Keyword to the SEO title.",
+          severity: "critical",
+          impact: "High",
+          effort: "Low",
+          fix: "Add the primary focus keyword to the SEO title.",
+        },
+        10,
+      );
+    } else if (titleLower.indexOf(primaryKeyword) >= 20) {
+      addIssue(
+        {
+          type: "focus_keyword_title_position",
+          category: "on_page",
+          label: "Focus keyword position",
+          message: "Use the Focus Keyword near the beginning of SEO title.",
+          severity: "warning",
+          impact: "Low",
+          effort: "Low",
+          fix: "Move the focus keyword closer to the start of the SEO title.",
+        },
+        1,
+      );
+    }
+
+    if (!inSummary) {
+      addIssue(
+        {
+          type: "focus_keyword_meta",
+          category: "on_page",
+          label: "Focus keyword in meta",
+          message: "Add Focus Keyword to your SEO Meta Description.",
+          severity: "warning",
+          impact: "Medium",
+          effort: "Low",
+          fix: "Include the focus keyword naturally in the meta description.",
+        },
+        5,
+      );
+    }
+
+    if (!inHandle) {
+      addIssue(
+        {
+          type: "focus_keyword_url",
+          category: "on_page",
+          label: "Focus keyword in URL",
+          message: "Use Focus Keyword in the URL.",
+          severity: "warning",
+          impact: "Medium",
+          effort: "Low",
+          fix: "Add the focus keyword to the article handle.",
+        },
+        5,
+      );
+    }
+
+    if (!inFirst10) {
+      addIssue(
+        {
+          type: "focus_keyword_beginning",
+          category: "content",
+          label: "Focus keyword at start",
+          message: "Use Focus Keyword at the beginning of your content.",
+          severity: "warning",
+          impact: "Medium",
+          effort: "Low",
+          fix: "Mention the focus keyword in the opening paragraph.",
+        },
+        5,
+      );
+    }
+
+    if (occurrences === 0) {
+      addIssue(
+        {
+          type: "focus_keyword_content",
+          category: "content",
+          label: "Focus keyword in content",
+          message: "Use Focus Keyword in the content.",
+          severity: "critical",
+          impact: "High",
+          effort: "Medium",
+          fix: "Mention the focus keyword naturally in the article body.",
+        },
+        15,
+      );
+    } else if (density < 0.5 || density > 2.5) {
+      addIssue(
+        {
+          type: "keyword_density",
+          category: "content",
+          label: "Keyword density",
+          message: `Keyword density is ${density.toFixed(2)}%. Aim for around 1% Keyword Density.`,
+          severity: "warning",
+          impact: "Low",
+          effort: "Medium",
+          fix: "Adjust keyword usage so it appears naturally without stuffing.",
+        },
+        2,
+      );
+    }
+
+    if (!inHeading) {
+      addIssue(
+        {
+          type: "focus_keyword_heading",
+          category: "content",
+          label: "Focus keyword in subheadings",
+          message: "Use Focus Keyword in subheading(s) like H2, H3, H4, etc.",
+          severity: "warning",
+          impact: "Low",
+          effort: "Medium",
+          fix: "Add the focus keyword to one useful H2 or H3.",
+        },
+        2,
+      );
+    }
+
+    if (!inImageAlt) {
+      addIssue(
+        {
+          type: "focus_keyword_image_alt",
+          category: "image",
+          label: "Focus keyword in image alt",
+          message: "Add an image with your Focus Keyword as alt text.",
+          severity: "warning",
+          impact: "Low",
+          effort: "Low",
+          fix: "Add the focus keyword to a relevant image alt text.",
+        },
+        2,
+      );
+    }
+
+    keywords.slice(1).forEach((keyword, index) => {
+      if (bodyLower.split(keyword).length - 1 === 0) {
+        addIssue(
+          {
+            type: `secondary_keyword_${index + 1}`,
+            category: "content",
+            label: "Secondary keyword in content",
+            message: `Secondary keyword "${keyword}" does not appear in the content.`,
+            severity: "warning",
+            impact: "Low",
+            effort: "Low",
+            fix: "Mention the secondary keyword naturally if it fits the article.",
+          },
+          3,
+        );
+      }
+    });
+  } else {
+    addIssue(
+      {
+        type: "missing_focus_keyword",
+        category: "on_page",
+        label: "Missing focus keyword",
+        message: "Set a Focus Keyword for this content.",
+        severity: "critical",
+        impact: "High",
+        effort: "Low",
+        fix: "Add one primary keyword in Blog Detail before running SEO scan.",
+      },
+      30,
     );
   }
 
@@ -1063,21 +1413,25 @@ function auditArticle(
   }
 
   return {
-    score: calculateBlogDetailSeoScore(article, productCount, storedSeo),
+    score: calculateBlogDetailSeoScore(article, productCount, storedSeo, shopDomain),
     issues,
   };
 }
 
-function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number, storedSeo?: StoredSeoInput | null) {
+function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number, storedSeo?: StoredSeoInput | null, shopDomain?: string) {
   let score = 100;
   const title = getEffectiveSeoTitle(storedSeo?.metaTitle, article.title);
   const summary = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
   const body = article.body || "";
   const text = stripHtml(body);
   const wordCount = text ? text.split(/\s+/).length : 0;
-  const linkCount = (body.match(/<a\s/gi) || []).length;
+  const linkStats = analyzeLinks(body, shopDomain);
+  const headings = getHeadingTexts(body);
+  const hasToc = hasTableOfContents(body) || headings.length >= 3;
+  const bodyImageAltText = getBodyImageAltText(body);
+  const allImageAltText = `${article.imageAlt || ""} ${bodyImageAltText}`.trim();
+  const hasAnyImage = Boolean(article.imageUrl) || /<img\b/i.test(body);
   const hasImage = Boolean(article.imageUrl);
-  const imageAlt = article.imageAlt || "";
   const focusKeyword = textValue(storedSeo?.focusKeyword);
 
   const titleLower = title.toLowerCase();
@@ -1093,8 +1447,10 @@ function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number
   if (wordCount < 250) score -= 15;
   else if (wordCount < 600) score -= 5;
 
-  if (linkCount < 1) score -= 5;
   if (!article.handle || article.handle.length > 75) score -= 2;
+  if (linkStats.external < 1) score -= 3;
+  if (linkStats.dofollowExternal < 1) score -= 2;
+  if (linkStats.internal < 1) score -= 3;
 
   const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
   if (!hasImage && !hasMediaInBody) score -= 5;
@@ -1102,6 +1458,7 @@ function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number
   const paragraphs = body.split(/<\/p>/i);
   const longParagraphs = paragraphs.filter((paragraph) => stripHtml(paragraph).split(/\s+/).length > 120);
   if (longParagraphs.length > 0) score -= 3;
+  if (!hasToc) score -= 2;
 
   if (!/\d/.test(title)) score -= 2;
 
@@ -1119,6 +1476,8 @@ function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number
       const inSummary = summaryLower.includes(keyword);
       const inHandle = handleLower.includes(slugifyKeyword(keyword));
       const inFirst10 = first10Words.includes(keyword);
+      const inHeading = headings.some((heading) => heading.toLowerCase().includes(keyword));
+      const inImageAlt = hasAnyImage && allImageAltText.toLowerCase().includes(keyword);
 
       if (isPrimary) {
         if (!inTitle) score -= 10;
@@ -1127,19 +1486,11 @@ function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number
         if (!inFirst10) score -= 5;
         if (occurrences === 0) score -= 15;
 
-        const headingRegex = /<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi;
-        let foundInHeading = false;
-        let match;
-        while ((match = headingRegex.exec(body)) !== null) {
-          if (match[1].toLowerCase().includes(keyword)) {
-            foundInHeading = true;
-            break;
-          }
-        }
-        if (!foundInHeading) score -= 2;
+        if (!inHeading) score -= 2;
 
         if (occurrences > 0 && (density < 0.5 || density > 2.5)) score -= 2;
-        if (hasImage && !imageAlt.toLowerCase().includes(keyword)) score -= 2;
+        if (!inImageAlt) score -= 2;
+        if (inTitle && titleLower.indexOf(keyword) >= 20) score -= 1;
       } else if (occurrences === 0) {
         score -= 3;
       }
@@ -1149,6 +1500,86 @@ function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number
   }
 
   return Math.max(0, Math.min(100, score));
+}
+
+function analyzeLinks(body: string, shopDomain?: string) {
+  const stats = { internal: 0, external: 0, dofollowExternal: 0 };
+  const shopHost = normalizeHost(shopDomain || "");
+  const anchorRegex = /<a\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = anchorRegex.exec(body || "")) !== null) {
+    const attrs = match[1] || "";
+    const href = getHtmlAttribute(attrs, "href").trim();
+    if (!href || /^(mailto:|tel:|sms:|javascript:)/i.test(href)) continue;
+
+    const rel = getHtmlAttribute(attrs, "rel").toLowerCase();
+    const isNoFollow = /\b(nofollow|sponsored|ugc)\b/i.test(rel);
+
+    if (isInternalHref(href, shopHost)) {
+      stats.internal += 1;
+    } else {
+      stats.external += 1;
+      if (!isNoFollow) stats.dofollowExternal += 1;
+    }
+  }
+
+  return stats;
+}
+
+function getHtmlAttribute(attrs: string, name: string) {
+  const match = attrs.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return match?.[2] || match?.[3] || match?.[4] || "";
+}
+
+function isInternalHref(href: string, shopHost: string) {
+  const trimmed = href.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("/")) return true;
+
+  try {
+    const url = new URL(trimmed);
+    const host = normalizeHost(url.hostname);
+    return Boolean(shopHost && (host === shopHost || host.endsWith(`.${shopHost}`)));
+  } catch {
+    return true;
+  }
+}
+
+function normalizeHost(value: string) {
+  return value
+    .replace(/^https?:\/\//i, "")
+    .split(/[/?#]/)[0]
+    .replace(/^www\./i, "")
+    .toLowerCase();
+}
+
+function getHeadingTexts(body: string) {
+  const headings: string[] = [];
+  const headingRegex = /<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = headingRegex.exec(body || "")) !== null) {
+    headings.push(stripHtml(match[1] || ""));
+  }
+
+  return headings;
+}
+
+function hasTableOfContents(body: string) {
+  return /\[\[SBS_TOC(?::[^\]]+)?\]\]/i.test(body) || /data-bp-content-nav=["']toc["']|class=["'][^"']*\bbp-toc\b/i.test(body);
+}
+
+function getBodyImageAltText(body: string) {
+  const alts: string[] = [];
+  const imageRegex = /<img\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = imageRegex.exec(body || "")) !== null) {
+    const alt = getHtmlAttribute(match[1] || "", "alt");
+    if (alt) alts.push(alt);
+  }
+
+  return alts.join(" ");
 }
 
 function isArticleNewerThanSeoScan(article: ArticleInput, storedSeo?: StoredSeoInput | null) {

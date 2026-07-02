@@ -174,6 +174,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       hasImage: false,
       imageAlt: "",
       productCount: 0,
+      shopDomain: shop,
     });
 
     return json({
@@ -218,6 +219,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         image {
           url
           altText
+        }
+        seoTitle: metafield(namespace: "global", key: "title_tag") {
+          value
+        }
+        seoDescription: metafield(namespace: "global", key: "description_tag") {
+          value
         }
         author {
           name
@@ -285,13 +292,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   );
 
   const initialAudit = auditSeo({
-    title: seoData?.metaTitle || article.title || "",
+    title: seoData?.metaTitle || article.seoTitle?.value || article.title || "",
     handle: article.handle || "",
-    summary: seoData?.metaDescription || article.summary || "",
+    summary: seoData?.metaDescription || article.seoDescription?.value || article.summary || "",
     body: article.body || "",
     hasImage: Boolean(article.image?.url),
     imageAlt: article.image?.altText || "",
     productCount: embeddedProducts.length,
+    shopDomain: shop,
   });
 
   const livePostUrl =
@@ -453,6 +461,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         );
       }
 
+      const seoSyncError = await syncArticleSeoMetafields(admin, article.id, {
+        metaTitle,
+        metaDescription,
+      });
+      if (seoSyncError) {
+        return json({ success: false, error: seoSyncError }, { status: 400 });
+      }
+
       const audit = auditSeo({
         title: metaTitle,
         handle: article.handle || handle,
@@ -462,6 +478,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         imageAlt,
         productCount,
         focusKeyword,
+        shopDomain: shop,
       });
 
       await prisma.articleSEO.upsert({
@@ -573,6 +590,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ success: false, error: message }, { status: 400 });
     }
 
+    const seoSyncError = await syncArticleSeoMetafields(admin, articleId, {
+      metaTitle,
+      metaDescription,
+    });
+    if (seoSyncError) {
+      return json({ success: false, error: seoSyncError }, { status: 400 });
+    }
+
     const audit = getSubmittedSeoAudit(formData) || auditSeo({
       title: metaTitle,
       handle,
@@ -582,6 +607,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       imageAlt,
       productCount,
       focusKeyword,
+      shopDomain: shop,
     });
 
     await prisma.articleSEO.upsert({
@@ -760,10 +786,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       imageAlt: cleanString(formData.get("imageAlt")),
       productCount: Number(formData.get("productCount") || "0"),
       focusKeyword,
+      shopDomain: shop,
     });
 
     if (isNewPost) {
       return json({ success: true, action: "seo_analyzed", score: audit.score, issues: audit.issues });
+    }
+
+    const seoSyncError = await syncArticleSeoMetafields(admin, articleId, {
+      metaTitle: cleanString(formData.get("metaTitle")),
+      metaDescription: cleanString(formData.get("metaDescription")),
+    });
+    if (seoSyncError) {
+      return json({ success: false, error: seoSyncError }, { status: 400 });
     }
 
     await prisma.articleSEO.upsert({
@@ -815,6 +850,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       imageAlt: suggestedImageAlt,
       productCount,
       focusKeyword,
+      shopDomain: shop,
     });
 
     if (isNewPost) {
@@ -827,6 +863,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         score: audit.score,
         issues: audit.issues,
       });
+    }
+
+    const seoSyncError = await syncArticleSeoMetafields(admin, articleId, {
+      metaTitle: suggestedTitle,
+      metaDescription: suggestedDescription,
+    });
+    if (seoSyncError) {
+      return json({ success: false, error: seoSyncError }, { status: 400 });
     }
 
     await prisma.articleSEO.upsert({
@@ -928,10 +972,12 @@ export default function ArticleDetail() {
     stripHtml(seoData?.metaDescription || article.summary || makeMetaDescription(article.title, article.body || "")),
   );
   const [body, setBody] = useState(article.body || "");
-  const [metaTitle, setMetaTitle] = useState(getInitialMetaTitle(seoData?.metaTitle, article.title));
-  const [metaTitleTouched, setMetaTitleTouched] = useState(isInitialMetaTitleCustom(seoData?.metaTitle, article.title));
+  const initialMetaTitle = seoData?.metaTitle || article.seoTitle?.value || "";
+  const initialMetaDescription = seoData?.metaDescription || article.seoDescription?.value || "";
+  const [metaTitle, setMetaTitle] = useState(getInitialMetaTitle(initialMetaTitle, article.title));
+  const [metaTitleTouched, setMetaTitleTouched] = useState(isInitialMetaTitleCustom(initialMetaTitle, article.title));
   const [metaDescription, setMetaDescription] = useState(
-    seoData?.metaDescription || stripHtml(article.summary || ""),
+    initialMetaDescription || stripHtml(article.summary || ""),
   );
   const [tags, setTags] = useState((article.tags || []).join(", "));
   const [themeTemplate, setThemeTemplate] = useState(article.templateSuffix || "default");
@@ -981,8 +1027,9 @@ export default function ArticleDetail() {
       imageAlt: featuredImageAlt || article.image?.altText || "",
       productCount: embeddedProducts.length,
       focusKeyword,
+      shopDomain: shop,
     });
-  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword]);
+  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword, shop]);
 
   const productBlockOptions = useMemo(
     () => buildProductBlockOptions(body, embeddedProducts),
@@ -1482,6 +1529,9 @@ export default function ArticleDetail() {
   };
 
   const resetChanges = () => {
+    const resetMetaTitle = seoData?.metaTitle || article.seoTitle?.value || "";
+    const resetMetaDescription = seoData?.metaDescription || article.seoDescription?.value || "";
+
     setTitle(article.title || "");
     setHandle(article.handle || "");
     setExcerpt(stripHtml(seoData?.metaDescription || article.summary || ""));
@@ -1492,9 +1542,9 @@ export default function ArticleDetail() {
     setAuthorName(article.author?.name || defaultAuthorName);
     setSelectedBlogId(article.blog?.id || blogs[0]?.id || "");
     setHandleTouched(Boolean(article.handle));
-    setMetaTitle(getInitialMetaTitle(seoData?.metaTitle, article.title));
-    setMetaTitleTouched(isInitialMetaTitleCustom(seoData?.metaTitle, article.title));
-    setMetaDescription(seoData?.metaDescription || stripHtml(article.summary || ""));
+    setMetaTitle(getInitialMetaTitle(resetMetaTitle, article.title));
+    setMetaTitleTouched(isInitialMetaTitleCustom(resetMetaTitle, article.title));
+    setMetaDescription(resetMetaDescription || stripHtml(article.summary || ""));
     setFeaturedImageUrl(article.image?.url || "");
     setFeaturedImageAlt(article.image?.altText || "");
     setSelectedImage(null);
@@ -4234,6 +4284,71 @@ function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+async function syncArticleSeoMetafields(
+  admin: any,
+  ownerId: string,
+  input: { metaTitle: string; metaDescription: string },
+) {
+  const metaTitle = cleanSeoMetafieldValue(input.metaTitle);
+  const metaDescription = cleanSeoMetafieldValue(input.metaDescription);
+  const metafields = [];
+
+  if (metaTitle) {
+    metafields.push({
+      ownerId,
+      namespace: "global",
+      key: "title_tag",
+      type: "single_line_text_field",
+      value: metaTitle,
+    });
+  }
+
+  if (metaDescription) {
+    metafields.push({
+      ownerId,
+      namespace: "global",
+      key: "description_tag",
+      type: "single_line_text_field",
+      value: metaDescription,
+    });
+  }
+
+  if (!metafields.length) return "";
+
+  const response = await admin.graphql(
+    `#graphql
+    mutation SetArticleSeoMetafields($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields {
+          id
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }`,
+    { variables: { metafields } },
+  );
+  const result: any = await response.json();
+  const userErrors = result.data?.metafieldsSet?.userErrors || [];
+  const graphQLErrors = result.errors || [];
+
+  if (userErrors.length || graphQLErrors.length) {
+    return (
+      userErrors[0]?.message ||
+      graphQLErrors[0]?.message ||
+      "Shopify could not update the search engine listing metadata."
+    );
+  }
+
+  return "";
+}
+
+function cleanSeoMetafieldValue(value: string) {
+  return stripHtml(value || "").replace(/\s+/g, " ").trim();
+}
+
 function getSubmittedSeoAudit(formData: FormData): { score: number; issues: SeoIssue[] } | null {
   const score = Number(cleanString(formData.get("seoScore")));
   const rawIssues = cleanString(formData.get("seoIssues"));
@@ -4573,6 +4688,7 @@ function auditSeo({
   imageAlt,
   productCount,
   focusKeyword,
+  shopDomain,
 }: {
   title: string;
   handle: string;
@@ -4582,12 +4698,19 @@ function auditSeo({
   imageAlt: string;
   productCount: number;
   focusKeyword?: string;
+  shopDomain?: string;
 }): { score: number; issues: SeoIssue[]; keywordScores: Record<string, "success" | "warning" | "critical"> } {
   const issues: SeoIssue[] = [];
   let score = 100;
   const text = stripHtml(body);
   const wordCount = text ? text.split(/\s+/).length : 0;
-  const linkCount = (body.match(/<a\s/gi) || []).length;
+  const linkStats = analyzeLinks(body, shopDomain);
+  const headings = getHeadingTexts(body);
+  const hasToc = hasTableOfContents(body) || headings.length >= 3;
+  const bodyImageAltText = getBodyImageAltText(body);
+  const allImageAltText = `${imageAlt || ""} ${bodyImageAltText}`.trim();
+  const hasAnyImage = hasImage || /<img\b/i.test(body);
+  const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
   const keywordScores: Record<string, "success" | "warning" | "critical"> = {};
 
   const titleLower = title.toLowerCase();
@@ -4595,8 +4718,9 @@ function auditSeo({
   const handleLower = handle.toLowerCase();
   const bodyLower = text.toLowerCase();
   const first10Words = text.split(/\s+/).slice(0, Math.max(20, Math.floor(wordCount * 0.1))).join(' ').toLowerCase();
+  const keywords = (focusKeyword || "").split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+  const primaryKeyword = keywords[0] || "";
 
-  // Length
   if (wordCount < 250) {
     issues.push({ category: 'basic', type: "content_length", label: "Content length", message: `Your article is too short (${wordCount} words). Aim for at least 600 words.`, severity: "critical", impact: "High", effort: "Medium" });
     score -= 15;
@@ -4607,15 +4731,6 @@ function auditSeo({
     issues.push({ category: 'basic', type: "content_length", label: "Content length", message: `Great! Your article is ${wordCount} words long.`, severity: "good" });
   }
 
-  // Links
-  if (linkCount < 1) {
-    issues.push({ category: 'additional', type: "links", label: "Links", message: "Add some internal or external links to your content.", severity: "warning", impact: "Medium", effort: "Low" });
-    score -= 5;
-  } else {
-    issues.push({ category: 'additional', type: "links", label: "Links", message: "You are linking to other resources.", severity: "good" });
-  }
-
-  // URL length
   if (!handle || handle.length > 75) {
     issues.push({ category: 'additional', type: "url_length", label: "URL Length", message: "Your URL is too long. Keep it short and descriptive.", severity: "warning", impact: "Low", effort: "Low" });
     score -= 2;
@@ -4623,8 +4738,27 @@ function auditSeo({
     issues.push({ category: 'additional', type: "url_length", label: "URL Length", message: "Your URL is short and descriptive.", severity: "good" });
   }
 
-  // Media
-  const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
+  if (linkStats.external < 1) {
+    issues.push({ category: 'additional', type: "external_links", label: "External links", message: "Link out to external resources.", severity: "warning", impact: "Medium", effort: "Low" });
+    score -= 3;
+  } else {
+    issues.push({ category: 'additional', type: "external_links", label: "External links", message: "You are linking out to external resources.", severity: "good" });
+  }
+
+  if (linkStats.dofollowExternal < 1) {
+    issues.push({ category: 'additional', type: "dofollow_external_links", label: "DoFollow external links", message: "Add DoFollow links pointing to external resources.", severity: "warning", impact: "Low", effort: "Low" });
+    score -= 2;
+  } else {
+    issues.push({ category: 'additional', type: "dofollow_external_links", label: "DoFollow external links", message: "At least one external link is DoFollow.", severity: "good" });
+  }
+
+  if (linkStats.internal < 1) {
+    issues.push({ category: 'additional', type: "internal_links", label: "Internal links", message: "Add internal links in your content.", severity: "warning", impact: "Medium", effort: "Low" });
+    score -= 3;
+  } else {
+    issues.push({ category: 'additional', type: "internal_links", label: "Internal links", message: "Your content includes internal links.", severity: "good" });
+  }
+
   if (!hasImage && !hasMediaInBody) {
     issues.push({ category: 'content_readability', type: "media", label: "Media", message: "Add images, products, or videos to make your content more engaging.", severity: "warning", impact: "Medium", effort: "Medium" });
     score -= 5;
@@ -4632,7 +4766,6 @@ function auditSeo({
     issues.push({ category: 'content_readability', type: "media", label: "Media", message: "Your content contains engaging media.", severity: "good" });
   }
 
-  // Paragraph length
   const paragraphs = body.split(/<\/p>/i);
   const longParagraphs = paragraphs.filter(p => stripHtml(p).split(/\s+/).length > 120);
   if (longParagraphs.length > 0) {
@@ -4642,7 +4775,13 @@ function auditSeo({
     issues.push({ category: 'content_readability', type: "paragraph_length", label: "Paragraph Length", message: "Your paragraphs are nicely broken down.", severity: "good" });
   }
 
-  // Title Readability
+  if (!hasToc) {
+    issues.push({ category: 'content_readability', type: "toc", label: "Table of contents", message: "You don't seem to be using a Table of Contents.", severity: "warning", impact: "Low", effort: "Low" });
+    score -= 2;
+  } else {
+    issues.push({ category: 'content_readability', type: "toc", label: "Table of contents", message: "Your content structure can support a Table of Contents.", severity: "good" });
+  }
+
   if (/\d/.test(title)) {
     issues.push({ category: 'title_readability', type: "title_number", label: "Number in Title", message: "Your SEO title contains a number.", severity: "good" });
   } else {
@@ -4650,10 +4789,7 @@ function auditSeo({
     score -= 2;
   }
 
-  // Keyword checks
-  if (focusKeyword) {
-    const keywords = focusKeyword.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0);
-
+  if (primaryKeyword) {
     keywords.forEach((kw, index) => {
       let kwScore = 100;
       const isPrimary = index === 0;
@@ -4665,6 +4801,8 @@ function auditSeo({
       const inSummary = summaryLower.includes(kw);
       const inHandle = handleLower.includes(slugifyKeyword(kw));
       const inFirst10 = first10Words.includes(kw);
+      const inHeading = headings.some(heading => heading.toLowerCase().includes(kw));
+      const inImageAlt = hasAnyImage && allImageAltText.toLowerCase().includes(kw);
 
       if (!inTitle) kwScore -= isPrimary ? 10 : 5;
       if (!inSummary) kwScore -= isPrimary ? 5 : 2;
@@ -4696,20 +4834,9 @@ function auditSeo({
         if (occurrences > 0) issues.push({ category: 'basic', type: "kw_content", label: "Keyword in Content", message: `Focus Keyword appears in the content.`, severity: "good" });
         else { issues.push({ category: 'basic', type: "kw_content", label: "Keyword in Content", message: "Focus Keyword does not appear in the content.", severity: "critical", impact: "High", effort: "Medium" }); score -= 15; }
 
-        // Subheadings
-        const headingRegex = /<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi;
-        let foundInHeading = false;
-        let match;
-        while ((match = headingRegex.exec(body)) !== null) {
-          if (match[1].toLowerCase().includes(kw)) {
-            foundInHeading = true;
-            break;
-          }
-        }
-        if (foundInHeading) issues.push({ category: 'additional', type: "kw_heading", label: "Keyword in Subheadings", message: "Focus Keyword found in subheading(s).", severity: "good" });
+        if (inHeading) issues.push({ category: 'additional', type: "kw_heading", label: "Keyword in Subheadings", message: "Focus Keyword found in subheading(s).", severity: "good" });
         else { issues.push({ category: 'additional', type: "kw_heading", label: "Keyword in Subheadings", message: "Focus Keyword not found in subheading(s) like H2, H3, etc.", severity: "warning", impact: "Low", effort: "Medium" }); score -= 2; }
 
-        // Density
         if (occurrences > 0) {
           if (density >= 0.5 && density <= 2.5) {
             issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: `Keyword density is ${density.toFixed(2)}%, which is great.`, severity: "good" });
@@ -4720,19 +4847,18 @@ function auditSeo({
             issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: `Keyword density is ${density.toFixed(2)}%, which is high. Don't over-optimize.`, severity: "warning", impact: "Low", effort: "Medium" });
             score -= 2;
           }
+        } else {
+          issues.push({ category: 'additional', type: "kw_density", label: "Keyword Density", message: "Keyword Density is 0. Aim for around 1% Keyword Density.", severity: "warning", impact: "Low", effort: "Medium" });
         }
 
-        // Image Alt
-        if (hasImage) {
-          if (imageAlt.toLowerCase().includes(kw)) issues.push({ category: 'additional', type: "kw_alt", label: "Keyword in Image Alt", message: "Focus Keyword found in image alt attributes.", severity: "good" });
-          else { issues.push({ category: 'additional', type: "kw_alt", label: "Keyword in Image Alt", message: "Focus Keyword not found in image alt attributes.", severity: "warning", impact: "Low", effort: "Low" }); score -= 2; }
-        }
+        if (inImageAlt) issues.push({ category: 'additional', type: "kw_alt", label: "Keyword in Image Alt", message: "Focus Keyword found in image alt attributes.", severity: "good" });
+        else { issues.push({ category: 'additional', type: "kw_alt", label: "Keyword in Image Alt", message: "Add an image with your Focus Keyword as alt text.", severity: "warning", impact: "Low", effort: "Low" }); score -= 2; }
 
-        // Title Readability - Keyword position
         if (titleLower.indexOf(kw) >= 0 && titleLower.indexOf(kw) < 20) {
           issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Focus Keyword used at the beginning of SEO title.", severity: "good" });
-        } else if (inTitle) {
-          issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Focus Keyword doesn't appear at the beginning of SEO title.", severity: "info", impact: "Low", effort: "Low" });
+        } else {
+          issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Use the Focus Keyword near the beginning of SEO title.", severity: "warning", impact: "Low", effort: "Low" });
+          if (inTitle) score -= 1;
         }
 
       } else {
@@ -4745,8 +4871,13 @@ function auditSeo({
       }
     });
   } else {
-    // No focus keyword
-    issues.push({ category: 'basic', type: "kw_missing", label: "Missing Focus Keyword", message: "You have not set a focus keyword yet.", severity: "critical", impact: "High", effort: "Low" });
+    issues.push({ category: 'basic', type: "kw_title", label: "Keyword in Title", message: "Add Focus Keyword to the SEO title.", severity: "critical", impact: "High", effort: "Low" });
+    issues.push({ category: 'basic', type: "kw_summary", label: "Keyword in Meta", message: "Add Focus Keyword to your SEO Meta Description.", severity: "critical", impact: "Medium", effort: "Low" });
+    issues.push({ category: 'basic', type: "kw_url", label: "Keyword in URL", message: "Use Focus Keyword in the URL.", severity: "critical", impact: "Medium", effort: "Low" });
+    issues.push({ category: 'basic', type: "kw_early", label: "Keyword at Start", message: "Use Focus Keyword at the beginning of your content.", severity: "critical", impact: "Medium", effort: "Low" });
+    issues.push({ category: 'basic', type: "kw_content", label: "Keyword in Content", message: "Use Focus Keyword in the content.", severity: "critical", impact: "High", effort: "Medium" });
+    issues.push({ category: 'additional', type: "kw_missing", label: "Missing Focus Keyword", message: "Set a Focus Keyword for this content.", severity: "critical", impact: "High", effort: "Low" });
+    issues.push({ category: 'title_readability', type: "kw_title_pos", label: "Keyword Position", message: "Use the Focus Keyword near the beginning of SEO title.", severity: "critical", impact: "Low", effort: "Low" });
     score -= 30;
   }
 
@@ -4755,6 +4886,86 @@ function auditSeo({
     issues,
     keywordScores,
   };
+}
+
+function analyzeLinks(body: string, shopDomain?: string) {
+  const stats = { internal: 0, external: 0, dofollowExternal: 0 };
+  const shopHost = normalizeHost(shopDomain || "");
+  const anchorRegex = /<a\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = anchorRegex.exec(body || "")) !== null) {
+    const attrs = match[1] || "";
+    const href = getHtmlAttribute(attrs, "href").trim();
+    if (!href || /^(mailto:|tel:|sms:|javascript:)/i.test(href)) continue;
+
+    const rel = getHtmlAttribute(attrs, "rel").toLowerCase();
+    const isNoFollow = /\b(nofollow|sponsored|ugc)\b/i.test(rel);
+
+    if (isInternalHref(href, shopHost)) {
+      stats.internal += 1;
+    } else {
+      stats.external += 1;
+      if (!isNoFollow) stats.dofollowExternal += 1;
+    }
+  }
+
+  return stats;
+}
+
+function getHtmlAttribute(attrs: string, name: string) {
+  const match = attrs.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return match?.[2] || match?.[3] || match?.[4] || "";
+}
+
+function isInternalHref(href: string, shopHost: string) {
+  const trimmed = href.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("/")) return true;
+
+  try {
+    const url = new URL(trimmed);
+    const host = normalizeHost(url.hostname);
+    return Boolean(shopHost && (host === shopHost || host.endsWith(`.${shopHost}`)));
+  } catch {
+    return true;
+  }
+}
+
+function normalizeHost(value: string) {
+  return value
+    .replace(/^https?:\/\//i, "")
+    .split(/[/?#]/)[0]
+    .replace(/^www\./i, "")
+    .toLowerCase();
+}
+
+function getHeadingTexts(body: string) {
+  const headings: string[] = [];
+  const headingRegex = /<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = headingRegex.exec(body || "")) !== null) {
+    headings.push(stripHtml(match[1] || ""));
+  }
+
+  return headings;
+}
+
+function hasTableOfContents(body: string) {
+  return /\[\[SBS_TOC(?::[^\]]+)?\]\]/i.test(body) || /data-bp-content-nav=["']toc["']|class=["'][^"']*\bbp-toc\b/i.test(body);
+}
+
+function getBodyImageAltText(body: string) {
+  const alts: string[] = [];
+  const imageRegex = /<img\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = imageRegex.exec(body || "")) !== null) {
+    const alt = getHtmlAttribute(match[1] || "", "alt");
+    if (alt) alts.push(alt);
+  }
+
+  return alts.join(" ");
 }
 
 function buildProductMetricMap(groups: any[]) {
