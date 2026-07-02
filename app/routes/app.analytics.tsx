@@ -262,8 +262,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const postRows = buildPostRows(Array.from(articleSourceMap.values()), currentEvents, priceMap, productCountMap, seoScoreMap);
   const productRows = buildProductRows(currentEvents, priceMap, productInfoMap);
   const topClickedProducts = sortProductRows(productRows, "clicks").slice(0, 5);
-  const topAddToCartProducts = sortProductRows(productRows, "addToCarts").slice(0, 5);
-  const topPurchasedProducts = sortProductRows(productRows, "purchases").slice(0, 5);
   const sourceData = buildSourceData(currentEvents);
   const insights = buildInsights({
     currentMetrics,
@@ -287,8 +285,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     topPosts: postRows.slice(0, 8),
     topProducts: topClickedProducts,
     topClickedProducts,
-    topAddToCartProducts,
-    topPurchasedProducts,
     insights,
   });
 };
@@ -305,8 +301,6 @@ export default function Analytics() {
     sourceData,
     topPosts,
     topProducts,
-    topAddToCartProducts,
-    topPurchasedProducts,
     insights,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
@@ -623,7 +617,7 @@ export default function Analytics() {
                             {product.title}
                           </Text>
                           <Text as="p" variant="bodySm" tone="subdued">
-                            {formatNumber(product.clicks)} clicks · {formatMoney(product.revenue)} revenue
+                            {formatNumber(product.clicks)} clicks - {formatNumber(product.addToCarts)} add to carts - {formatNumber(product.purchases)} purchases - {formatMoney(product.revenue)} revenue
                           </Text>
                         </div>
                       </div>
@@ -635,24 +629,6 @@ export default function Analytics() {
                   <p>Product performance appears after visitors click products embedded in blog posts.</p>
                 </EmptyState>
               )}
-              <Divider />
-              <ProductLeaderboardSection
-                title="Top add to cart products"
-                products={topAddToCartProducts}
-                metricKey="addToCarts"
-                metricLabel="add to carts"
-                emptyHeading="No add to cart events yet"
-                emptyBody="Add to cart performance appears after the Web Pixel receives product_added_to_cart events."
-              />
-              <Divider />
-              <ProductLeaderboardSection
-                title="Top purchased products"
-                products={topPurchasedProducts}
-                metricKey="purchases"
-                metricLabel="purchases"
-                emptyHeading="No purchase events yet"
-                emptyBody="Purchased products appear after checkout_completed events are attributed to blog traffic."
-              />
             </BlockStack>
           </Card>
         </InlineGrid>
@@ -797,53 +773,6 @@ function InsightCard({
         </Box>
       </div>
     </Card>
-  );
-}
-
-function ProductLeaderboardSection({
-  title,
-  products,
-  metricKey,
-  metricLabel,
-  emptyHeading,
-  emptyBody,
-}: {
-  title: string;
-  products: ProductRow[];
-  metricKey: "clicks" | "addToCarts" | "purchases";
-  metricLabel: string;
-  emptyHeading: string;
-  emptyBody: string;
-}) {
-  return (
-    <BlockStack gap="300">
-      <Text as="h3" variant="headingSm" fontWeight="bold">
-        {title}
-      </Text>
-      {products.length ? (
-        <div className="bp-analytics-product-list">
-          {products.map((product) => (
-            <div key={`${title}-${product.id}`} className="bp-analytics-product-row">
-              <div className="bp-analytics-product-main">
-                <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
-                <div className="bp-analytics-product-text">
-                  <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>
-                    {product.title}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {formatNumber(product[metricKey])} {metricLabel} · {formatMoney(product.revenue)} revenue
-                  </Text>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <EmptyState heading={emptyHeading} image={PLACEHOLDER_IMAGE}>
-          <p>{emptyBody}</p>
-        </EmptyState>
-      )}
-    </BlockStack>
   );
 }
 

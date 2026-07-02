@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   useLoaderData,
   useNavigate,
   useFetcher,
+  useSearchParams,
 } from "@remix-run/react";
 import {
   Badge,
@@ -45,101 +46,222 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
+const BLOG_MANAGER_PAGE_SIZE = 20;
+
+type BlogManagerStatus = "all" | "published" | "draft";
+type BlogManagerSort = "date_desc" | "date_asc" | "title_asc" | "title_desc";
+
+function cleanParam(value: string | null) {
+  const trimmed = (value || "").trim();
+  return trimmed || null;
+}
+
+function getStatusParam(value: string | null): BlogManagerStatus {
+  if (value === "published" || value === "draft") return value;
+  return "all";
+}
+
+function getSortParam(value: string | null): BlogManagerSort {
+  if (value === "date_asc" || value === "title_asc" || value === "title_desc") return value;
+  return "date_desc";
+}
+
+function getArticleSort(sort: BlogManagerSort) {
+  if (sort === "title_asc") return { sortKey: "TITLE", reverse: false };
+  if (sort === "title_desc") return { sortKey: "TITLE", reverse: true };
+  if (sort === "date_asc") return { sortKey: "PUBLISHED_AT", reverse: false };
+  return { sortKey: "PUBLISHED_AT", reverse: true };
+}
+
+function getNumericShopifyId(id: string) {
+  return id.split("/").pop() || id;
+}
+
+function buildArticleSearchQuery({
+  search,
+  blogId,
+  status,
+}: {
+  search: string | null;
+  blogId: string | null;
+  status: BlogManagerStatus;
+}) {
+  const parts: string[] = [];
+
+  if (search) parts.push(search);
+  if (blogId) parts.push(`blog_id:${getNumericShopifyId(blogId)}`);
+  if (status === "published") parts.push("published_status:published");
+  if (status === "draft") parts.push("published_status:unpublished");
+
+  return parts.length ? parts.join(" ") : null;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const { limits } = await getActivePlanAndLimits(billing);
+  const url = new URL(request.url);
+  const search = cleanParam(url.searchParams.get("search"));
+  const blogId = cleanParam(url.searchParams.get("blog"));
+  const status = getStatusParam(url.searchParams.get("status"));
+  const sort = getSortParam(url.searchParams.get("sort"));
+  const after = cleanParam(url.searchParams.get("after"));
+  const before = cleanParam(url.searchParams.get("before"));
+  const pageQuery = buildArticleSearchQuery({ search, blogId, status });
+  const { sortKey, reverse } = getArticleSort(sort);
 
   let blogs: any[] = [];
+  let articleEdges: any[] = [];
+  let pageInfo = {
+    hasNextPage: false,
+    hasPreviousPage: false,
+    startCursor: null as string | null,
+    endCursor: null as string | null,
+  };
   let shopifyError: string | null = null;
 
   try {
     const response = await admin.graphql(
       `#graphql
-      query GetBlogs {
-        blogs(first: 50) {
+      query GetBlogManagerArticles(
+        $first: Int
+        $last: Int
+        $after: String
+        $before: String
+        $query: String
+        $sortKey: ArticleSortKeys!
+        $reverse: Boolean!
+      ) {
+        articles(
+          first: $first
+          last: $last
+          after: $after
+          before: $before
+          query: $query
+          sortKey: $sortKey
+          reverse: $reverse
+        ) {
+          edges {
+            cursor
+            node {
+              id
+              title
+              handle
+              tags
+              publishedAt
+              updatedAt
+              image {
+                url
+                altText
+              }
+              blog {
+                id
+                title
+                handle
+              }
+            }
+          }
+          pageInfo {
+            hasNextPage
+            hasPreviousPage
+            startCursor
+            endCursor
+          }
+        }
+        blogs(first: 250) {
           nodes {
             id
             title
             handle
-            articles(first: 100) {
-              nodes {
-                id
-                title
-                handle
-                tags
-                publishedAt
-                image {
-                  url
-                  altText
-                }
-                blog {
-                  id
-                  title
-                }
-              }
-            }
           }
         }
       }`,
+      {
+        variables: {
+          first: before ? null : BLOG_MANAGER_PAGE_SIZE,
+          last: before ? BLOG_MANAGER_PAGE_SIZE : null,
+          after: before ? null : after,
+          before,
+          query: pageQuery,
+          sortKey,
+          reverse,
+        },
+      },
     );
 
     const responseJson = await response.json();
+    if (responseJson.errors?.length) {
+      throw new Error(responseJson.errors.map((error: any) => error.message).join("; "));
+    }
+
+    const articlesConnection = responseJson.data?.articles;
+    articleEdges = articlesConnection?.edges || [];
+    pageInfo = articlesConnection?.pageInfo || pageInfo;
     blogs = responseJson.data?.blogs?.nodes || [];
   } catch (error) {
+    console.error("[blogs] Failed to load paginated articles from Shopify:", error);
     shopifyError = "Failed to load articles from Shopify.";
   }
 
-  const articles = blogs.flatMap((blog: any) =>
-    blog.articles.nodes.map((article: any) => ({
+  const articles = articleEdges.map(({ node: article }: any) => ({
       id: article.id,
       title: article.title,
       handle: article.handle,
       tags: article.tags || [],
       publishedAt: article.publishedAt,
+      updatedAt: article.updatedAt,
       image: article.image?.url || null,
       imageAlt: article.image?.altText || "",
-      blogId: blog.id,
-      blogTitle: blog.title,
-    })),
-  );
+      blogId: article.blog?.id || "",
+      blogTitle: article.blog?.title || "Default",
+    }));
+  const articleIds = articles.map((article) => article.id);
 
-  const embedCounts = await prisma.articleProduct.groupBy({
-    by: ["articleId"],
-    where: { shop, isActive: true },
-    _count: { productId: true },
-  });
+  let embedCounts: any[] = [];
+  let seoData: any[] = [];
+  let clickCounts: any[] = [];
+  let articleProducts: any[] = [];
+  let purchaseCounts: any[] = [];
+
+  if (articleIds.length > 0) {
+    [embedCounts, seoData, clickCounts, articleProducts, purchaseCounts] = await Promise.all([
+      prisma.articleProduct.groupBy({
+        by: ["articleId"],
+        where: { shop, articleId: { in: articleIds }, isActive: true },
+        _count: { productId: true },
+      }),
+      prisma.articleSEO.findMany({
+        where: { shop, articleId: { in: articleIds } },
+        select: { articleId: true, seoScore: true },
+      }),
+      prisma.widgetEvent.groupBy({
+        by: ["articleId"],
+        where: { shop, articleId: { in: articleIds }, eventType: "click" },
+        _count: { id: true },
+      }),
+      prisma.articleProduct.findMany({
+        where: { shop, articleId: { in: articleIds }, isActive: true },
+        select: { articleId: true, productId: true, productPrice: true },
+      }),
+      prisma.widgetEvent.groupBy({
+        by: ["articleId", "productId"],
+        where: { shop, articleId: { in: articleIds }, eventType: { in: ["purchase", "order"] } },
+        _count: { id: true },
+      }),
+    ]);
+  }
 
   const embedCountMap = new Map(
     embedCounts.map((ec) => [ec.articleId, ec._count.productId]),
   );
 
-  const seoData = await prisma.articleSEO.findMany({
-    where: { shop },
-    select: { articleId: true, seoScore: true },
-  });
   const seoMap = new Map(seoData.map((seo) => [seo.articleId, seo.seoScore]));
 
-  const clickCounts = await prisma.widgetEvent.groupBy({
-    by: ["articleId"],
-    where: { shop, eventType: "click" },
-    _count: { id: true },
-  });
   const clickMap = new Map(clickCounts.map((c) => [c.articleId, c._count.id]));
 
-  const articleProducts = await prisma.articleProduct.findMany({
-    where: { shop, isActive: true },
-    select: { articleId: true, productId: true, productPrice: true }
-  });
   const priceMap = new Map<string, number>();
   articleProducts.forEach(ap => {
     priceMap.set(`${ap.articleId}_${ap.productId}`, parseMoney(ap.productPrice || "0"));
-  });
-
-  const purchaseCounts = await prisma.widgetEvent.groupBy({
-    by: ["articleId", "productId"],
-    where: { shop, eventType: { in: ["purchase", "order"] } },
-    _count: { id: true },
   });
 
   const revenueMap = new Map<string, number>();
@@ -168,6 +290,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     articles: finalArticles,
     blogs: blogChoices,
+    filters: {
+      search: search || "",
+      blogId: blogId || "all",
+      status,
+      sort,
+    },
+    pagination: {
+      pageSize: BLOG_MANAGER_PAGE_SIZE,
+      hasNextPage: pageInfo.hasNextPage,
+      hasPreviousPage: pageInfo.hasPreviousPage,
+      startCursor: pageInfo.startCursor,
+      endCursor: pageInfo.endCursor,
+    },
     error: shopifyError,
     shop,
     canBulkReview: limits.canBulkReview,
@@ -373,18 +508,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ error: "Invalid intent" }, { status: 400 });
 };
 
-const TabBadge = ({ label, count, isActive, onClick }: { label: string, count: number, isActive?: boolean, onClick?: () => void }) => (
+const TabBadge = ({ label, count, isActive, onClick }: { label: string, count?: number | string, isActive?: boolean, onClick?: () => void }) => (
   <div onClick={onClick} style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: isActive ? '#EBEBEB' : 'transparent', cursor: 'pointer', display: 'flex', gap: '8px', alignItems: 'center' }}>
     <Text as="span" variant="bodyMd" fontWeight={isActive ? 'semibold' : 'regular'}>{label}</Text>
-    <Text as="span" variant="bodySm" tone="subdued">{count}</Text>
+    {count !== undefined ? <Text as="span" variant="bodySm" tone="subdued">{count}</Text> : null}
   </div>
 );
 
 export default function BlogManager() {
-  const { articles, canBulkReview } = useLoaderData<typeof loader>();
+  const { articles, blogs, filters, pagination, canBulkReview } = useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const fetcher = useFetcher();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   
   // Modals state
   const [isBulkOptimizeOpen, setIsBulkOptimizeOpen] = useState(false);
@@ -405,63 +541,72 @@ export default function BlogManager() {
   const [totalToOptimize, setTotalToOptimize] = useState(0);
   const [batchQueue, setBatchQueue] = useState<string[][]>([]);
 
-  // Filters state
-  const [searchValue, setSearchValue] = useState("");
-  const [blogFilter, setBlogFilter] = useState("Blog");
-  const [tabIndex, setTabIndex] = useState(0);
+  const [searchValue, setSearchValue] = useState(filters.search);
 
-  // Sorting state
-  const [sortValue, setSortValue] = useState("date_desc");
+  const getListUrl = useCallback(
+    (updates: Record<string, string | null>) => {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("after");
+      nextParams.delete("before");
 
-  // Pagination state
-  const [page, setPage] = useState(1);
+      Object.entries(updates).forEach(([key, value]) => {
+        if (!value || value === "all" || (key === "sort" && value === "date_desc")) {
+          nextParams.delete(key);
+        } else {
+          nextParams.set(key, value);
+        }
+      });
 
-  // Data processing
-  const uniqueBlogs = Array.from(new Set(articles.map((a: any) => a.blogTitle || 'Default'))).filter(Boolean);
-  const blogOptions = ['Blog', ...uniqueBlogs.map(b => String(b))];
-  
-  const filteredArticles = articles.filter((article: any) => {
-    if (searchValue && !article.title.toLowerCase().includes(searchValue.toLowerCase())) return false;
-    
-    const isPublished = !!article.publishedAt;
-    
-    const blogTitle = article.blogTitle || 'Default';
-    if (blogFilter !== 'Blog' && blogTitle !== blogFilter) return false;
+      const queryString = nextParams.toString();
+      return `/app/blogs${queryString ? `?${queryString}` : ""}`;
+    },
+    [searchParams],
+  );
 
-    if (tabIndex === 1 && !isPublished) return false;
-    if (tabIndex === 2 && isPublished) return false;
-    if (tabIndex === 3 && (article.seoScore !== null && article.seoScore >= 60)) return false;
-    if (tabIndex === 4 && article.productCount > 0) return false;
-    if (tabIndex === 5 && article.clicks < 100) return false;
-    
-    return true;
-  });
+  const updateFilters = useCallback(
+    (updates: Record<string, string | null>) => {
+      navigate(getListUrl(updates));
+    },
+    [getListUrl, navigate],
+  );
 
-  const sortedArticles = [...filteredArticles].sort((a: any, b: any) => {
-    const timeA = new Date(a.publishedAt || 0).getTime();
-    const timeB = new Date(b.publishedAt || 0).getTime();
-    if (sortValue === 'date_desc') return timeB - timeA;
-    if (sortValue === 'date_asc') return timeA - timeB;
-    if (sortValue === 'title_asc') return a.title.localeCompare(b.title);
-    if (sortValue === 'title_desc') return b.title.localeCompare(a.title);
-    return 0;
-  });
+  const goToCursor = useCallback(
+    (key: "after" | "before", cursor: string | null) => {
+      if (!cursor) return;
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("after");
+      nextParams.delete("before");
+      nextParams.set(key, cursor);
+      const queryString = nextParams.toString();
+      navigate(`/app/blogs${queryString ? `?${queryString}` : ""}`);
+    },
+    [navigate, searchParams],
+  );
 
-  const itemsPerPage = 10;
-  const totalPages = Math.max(1, Math.ceil(sortedArticles.length / itemsPerPage));
-  const paginatedArticles = sortedArticles.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+  useEffect(() => {
+    setSearchValue(filters.search);
+  }, [filters.search]);
 
-  const allCount = articles.length;
-  const publishedCount = articles.filter((a: any) => a.publishedAt).length;
-  const draftCount = articles.filter((a: any) => !a.publishedAt).length;
-  const needsSeoCount = articles.filter((a: any) => a.seoScore === null || a.seoScore < 60).length;
-  const noProductsCount = articles.filter((a: any) => !a.productCount).length;
-  const highTrafficCount = articles.filter((a: any) => a.clicks >= 100).length;
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      if (searchValue !== filters.search) {
+        updateFilters({ search: searchValue });
+      }
+    }, 400);
+
+    return () => window.clearTimeout(handle);
+  }, [filters.search, searchValue, updateFilters]);
+
+  const blogOptions = [
+    { label: 'Blog', value: 'all' },
+    ...blogs.map((blog: any) => ({ label: blog.title, value: blog.id })),
+  ];
+  const currentListPath = `/app/blogs${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
 
   // Table selection state
-  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(paginatedArticles as any);
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(articles as any);
 
-  const selectedArticlesData = paginatedArticles.filter((a: any) => selectedResources.includes(a.id));
+  const selectedArticlesData = articles.filter((a: any) => selectedResources.includes(a.id));
   const hasPublishedSelected = selectedArticlesData.some((a: any) => a.publishedAt);
   const hasDraftSelected = selectedArticlesData.some((a: any) => !a.publishedAt);
 
@@ -469,8 +614,6 @@ export default function BlogManager() {
     let targetArticles = [];
     if (optimizeTarget[0] === 'selected') {
       targetArticles = articles.filter((a: any) => selectedResources.includes(a.id));
-    } else if (optimizeTarget[0] === 'filtered') {
-      targetArticles = filteredArticles;
     } else {
       targetArticles = articles;
     }
@@ -516,10 +659,10 @@ export default function BlogManager() {
         setIsBulkOptimizeOpen(false);
         shopify.toast.show('Bulk optimization completed');
         clearSelection();
-        fetcher.load('/app/blogs');
+        fetcher.load(currentListPath);
       }
     }
-  }, [batchQueue, clearSelection, fetcher, fetcher.data, fetcher.state, isOptimizing, optimizeOptions, shopify]);
+  }, [batchQueue, clearSelection, currentListPath, fetcher, fetcher.data, fetcher.state, isOptimizing, optimizeOptions, shopify]);
 
   return (
     <Page fullWidth>
@@ -545,21 +688,18 @@ export default function BlogManager() {
               
               {/* TABS (Left) */}
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', flexWrap: 'nowrap' }}>
-                <TabBadge label="All" count={allCount} isActive={tabIndex === 0} onClick={() => { setTabIndex(0); setPage(1); }} />
-                <TabBadge label="Published" count={publishedCount} isActive={tabIndex === 1} onClick={() => { setTabIndex(1); setPage(1); }} />
-                <TabBadge label="Draft" count={draftCount} isActive={tabIndex === 2} onClick={() => { setTabIndex(2); setPage(1); }} />
-                <TabBadge label="Needs SEO" count={needsSeoCount} isActive={tabIndex === 3} onClick={() => { setTabIndex(3); setPage(1); }} />
-                <TabBadge label="No products linked" count={noProductsCount} isActive={tabIndex === 4} onClick={() => { setTabIndex(4); setPage(1); }} />
-                <TabBadge label="High traffic" count={highTrafficCount} isActive={tabIndex === 5} onClick={() => { setTabIndex(5); setPage(1); }} />
+                <TabBadge label="All" isActive={filters.status === 'all'} onClick={() => updateFilters({ status: 'all' })} />
+                <TabBadge label="Published" isActive={filters.status === 'published'} onClick={() => updateFilters({ status: 'published' })} />
+                <TabBadge label="Draft" isActive={filters.status === 'draft'} onClick={() => updateFilters({ status: 'draft' })} />
               </div>
 
               {/* FILTERS (Right) */}
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ width: '250px' }}>
-                  <TextField labelHidden label="Search" prefix={<Icon source={SearchIcon} tone="subdued" />} placeholder="Search posts" value={searchValue} onChange={(v) => { setSearchValue(v); setPage(1); }} autoComplete="off" />
+                  <TextField labelHidden label="Search" prefix={<Icon source={SearchIcon} tone="subdued" />} placeholder="Search posts" value={searchValue} onChange={setSearchValue} autoComplete="off" />
                 </div>
-                <Select labelHidden label="Blog" options={blogOptions} value={blogFilter} onChange={(v) => { setBlogFilter(v); setPage(1); }} />
-                <Select labelHidden label="Sort" options={[{label: 'Newest', value: 'date_desc'}, {label: 'Oldest', value: 'date_asc'}, {label: 'A-Z', value: 'title_asc'}, {label: 'Z-A', value: 'title_desc'}]} value={sortValue} onChange={(v) => { setSortValue(v); setPage(1); }} />
+                <Select labelHidden label="Blog" options={blogOptions} value={filters.blogId} onChange={(value) => updateFilters({ blog: value })} />
+                <Select labelHidden label="Sort" options={[{label: 'Newest', value: 'date_desc'}, {label: 'Oldest', value: 'date_asc'}, {label: 'A-Z', value: 'title_asc'}, {label: 'Z-A', value: 'title_desc'}]} value={filters.sort} onChange={(value) => updateFilters({ sort: value })} />
               </div>
 
             </div>
@@ -567,15 +707,15 @@ export default function BlogManager() {
             {/* TABLE */}
             <IndexTable
               resourceName={{ singular: 'post', plural: 'posts' }}
-              itemCount={paginatedArticles.length}
+              itemCount={articles.length}
               selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
               onSelectionChange={handleSelectionChange}
-              pagination={totalPages > 1 ? {
-                hasNext: page < totalPages,
-                onNext: () => setPage(page + 1),
-                hasPrevious: page > 1,
-                onPrevious: () => setPage(page - 1),
-                label: `Showing ${sortedArticles.length === 0 ? 0 : ((page - 1) * itemsPerPage) + 1} to ${Math.min(page * itemsPerPage, sortedArticles.length)} of ${sortedArticles.length} results`
+              pagination={pagination.hasNextPage || pagination.hasPreviousPage ? {
+                hasNext: pagination.hasNextPage,
+                onNext: () => goToCursor("after", pagination.endCursor),
+                hasPrevious: pagination.hasPreviousPage,
+                onPrevious: () => goToCursor("before", pagination.startCursor),
+                label: `${articles.length} posts loaded - ${pagination.pageSize} per page`
               } : undefined}
               promotedBulkActions={[
                 ...(canBulkReview ? [{
@@ -623,7 +763,7 @@ export default function BlogManager() {
               ]}
               selectable={true}
             >
-              {paginatedArticles.map((post: any, index: number) => {
+              {articles.map((post: any, index: number) => {
                 const seoScore = post.seoScore;
                 return (
                 <IndexTable.Row
@@ -716,9 +856,8 @@ export default function BlogManager() {
                     titleHidden
                     title="Posts to optimize"
                     choices={[
-                      {label: `All ${articles.length} posts`, value: 'all'},
+                      {label: `Current page (${articles.length})`, value: 'all'},
                       {label: `Selected posts (${selectedResources.length})`, value: 'selected'},
-                      {label: `Filtered posts (${filteredArticles.length})`, value: 'filtered'}
                     ]}
                     selected={optimizeTarget}
                     onChange={setOptimizeTarget}
