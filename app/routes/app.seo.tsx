@@ -1445,7 +1445,7 @@ function auditArticle(
   }
 
   return {
-    score: calculateBlogDetailSeoScore(article, productCount, storedSeo, shopDomain, shopDomains),
+    score: calculateBlogDetailSeoScore(article, productCount, storedSeo, config, shopDomain, shopDomains),
     issues,
   };
 }
@@ -1454,6 +1454,7 @@ function calculateBlogDetailSeoScore(
   article: ArticleInput,
   productCount: number,
   storedSeo?: StoredSeoInput | null,
+  config: SeoAuditConfig = {},
   shopDomain?: string,
   shopDomains: string[] = [],
 ) {
