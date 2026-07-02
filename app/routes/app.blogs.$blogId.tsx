@@ -2756,15 +2756,6 @@ function RichArticleEditor({
           <button
             type="button"
             className="bp-editor-icon-button"
-            title="Remove link"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={removeLink}
-          >
-            <Icon source={DeleteIcon} tone="base" />
-          </button>
-          <button
-            type="button"
-            className="bp-editor-icon-button"
             title="Insert image"
             onMouseDown={(event) => event.preventDefault()}
             onClick={insertImage}
@@ -2795,7 +2786,7 @@ function RichArticleEditor({
               <button
                 type="button"
                 className="bp-editor-icon-button bp-editor-products-button"
-                title="Insert products marker"
+                title="Insert products shortcode"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={insertProductBlock}
               >
@@ -3057,6 +3048,34 @@ function ProductsPanel({
   onOpenStyleModal: (recordId: string, style: string) => void;
 }) {
   const selectedBlock = blocks.find((block) => block.id === selectedBlockId) || blocks[0];
+  const selectedShortcode = selectedBlock?.marker || "[[SBS_PRODUCTS]]";
+  const [shortcodeCopied, setShortcodeCopied] = useState(false);
+
+  useEffect(() => {
+    setShortcodeCopied(false);
+  }, [selectedShortcode]);
+
+  const copyShortcode = async () => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(selectedShortcode);
+      } else if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = selectedShortcode;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+
+      setShortcodeCopied(true);
+    } catch {
+      setShortcodeCopied(false);
+    }
+  };
 
   return (
     <BlockStack gap="400">
@@ -3066,7 +3085,7 @@ function ProductsPanel({
             Embedded products
           </Text>
           <Text as="span" variant="bodySm" tone="subdued">
-            Products shown by the selected marker in this article.
+            Products shown by the selected shortcode in this article.
           </Text>
         </BlockStack>
         <Button variant="primary" icon={ProductIcon} onClick={onAddProducts}>
@@ -3093,9 +3112,14 @@ function ProductsPanel({
           </BlockStack>
           <BlockStack gap="100">
             <Text as="span" variant="bodySm" fontWeight="semibold">
-              Marker
+              Short code
             </Text>
-            <code className="bp-product-block-marker">{selectedBlock?.marker || "[[SBS_PRODUCTS]]"}</code>
+            <div className="bp-product-block-shortcode-row">
+              <code className="bp-product-block-shortcode">{selectedShortcode}</code>
+              <Button size="micro" onClick={copyShortcode}>
+                {shortcodeCopied ? "Copied" : "Copy"}
+              </Button>
+            </div>
           </BlockStack>
         </InlineGrid>
       </Card>
@@ -3164,7 +3188,7 @@ function ProductsPanel({
               action={{ content: "Add products", onAction: onAddProducts }}
               image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
             >
-              <p>Link products to this marker to make this part of the article shoppable.</p>
+              <p>Link products to this shortcode to make this part of the article shoppable.</p>
             </EmptyState>
           </Box>
         )}
@@ -5144,7 +5168,14 @@ const DETAIL_STYLES = `
   border: 0;
 }
 
-.bp-product-block-marker {
+.bp-product-block-shortcode-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.bp-product-block-shortcode {
   display: inline-flex;
   align-items: center;
   min-height: 32px;
