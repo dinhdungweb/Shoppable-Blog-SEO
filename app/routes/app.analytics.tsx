@@ -15,7 +15,6 @@ import {
   InlineStack,
   Page,
   Text,
-  Thumbnail,
 } from "@shopify/polaris";
 import {
   ArrowDownIcon,
@@ -549,7 +548,7 @@ export default function Analytics() {
                     <IndexTable.Row id={post.id} key={post.id} position={index}>
                       <IndexTable.Cell>
                         <div className="bp-analytics-post-cell">
-                          <Thumbnail source={post.image || ImageIcon} alt={post.imageAlt || post.title} size="small" />
+                          <AnalyticsThumbnail source={post.image} alt={post.imageAlt || post.title} />
                           <div className="bp-analytics-post-text">
                             <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
                               {post.title}
@@ -611,7 +610,7 @@ export default function Analytics() {
                   {topProducts.map((product) => (
                     <div key={product.id} className="bp-analytics-product-row">
                       <div className="bp-analytics-product-main">
-                        <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
+                        <AnalyticsThumbnail source={product.image} alt={product.title} />
                         <div className="bp-analytics-product-text">
                           <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>
                             {product.title}
@@ -773,6 +772,18 @@ function InsightCard({
         </Box>
       </div>
     </Card>
+  );
+}
+
+function AnalyticsThumbnail({ source, alt }: { source?: string | null; alt: string }) {
+  return (
+    <span className="bp-analytics-thumbnail">
+      {source ? (
+        <img src={source} alt={alt} loading="lazy" decoding="async" />
+      ) : (
+        <Icon source={ImageIcon} tone="subdued" />
+      )}
+    </span>
   );
 }
 
@@ -1169,6 +1180,24 @@ export function links() {
             gap: 12px;
             min-width: 260px;
             max-width: 320px;
+          }
+          .bp-analytics-thumbnail {
+            width: 40px;
+            height: 40px;
+            flex: 0 0 40px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            border: 1px solid var(--p-color-border);
+            border-radius: 6px;
+            background: var(--p-color-bg-surface-secondary);
+          }
+          .bp-analytics-thumbnail img {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
           }
           .bp-analytics-post-text {
             min-width: 0;
