@@ -1,6 +1,6 @@
 {% comment %}
-  App embed for rendering shoppable product widgets inside article content.
-  Add [[SBS_PRODUCTS]] or block-specific markers such as [[SBS_PRODUCTS:block_abc]] in a blog article body.
+  App embed for rendering shoppable product widgets and content navigation markers.
+  Add [[SBS_PRODUCTS]], [[SBS_BREADCRUMBS]], [[SBS_TOC]], or block-specific markers in supported page content.
 {% endcomment %}
 <script src="{{ 'sbs-widget.js' | asset_url }}" defer="defer"></script>
 {{ 'sbs-content-nav.css' | asset_url | stylesheet_tag }}
@@ -9,8 +9,14 @@
 {% liquid
   assign sbs_app_url = '/apps/shoppable-blog-seo'
   assign sbs_article_id = ''
+  assign sbs_content_type = 'page'
+  assign sbs_current_title = page_title
+  assign sbs_current_url = canonical_url
+  assign sbs_parent_title = ''
+  assign sbs_parent_url = ''
   assign sbs_article_url = canonical_url
   if article
+    assign sbs_content_type = 'article'
     assign article_id_string = article.id | append: ''
     if article_id_string contains 'gid://'
       assign sbs_article_id = article_id_string
@@ -19,6 +25,40 @@
     endif
     if article.url
       assign sbs_article_url = article.url | prepend: shop.url
+    endif
+    assign sbs_current_title = article.title
+    assign sbs_current_url = sbs_article_url
+    if blog
+      assign sbs_parent_title = blog.title
+      assign sbs_parent_url = blog.url
+    endif
+  elsif product
+    assign sbs_content_type = 'product'
+    assign sbs_current_title = product.title
+    if product.url
+      assign sbs_current_url = product.url | prepend: shop.url
+    endif
+    if collection
+      assign sbs_parent_title = collection.title
+      assign sbs_parent_url = collection.url
+    endif
+  elsif collection
+    assign sbs_content_type = 'collection'
+    assign sbs_current_title = collection.title
+    if collection.url
+      assign sbs_current_url = collection.url | prepend: shop.url
+    endif
+  elsif page
+    assign sbs_content_type = 'page'
+    assign sbs_current_title = page.title
+    if page.url
+      assign sbs_current_url = page.url | prepend: shop.url
+    endif
+  elsif blog
+    assign sbs_content_type = 'blog'
+    assign sbs_current_title = blog.title
+    if blog.url
+      assign sbs_current_url = blog.url | prepend: shop.url
     endif
   endif
 %}
@@ -31,19 +71,18 @@
   hidden
 ></div>
 
-{% if article %}
-  <div
-    class="bp-content-nav-config"
-    data-shop="{{ shop.permanent_domain }}"
-    data-app-url="{{ sbs_app_url }}"
-    data-home-url="{{ routes.root_url }}"
-    data-blog-title="{{ blog.title | escape }}"
-    data-blog-url="{{ blog.url }}"
-    data-article-title="{{ article.title | escape }}"
-    data-article-url="{{ sbs_article_url }}"
-    hidden
-  ></div>
-{% endif %}
+<div
+  class="bp-content-nav-config"
+  data-shop="{{ shop.permanent_domain }}"
+  data-app-url="{{ sbs_app_url }}"
+  data-content-type="{{ sbs_content_type }}"
+  data-home-url="{{ routes.root_url }}"
+  data-blog-title="{{ sbs_parent_title | escape }}"
+  data-blog-url="{{ sbs_parent_url }}"
+  data-article-title="{{ sbs_current_title | escape }}"
+  data-article-url="{{ sbs_current_url }}"
+  hidden
+></div>
 
 {% schema %}
 {
@@ -53,7 +92,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Enable this app embed, then place product markers, [[SBS_BREADCRUMBS]], or [[SBS_TOC]] inside a blog article body."
+      "content": "Enable this app embed, then place [[SBS_BREADCRUMBS]] in supported page content. Product markers and [[SBS_TOC]] are intended for blog article content."
     },
     {
       "type": "paragraph",

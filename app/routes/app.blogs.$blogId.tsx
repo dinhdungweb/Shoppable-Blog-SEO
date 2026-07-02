@@ -3106,7 +3106,6 @@ function ProductsPanel({
             resourceName={{ singular: "product", plural: "products" }}
             itemCount={products.length}
             headings={[
-              { title: "" },
               { title: "Product" },
               { title: "Price" },
               { title: "Clicks" },
@@ -3119,12 +3118,12 @@ function ProductsPanel({
             {products.map((product, index) => (
               <IndexTable.Row id={product.id} key={product.id} position={index}>
                 <IndexTable.Cell>
-                  <Thumbnail source={product.productImage || ImageIcon} alt={product.productTitle} size="small" />
-                </IndexTable.Cell>
-                <IndexTable.Cell>
-                  <Text as="span" variant="bodyMd" fontWeight="semibold">
-                    {product.productTitle}
-                  </Text>
+                  <InlineStack gap="300" blockAlign="center" wrap={false}>
+                    <Thumbnail source={product.productImage || ImageIcon} alt={product.productTitle} size="small" />
+                    <Text as="span" variant="bodyMd" fontWeight="semibold">
+                      {product.productTitle}
+                    </Text>
+                  </InlineStack>
                 </IndexTable.Cell>
                 <IndexTable.Cell>{formatProductPrice(product.productPrice)}</IndexTable.Cell>
                 <IndexTable.Cell>{product.clicks}</IndexTable.Cell>

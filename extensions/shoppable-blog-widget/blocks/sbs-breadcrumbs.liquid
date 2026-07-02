@@ -1,20 +1,56 @@
 {% comment %}
-  Advanced visual breadcrumbs for blog articles.
+  Advanced visual breadcrumbs for articles and storefront pages.
   Settings can use global app config or block-level overrides.
 {% endcomment %}
 <script src="{{ 'sbs-content-nav.js' | asset_url }}" defer="defer"></script>
 
 {% liquid
   assign sbs_app_url = '/apps/shoppable-blog-seo'
-  assign sbs_article_url = canonical_url
-  if article and article.url
-    assign sbs_article_url = article.url | prepend: shop.url
+  assign sbs_current_title = page_title
+  assign sbs_current_url = canonical_url
+  assign sbs_parent_title = ''
+  assign sbs_parent_url = ''
+
+  if article
+    assign sbs_current_title = article.title
+    if article.url
+      assign sbs_current_url = article.url | prepend: shop.url
+    endif
+    if blog
+      assign sbs_parent_title = blog.title
+      assign sbs_parent_url = blog.url
+    endif
+  elsif product
+    assign sbs_current_title = product.title
+    if product.url
+      assign sbs_current_url = product.url | prepend: shop.url
+    endif
+    if collection
+      assign sbs_parent_title = collection.title
+      assign sbs_parent_url = collection.url
+    endif
+  elsif collection
+    assign sbs_current_title = collection.title
+    if collection.url
+      assign sbs_current_url = collection.url | prepend: shop.url
+    endif
+  elsif page
+    assign sbs_current_title = page.title
+    if page.url
+      assign sbs_current_url = page.url | prepend: shop.url
+    endif
+  elsif blog
+    assign sbs_current_title = blog.title
+    if blog.url
+      assign sbs_current_url = blog.url | prepend: shop.url
+    endif
   endif
 %}
 
-{% if article %}
+{% if sbs_current_title != blank %}
   <nav
     class="bp-content-nav bp-breadcrumbs"
+    hidden
     data-bp-content-nav="breadcrumbs"
     data-shop="{{ shop.permanent_domain }}"
     data-app-url="{{ sbs_app_url }}"
@@ -26,69 +62,11 @@
     data-show-blog="{{ block.settings.show_blog }}"
     data-current-clickable="{{ block.settings.current_clickable }}"
     data-separator="{{ block.settings.separator | escape }}"
-    data-blog-title="{{ blog.title | escape }}"
-    data-blog-url="{{ blog.url }}"
-    data-article-title="{{ article.title | escape }}"
-    data-article-url="{{ sbs_article_url }}"
-  >
-    <ol class="bp-breadcrumbs__list">
-      {% if block.settings.show_home %}
-        <li class="bp-breadcrumbs__item">
-          <a class="bp-breadcrumbs__link" href="{{ routes.root_url }}">{{ block.settings.home_label }}</a>
-        </li>
-      {% endif %}
-      {% if block.settings.show_blog and blog %}
-        <li class="bp-breadcrumbs__item">
-          <span class="bp-breadcrumbs__separator" aria-hidden="true">{{ block.settings.separator }}</span>
-          <a class="bp-breadcrumbs__link" href="{{ blog.url }}">{{ blog.title }}</a>
-        </li>
-      {% endif %}
-      <li class="bp-breadcrumbs__item">
-        <span class="bp-breadcrumbs__separator" aria-hidden="true">{{ block.settings.separator }}</span>
-        <span class="bp-breadcrumbs__current" aria-current="page">{{ article.title }}</span>
-      </li>
-    </ol>
-  </nav>
-
-  <script type="application/ld+json" id="bp-breadcrumbs-jsonld">
-  {
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    "itemListElement": [
-      {% assign bp_position = 0 %}
-      {% assign bp_has_previous = false %}
-      {% if block.settings.show_home %}
-        {% assign bp_position = bp_position | plus: 1 %}
-        {
-          "@type": "ListItem",
-          "position": {{ bp_position }},
-          "name": {{ block.settings.home_label | json }},
-          "item": {{ shop.url | json }}
-        }
-        {% assign bp_has_previous = true %}
-      {% endif %}
-      {% if block.settings.show_blog and blog %}
-        {% assign bp_position = bp_position | plus: 1 %}
-        {% if bp_has_previous %},{% endif %}
-        {
-          "@type": "ListItem",
-          "position": {{ bp_position }},
-          "name": {{ blog.title | json }},
-          "item": {{ blog.url | prepend: shop.url | json }}
-        }
-        {% assign bp_has_previous = true %}
-      {% endif %}
-      {% assign bp_position = bp_position | plus: 1 %}
-      {% if bp_has_previous %},{% endif %}
-      {
-        "@type": "ListItem",
-        "position": {{ bp_position }},
-        "name": {{ article.title | json }},
-        "item": {{ sbs_article_url | json }}
-      }
-    ]
-  }
-  </script>
+    data-blog-title="{{ sbs_parent_title | escape }}"
+    data-blog-url="{{ sbs_parent_url }}"
+    data-article-title="{{ sbs_current_title | escape }}"
+    data-article-url="{{ sbs_current_url }}"
+  ></nav>
 {% endif %}
 
 {% schema %}

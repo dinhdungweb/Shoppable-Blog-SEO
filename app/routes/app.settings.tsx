@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
   Page,
+  Banner,
   Card,
   Text,
   BlockStack,
@@ -245,17 +246,18 @@ export default function Settings() {
   };
 
   const [selectedTab, setSelectedTab] = useState(0);
-  const settingsTabs = [
-    { id: 'general', content: 'General', panelID: 'general-panel' },
-    { id: 'display', content: 'Shoppable display', panelID: 'display-panel' },
-    ...(canContentNavigation
-      ? [{ id: 'content-navigation', content: 'Content navigation', panelID: 'content-navigation-panel' }]
-      : []),
-    { id: 'seo', content: 'SEO rules', panelID: 'seo-panel' },
-    { id: 'tracking', content: 'Tracking', panelID: 'tracking-panel' },
-    { id: 'ai', content: 'AI writing', panelID: 'ai-panel' },
-    { id: 'danger', content: 'Danger zone', panelID: 'danger-panel' },
-  ];
+  const settingsTabs = useMemo(
+    () => [
+      { id: 'general', content: 'General', panelID: 'general-panel' },
+      { id: 'display', content: 'Shoppable display', panelID: 'display-panel' },
+      { id: 'content-navigation', content: 'Content navigation', panelID: 'content-navigation-panel' },
+      { id: 'seo', content: 'SEO rules', panelID: 'seo-panel' },
+      { id: 'tracking', content: 'Tracking', panelID: 'tracking-panel' },
+      { id: 'ai', content: 'AI writing', panelID: 'ai-panel' },
+      { id: 'danger', content: 'Danger zone', panelID: 'danger-panel' },
+    ],
+    [],
+  );
   const selectedTabId = settingsTabs[selectedTab]?.id || 'general';
   useEffect(() => {
     if (!settingsTabs[selectedTab]) {
@@ -265,8 +267,17 @@ export default function Settings() {
   const isCarouselMode = (formState.widgetStyle || 'carousel') === 'carousel';
   const primaryColor = normalizeWidgetHexColor(formState.primaryColor);
   const contentNavPrimaryColor = normalizeContentNavHexColor(formState.contentNavPrimaryColor);
-  const breadcrumbsSettingsDisabled = !formState.breadcrumbsEnabled;
-  const tocSettingsDisabled = !formState.tocEnabled;
+  const contentNavigationLocked = !canContentNavigation;
+  const breadcrumbsSettingsDisabled = contentNavigationLocked || !formState.breadcrumbsEnabled;
+  const tocSettingsDisabled = contentNavigationLocked || !formState.tocEnabled;
+  const contentNavigationPreviewConfig = contentNavigationLocked
+    ? {
+        ...formState,
+        breadcrumbsEnabled: false,
+        tocEnabled: false,
+        tocAutoInsertEnabled: false,
+      }
+    : formState;
   const tocStickyOffsetVisible = ['left-rail', 'right-rail'].includes(String(formState.tocLayout || ''));
 
   return (
@@ -580,6 +591,14 @@ export default function Settings() {
           {selectedTabId === 'content-navigation' && (
             <InlineGrid columns={{ xs: 1, lg: 'minmax(380px, 1fr) minmax(420px, 1fr)' }} gap="400">
               <BlockStack gap="400">
+                {contentNavigationLocked && (
+                  <Banner tone="info" title="Content navigation is locked on the Free plan">
+                    <Text as="p" variant="bodyMd">
+                      Breadcrumbs and table of contents settings are available on Pro and Growth plans.
+                    </Text>
+                  </Banner>
+                )}
+
                 <Card padding="400">
                   <BlockStack gap="400">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -590,6 +609,7 @@ export default function Settings() {
                       checked={formState.breadcrumbsEnabled}
                       label="Enable visual breadcrumbs"
                       description="Rendered by block or shortcode on blog article pages."
+                      disabled={contentNavigationLocked}
                       onChange={(value) => handleChange('breadcrumbsEnabled', value)}
                     />
                     <InlineGrid columns={2} gap="300">
@@ -665,6 +685,7 @@ export default function Settings() {
                       checked={formState.tocEnabled}
                       label="Enable table of contents"
                       description="Generated from H2/H3/H4 headings in the article body."
+                      disabled={contentNavigationLocked}
                       onChange={(value) => handleChange('tocEnabled', value)}
                     />
                     <BlockStack gap="500">
@@ -787,8 +808,8 @@ export default function Settings() {
               <Card padding="400">
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd" fontWeight="bold">Preview</Text>
-                  <BreadcrumbPreview config={formState} />
-                  <TocPreview config={formState} />
+                  <BreadcrumbPreview config={contentNavigationPreviewConfig} />
+                  <TocPreview config={contentNavigationPreviewConfig} />
                 </BlockStack>
               </Card>
             </InlineGrid>

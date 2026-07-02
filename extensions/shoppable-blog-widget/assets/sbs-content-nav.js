@@ -34,6 +34,13 @@
     contentNavPrimaryColor: "#6366f1",
     contentNavCustomCss: "",
   };
+  const DISABLED_CONFIG = {
+    ...DEFAULT_CONFIG,
+    breadcrumbsEnabled: false,
+    tocEnabled: false,
+    tocAutoInsertEnabled: false,
+    contentNavCustomCss: "",
+  };
 
   function init() {
     loadConfig()
@@ -44,9 +51,9 @@
         renderContentNavigation(config);
       })
       .catch(() => {
-        replaceMarkers(DEFAULT_CONFIG);
-        insertAutoToc(DEFAULT_CONFIG);
-        renderContentNavigation(DEFAULT_CONFIG);
+        replaceMarkers(DISABLED_CONFIG);
+        insertAutoToc(DISABLED_CONFIG);
+        renderContentNavigation(DISABLED_CONFIG);
       });
   }
 
@@ -56,13 +63,13 @@
 
     const shop = source.dataset.shop || "";
     const appUrl = normalizeAppUrl(source.dataset.appUrl || "/apps/shoppable-blog-seo");
-    if (!shop) return DEFAULT_CONFIG;
+    if (!shop) return DISABLED_CONFIG;
 
     const response = await fetch(contentNavUrl(appUrl, shop), {
       credentials: "same-origin",
       headers: { Accept: "application/json" },
     });
-    if (!response.ok) return DEFAULT_CONFIG;
+    if (!response.ok) return DISABLED_CONFIG;
     if (!(response.headers.get("content-type") || "").includes("application/json")) {
       throw new Error("App proxy returned a non-JSON response");
     }
@@ -153,7 +160,7 @@
     }
 
     const context = document.querySelector(CONFIG_SELECTOR);
-    if (!context || document.querySelector('[data-bp-content-nav="toc"]')) return;
+    if (!context || context.dataset.contentType !== "article" || document.querySelector('[data-bp-content-nav="toc"]')) return;
 
     const root = getArticleRoot();
     const anchor = findAutoTocAnchor(root, config.tocAutoInsertPosition);
@@ -165,7 +172,11 @@
   }
 
   function renderBreadcrumbs(element, config) {
-    if (!config.appStatus || !readBool(element.dataset.enabled, config.breadcrumbsEnabled)) {
+    const appEnabled = readBool(config.appStatus, true);
+    const globalEnabled = readBool(config.breadcrumbsEnabled, true);
+    const blockEnabled = readBool(element.dataset.enabled, true);
+
+    if (!appEnabled || !globalEnabled || !blockEnabled) {
       element.hidden = true;
       return;
     }
@@ -222,7 +233,11 @@
   }
 
   function renderToc(element, config) {
-    if (!config.appStatus || !readBool(element.dataset.enabled, config.tocEnabled)) {
+    const appEnabled = readBool(config.appStatus, true);
+    const globalEnabled = readBool(config.tocEnabled, true);
+    const blockEnabled = readBool(element.dataset.enabled, true);
+
+    if (!appEnabled || !globalEnabled || !blockEnabled) {
       element.hidden = true;
       return;
     }

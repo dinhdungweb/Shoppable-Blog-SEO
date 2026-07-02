@@ -120,3 +120,41 @@ export async function getActivePlanAndLimits(
   const limits = getLimitsForPlan(planName);
   return { planKey, planName, limits };
 }
+
+/**
+ * Resolve active billing for storefront/app-proxy requests where authenticate.admin()
+ * is not available. Used only for entitlement checks on public widget APIs.
+ */
+export async function getUnauthenticatedActivePlanName(shop: string): Promise<string> {
+  try {
+    const { admin } = await unauthenticated.admin(shop);
+    const response = await admin.graphql(
+      `#graphql
+      query ActiveAppSubscriptions {
+        currentAppInstallation {
+          activeSubscriptions {
+            name
+            status
+            test
+          }
+        }
+      }`,
+    );
+    const payload = await response.json();
+    const subscriptions = payload.data?.currentAppInstallation?.activeSubscriptions || [];
+    const shouldUseTestSubscriptions = isBillingTestMode();
+    const activeSubscription = subscriptions.find((subscription: any) => {
+      const name = String(subscription?.name || "");
+      return (
+        getPlanKey(name) !== "free" &&
+        String(subscription?.status || "").toUpperCase() === "ACTIVE" &&
+        Boolean(subscription?.test) === shouldUseTestSubscriptions
+      );
+    });
+
+    return activeSubscription?.name || "free";
+  } catch (err) {
+    console.error("[billing] unauthenticated active plan check failed:", err);
+    return "free";
+  }
+}

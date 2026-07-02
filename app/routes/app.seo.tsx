@@ -26,13 +26,9 @@ import {
 import {
   AlertTriangleIcon,
   ChartVerticalFilledIcon,
-  CheckIcon,
-  CodeIcon,
   ImageIcon,
   MagicIcon,
   NoteIcon,
-  ProductIcon,
-  SearchIcon,
   ShieldCheckMarkIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
@@ -588,33 +584,6 @@ export default function SEOOptimizer() {
             <BlockStack gap="400">
               <Card padding="400">
                 <BlockStack gap="400">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd" fontWeight="bold">
-                      SEO Assistant
-                    </Text>
-                    <Badge tone="attention">Coming soon</Badge>
-                  </InlineStack>
-                  <Text as="p" variant="bodyMd" tone="subdued">
-                    AI guidance is not connected yet. The recommendations below are rule-based from the current scan and linked product data.
-                  </Text>
-                  <BlockStack gap="300">
-                    {issueGroups.slice(0, 4).map((issue) => (
-                      <AssistantItem key={issue.id} issue={issue} onAction={() => handleIssueAction(issue)} />
-                    ))}
-                    {!issueGroups.length && (
-                      <InlineStack gap="200" blockAlign="center">
-                        <Icon source={CheckIcon} tone="success" />
-                        <Text as="p" variant="bodyMd">
-                          No SEO issues found right now.
-                        </Text>
-                      </InlineStack>
-                    )}
-                  </BlockStack>
-                </BlockStack>
-              </Card>
-
-              <Card padding="400">
-                <BlockStack gap="400">
                   <Text as="h2" variant="headingMd" fontWeight="bold">
                     Issue breakdown
                   </Text>
@@ -779,31 +748,6 @@ function MetricCard({
         <ProgressBar progress={Math.max(0, Math.min(100, progress))} tone={tone === "critical" ? "critical" : tone === "warning" ? "primary" : "success"} size="small" />
       </BlockStack>
     </Card>
-  );
-}
-
-function AssistantItem({ issue, onAction }: { issue: IssueGroup; onAction: () => void }) {
-  const icon = issue.category === "product_linking" ? ProductIcon : issue.category === "image" ? ImageIcon : issue.category === "schema" ? CodeIcon : issue.category === "content" ? NoteIcon : SearchIcon;
-
-  return (
-    <InlineStack gap="300" blockAlign="center" wrap={false}>
-      <Box background={`bg-surface-${getImpactSurface(issue.impact)}` as any} padding="150" borderRadius="100">
-        <Icon source={icon} tone={getImpactTone(issue.impact)} />
-      </Box>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <BlockStack gap="050">
-          <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>
-            {issue.issue}
-          </Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {issue.fix}
-          </Text>
-        </BlockStack>
-      </div>
-      <Button size="micro" onClick={onAction}>
-        {issue.actionLabel}
-      </Button>
-    </InlineStack>
   );
 }
 
@@ -1164,12 +1108,6 @@ function getImpactTone(impact: Impact) {
 function getEffortTone(effort: Effort) {
   if (effort === "High") return "critical";
   if (effort === "Medium") return "warning";
-  return "success";
-}
-
-function getImpactSurface(impact: Impact) {
-  if (impact === "High") return "critical";
-  if (impact === "Medium") return "warning";
   return "success";
 }
 

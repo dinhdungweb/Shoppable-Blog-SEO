@@ -2,6 +2,8 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
 import { CONTENT_NAV_DEFAULTS, normalizeContentNavConfig } from "../content-navigation";
+import { getLimitsForPlan } from "../pricing-plans";
+import { getUnauthenticatedActivePlanName } from "../shopify.server";
 
 const CONTENT_NAV_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -43,9 +45,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
+  const normalizedConfig = normalizeContentNavConfig(config || CONTENT_NAV_DEFAULTS);
+  const activePlanName = await getUnauthenticatedActivePlanName(shop);
+  const limits = getLimitsForPlan(activePlanName);
+
+  if (!limits.canContentNavigation) {
+    normalizedConfig.breadcrumbsEnabled = false;
+    normalizedConfig.tocEnabled = false;
+    normalizedConfig.tocAutoInsertEnabled = false;
+    normalizedConfig.contentNavCustomCss = "";
+  } else if (!limits.canCustomCss) {
+    normalizedConfig.contentNavCustomCss = "";
+  }
+
   return json(
     {
-      config: normalizeContentNavConfig(config || CONTENT_NAV_DEFAULTS),
+      config: normalizedConfig,
     },
     { headers: CONTENT_NAV_HEADERS },
   );
