@@ -42,6 +42,8 @@ import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const url = new URL(request.url);
+  const requestedTab = url.searchParams.get("tab");
   const { limits, planKey } = await getActivePlanAndLimits(billing);
 
   if (!limits.canContentNavigation) {
@@ -61,6 +63,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     config: normalizeContentNavConfig(config),
     canCustomCss: limits.canCustomCss,
+    initialTab: requestedTab === "toc" ? 1 : requestedTab === "shortcodes" ? 2 : requestedTab === "advanced-css" ? 3 : 0,
     planKey,
   });
 };
@@ -182,7 +185,7 @@ const Toggle = ({
 );
 
 export default function ContentNavigationSettings() {
-  const { config, canCustomCss, planKey } = useLoaderData<typeof loader>();
+  const { config, canCustomCss, initialTab, planKey } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -223,7 +226,7 @@ export default function ContentNavigationSettings() {
   const breadcrumbsSettingsDisabled = !formState.breadcrumbsEnabled;
   const tocSettingsDisabled = !formState.tocEnabled;
   const tocStickyOffsetVisible = ["left-rail", "right-rail"].includes(String(formState.tocLayout || ""));
-  const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedTab, setSelectedTab] = useState(initialTab);
   const settingsTabs = [
     {
       id: "breadcrumbs",

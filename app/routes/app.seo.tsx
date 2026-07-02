@@ -104,7 +104,6 @@ type IssueGroup = {
 };
 
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
-const ARTICLE_SCAN_CLOCK_SKEW_MS = 60_000;
 const DONUT_COLORS = {
   High: "#D82C0D",
   Medium: "#FFC453",
@@ -223,7 +222,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return {
         ...article,
         productCount,
-        score: stored?.seoScore ?? audit.score,
+        score: audit.score,
         issues: audit.issues,
         lastAnalyzedAt: stored?.lastAnalyzedAt ? stored.lastAnalyzedAt.toISOString() : null,
       };
@@ -296,10 +295,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const audits = articles.map((article) => {
     const stored = storedSeoMap.get(article.id);
     const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, stored, shop);
-    const storedScore = typeof stored?.seoScore === "number" ? stored.seoScore : null;
-    const score = storedScore !== null && !isArticleNewerThanSeoScan(article, stored) ? storedScore : audit.score;
-
-    audit.score = score;
     return { article, audit };
   });
 
@@ -1580,17 +1575,6 @@ function getBodyImageAltText(body: string) {
   }
 
   return alts.join(" ");
-}
-
-function isArticleNewerThanSeoScan(article: ArticleInput, storedSeo?: StoredSeoInput | null) {
-  if (!article.updatedAt || !storedSeo?.lastAnalyzedAt) return true;
-
-  const articleUpdatedAt = new Date(article.updatedAt).getTime();
-  const lastAnalyzedAt = storedSeo.lastAnalyzedAt.getTime();
-
-  if (!Number.isFinite(articleUpdatedAt) || !Number.isFinite(lastAnalyzedAt)) return true;
-
-  return articleUpdatedAt > lastAnalyzedAt + ARTICLE_SCAN_CLOCK_SKEW_MS;
 }
 
 function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {

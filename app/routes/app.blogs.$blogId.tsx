@@ -3513,6 +3513,7 @@ function SeoSidebar({
   onChangeFocusKeyword: (val: string) => void;
   keywordScores: Record<string, "success" | "warning" | "critical">;
 }) {
+  const navigate = useNavigate();
   const categories = {
     basic: "Basic SEO",
     additional: "Additional",
@@ -3631,7 +3632,19 @@ function SeoSidebar({
                                 tone={issue.severity === 'good' ? 'success' : issue.severity === 'critical' ? 'critical' : 'warning'} />
                         </div>
                         <div style={{ flex: 1, textAlign: 'left' }}>
-                          <Text as="span" variant="bodySm">{issue.message}</Text>
+                          <BlockStack gap="100">
+                            <Text as="span" variant="bodySm">{issue.message}</Text>
+                            {issue.type === "toc" && issue.severity !== "good" && (
+                              <InlineStack>
+                                <Button
+                                  size="micro"
+                                  onClick={() => navigate("/app/settings/content-navigation?tab=toc")}
+                                >
+                                  Open TOC settings
+                                </Button>
+                              </InlineStack>
+                            )}
+                          </BlockStack>
                         </div>
                       </div>
                     ))}

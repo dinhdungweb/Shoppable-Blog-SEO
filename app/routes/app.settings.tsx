@@ -593,9 +593,16 @@ export default function Settings() {
               <BlockStack gap="400">
                 {contentNavigationLocked && (
                   <Banner tone="info" title="Content navigation is locked on the Free plan">
-                    <Text as="p" variant="bodyMd">
-                      Breadcrumbs and table of contents settings are available on Pro and Growth plans.
-                    </Text>
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd">
+                        Breadcrumbs and table of contents settings are available on Pro and Growth plans.
+                      </Text>
+                      <InlineStack>
+                        <Button url={`/app/pricing?reason=content_navigation&plan=${planKey}`}>
+                          Upgrade plan
+                        </Button>
+                      </InlineStack>
+                    </BlockStack>
                   </Banner>
                 )}
 

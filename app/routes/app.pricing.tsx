@@ -117,6 +117,7 @@ const UPGRADE_REASON_MESSAGES: Record<string, string> = {
     "Bulk Review is a Growth plan feature. Upgrade to review and edit multiple posts at once.",
   shoppable_articles_free: `Your Free plan allows up to ${PLAN_LIMITS.free.shoppableArticles} shoppable posts. Upgrade to Pro (up to 100 posts) or Growth (unlimited).`,
   shoppable_articles_pro: `Your Pro plan allows up to ${PLAN_LIMITS.pro.shoppableArticles} shoppable posts. Upgrade to Growth for unlimited shoppable posts.`,
+  content_navigation: "Table of contents and breadcrumbs are Pro plan features. Upgrade to enable TOC settings and storefront content navigation.",
   custom_css: "Custom widget CSS is a Growth plan feature. Upgrade to control your widget styling.",
 };
 
