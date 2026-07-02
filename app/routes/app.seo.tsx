@@ -49,6 +49,7 @@ type ArticleInput = {
   summary: string;
   imageUrl: string;
   imageAlt: string;
+  updatedAt: string;
   seoTitle: string;
   seoDescription: string;
   blogId: string;
@@ -103,6 +104,7 @@ type IssueGroup = {
 };
 
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
+const ARTICLE_SCAN_CLOCK_SKEW_MS = 60_000;
 const DONUT_COLORS = {
   High: "#D82C0D",
   Medium: "#FFC453",
@@ -172,6 +174,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         summary: "",
         imageUrl: "",
         imageAlt: "",
+        updatedAt: "",
         seoTitle: "",
         seoDescription: "",
         blogId: product.blogId || "",
@@ -190,6 +193,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         summary: "",
         imageUrl: "",
         imageAlt: "",
+        updatedAt: "",
         seoTitle: row.metaTitle || "",
         seoDescription: row.metaDescription || "",
         blogId: "",
@@ -290,7 +294,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const storedSeoMap = new Map(seoRows.map((row) => [row.articleId, row]));
   const audits = articles.map((article) => {
-    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, storedSeoMap.get(article.id));
+    const stored = storedSeoMap.get(article.id);
+    const audit = auditArticle(article, productCountMap.get(article.id) || 0, config, stored);
+    const storedScore = typeof stored?.seoScore === "number" ? stored.seoScore : null;
+    const score = storedScore !== null && !isArticleNewerThanSeoScan(article, stored) ? storedScore : audit.score;
+
+    audit.score = score;
     return { article, audit };
   });
 
@@ -800,6 +809,7 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
               id
               title
               handle
+              updatedAt
               body
               summary
               image {
@@ -834,6 +844,7 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
               id
               title
               handle
+              updatedAt
               image {
                 url
                 altText
@@ -871,6 +882,7 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
       summary: article.summary || "",
       imageUrl: article.image?.url || "",
       imageAlt: article.image?.altText || "",
+      updatedAt: article.updatedAt || "",
       seoTitle: article.seoTitle?.value || "",
       seoDescription: article.seoDescription?.value || "",
       blogId: article.blog?.id || blog.id,
@@ -1139,6 +1151,17 @@ function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number
   return Math.max(0, Math.min(100, score));
 }
 
+function isArticleNewerThanSeoScan(article: ArticleInput, storedSeo?: StoredSeoInput | null) {
+  if (!article.updatedAt || !storedSeo?.lastAnalyzedAt) return true;
+
+  const articleUpdatedAt = new Date(article.updatedAt).getTime();
+  const lastAnalyzedAt = storedSeo.lastAnalyzedAt.getTime();
+
+  if (!Number.isFinite(articleUpdatedAt) || !Number.isFinite(lastAnalyzedAt)) return true;
+
+  return articleUpdatedAt > lastAnalyzedAt + ARTICLE_SCAN_CLOCK_SKEW_MS;
+}
+
 function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
   const map = new Map<string, IssueGroup>();
 
@@ -1269,7 +1292,7 @@ function getEffectiveSeoTitle(metaTitle: unknown, articleTitle: unknown) {
 }
 
 function getEffectiveSeoDescription(metaDescription: unknown, article: ArticleInput) {
-  return textValue(metaDescription) || textValue(article.seoDescription) || textValue(article.summary);
+  return textValue(metaDescription) || textValue(article.summary);
 }
 
 function slugifyKeyword(value: string) {
