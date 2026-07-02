@@ -11,7 +11,12 @@ import { GROWTH_PLAN, PAID_PLANS, PRO_PLAN, getPlanKey, getLimitsForPlan } from 
 import type { PlanKey, PlanLimits } from "./pricing-plans";
 
 export function isBillingTestMode() {
-  return process.env.SHOPIFY_BILLING_TEST !== "false";
+  const billingTestMode = process.env.SHOPIFY_BILLING_TEST?.trim().toLowerCase();
+
+  if (billingTestMode === "true") return true;
+  if (billingTestMode === "false") return false;
+
+  return process.env.NODE_ENV !== "production";
 }
 
 const shopify = shopifyApp({
