@@ -563,7 +563,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ success: false, error: message }, { status: 400 });
     }
 
-    const audit = auditSeo({
+    const audit = getSubmittedSeoAudit(formData) || auditSeo({
       title: metaTitle,
       handle,
       summary: metaDescription,
@@ -738,12 +738,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (intent === "analyze_seo") {
     const focusKeyword = cleanString(formData.get("focusKeyword"));
-    const audit = auditSeo({
+    const imageUrl = cleanString(formData.get("imageUrl"));
+    const removeImage = formData.get("removeImage") === "true";
+    const hasImage = removeImage ? false : Boolean(imageUrl || formData.get("hasImage") === "true");
+    const audit = getSubmittedSeoAudit(formData) || auditSeo({
       title: cleanString(formData.get("metaTitle")),
       handle: cleanString(formData.get("handle")),
       summary: cleanString(formData.get("metaDescription")),
       body: cleanString(formData.get("body")),
-      hasImage: formData.get("hasImage") === "true",
+      hasImage,
       imageAlt: cleanString(formData.get("imageAlt")),
       productCount: Number(formData.get("productCount") || "0"),
       focusKeyword,
@@ -1263,6 +1266,8 @@ export default function ArticleDetail() {
     formData.append("removeImage", imageRemoved ? "true" : "false");
     formData.append("productCount", String(embeddedProducts.length));
     formData.append("focusKeyword", focusKeyword);
+    formData.append("seoScore", String(seoScore));
+    formData.append("seoIssues", JSON.stringify(seoIssues));
     fetcher.submit(formData, { method: "POST" });
   }, [
     activeImage,
@@ -1283,6 +1288,8 @@ export default function ArticleDetail() {
     title,
     visibility,
     focusKeyword,
+    seoScore,
+    seoIssues,
   ]);
 
   const handleRunSeoScan = useCallback(() => {
@@ -1294,9 +1301,13 @@ export default function ArticleDetail() {
     formData.append("handle", handle);
     formData.append("body", body);
     formData.append("hasImage", activeImage ? "true" : "false");
+    formData.append("imageUrl", featuredImageUrl);
     formData.append("imageAlt", featuredImageAlt);
+    formData.append("removeImage", imageRemoved ? "true" : "false");
     formData.append("productCount", String(embeddedProducts.length));
     formData.append("focusKeyword", focusKeyword);
+    formData.append("seoScore", String(seoScore));
+    formData.append("seoIssues", JSON.stringify(seoIssues));
     fetcher.submit(formData, { method: "POST" });
   }, [
     activeImage,
@@ -1305,11 +1316,15 @@ export default function ArticleDetail() {
     excerpt,
     fetcher,
     featuredImageAlt,
+    featuredImageUrl,
     handle,
+    imageRemoved,
     metaDescription,
     effectiveMetaTitle,
     title,
     focusKeyword,
+    seoScore,
+    seoIssues,
   ]);
 
   const handleApplySeoSuggestions = useCallback(() => {
@@ -4087,6 +4102,50 @@ function makeEmptyArticle(blog?: any, authorName = DEFAULT_AUTHOR_NAME) {
 
 function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getSubmittedSeoAudit(formData: FormData): { score: number; issues: SeoIssue[] } | null {
+  const score = Number(cleanString(formData.get("seoScore")));
+  const rawIssues = cleanString(formData.get("seoIssues"));
+
+  if (!Number.isFinite(score) || !rawIssues) return null;
+
+  try {
+    const parsed = JSON.parse(rawIssues);
+    if (!Array.isArray(parsed)) return null;
+
+    const issues = parsed
+      .map((issue) => {
+        if (!issue || typeof issue !== "object") return null;
+        const candidate = issue as Partial<SeoIssue>;
+        if (
+          typeof candidate.type !== "string" ||
+          typeof candidate.label !== "string" ||
+          typeof candidate.message !== "string" ||
+          !["good", "info", "warning", "critical"].includes(String(candidate.severity))
+        ) {
+          return null;
+        }
+
+        return {
+          type: candidate.type,
+          category: candidate.category,
+          label: candidate.label,
+          message: candidate.message,
+          severity: candidate.severity,
+          impact: candidate.impact,
+          effort: candidate.effort,
+        } as SeoIssue;
+      })
+      .filter((issue): issue is SeoIssue => Boolean(issue));
+
+    return {
+      score: Math.max(0, Math.min(100, Math.round(score))),
+      issues,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function cleanHandle(value: string) {
