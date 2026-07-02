@@ -44,7 +44,6 @@ import {
   CodeIcon,
   DeleteIcon,
   ExternalIcon,
-  HomeIcon,
   ImageIcon,
   LinkIcon,
   ListBulletedIcon,
@@ -2486,20 +2485,6 @@ function RichArticleEditor({
     onProductBlockInserted?.(blockId);
   };
 
-  const insertBreadcrumbsMarker = () => {
-    const editor = editorRef.current;
-    if (!editor) return;
-
-    insertHtml(`<p>[[SBS_BREADCRUMBS]]</p>`);
-  };
-
-  const insertTocMarker = () => {
-    const editor = editorRef.current;
-    if (!editor) return;
-
-    insertHtml(`<p>[[SBS_TOC]]</p>`);
-  };
-
   const applyTextColor = (value: string) => {
     if (!value) return;
     runCommand("foreColor", value);
@@ -2816,28 +2801,6 @@ function RichArticleEditor({
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <Icon source={ProductIcon} tone="base" /> Products
-                </div>
-              </button>
-              <button
-                type="button"
-                className="bp-editor-icon-button bp-editor-products-button"
-                title="Insert breadcrumbs marker"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={insertBreadcrumbsMarker}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Icon source={HomeIcon} tone="base" /> Breadcrumbs
-                </div>
-              </button>
-              <button
-                type="button"
-                className="bp-editor-icon-button bp-editor-products-button"
-                title="Insert table of contents marker"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={insertTocMarker}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Icon source={ListBulletedIcon} tone="base" /> TOC
                 </div>
               </button>
             </>
