@@ -2151,6 +2151,7 @@ function RichArticleEditor({
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [linkText, setLinkText] = useState("");
+  const [editingExistingLink, setEditingExistingLink] = useState(false);
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
   const [viewHtml, setViewHtml] = useState(false);
@@ -2232,6 +2233,56 @@ function RichArticleEditor({
     [emitChange, restoreSelection, saveSelection],
   );
 
+  const findSelectedAnchor = useCallback(() => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) return null;
+
+    const range = selection.getRangeAt(0);
+    const findAnchorFromNode = (node: Node | null) => {
+      let current: Node | null = node;
+      while (current && current !== editor) {
+        if (current.nodeType === Node.ELEMENT_NODE && (current as HTMLElement).tagName === "A") {
+          return current as HTMLAnchorElement;
+        }
+        current = current.parentNode;
+      }
+      return null;
+    };
+
+    const directAnchor =
+      findAnchorFromNode(range.commonAncestorContainer) ||
+      findAnchorFromNode(selection.anchorNode) ||
+      findAnchorFromNode(selection.focusNode);
+
+    if (directAnchor) return directAnchor;
+
+    const container =
+      range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? (range.commonAncestorContainer as HTMLElement)
+        : range.commonAncestorContainer.parentElement;
+
+    if (!container || !editor.contains(container)) return null;
+
+    const links = container.querySelectorAll("a");
+    for (const link of Array.from(links)) {
+      try {
+        if (range.intersectsNode(link)) return link as HTMLAnchorElement;
+      } catch {
+        // Ignore nodes that cannot be tested against the current range.
+      }
+    }
+
+    return null;
+  }, []);
+
+  const closeLinkModal = useCallback(() => {
+    setLinkModalOpen(false);
+    setLinkUrl("");
+    setLinkText("");
+    setEditingExistingLink(false);
+  }, []);
+
   const openLinkModal = () => {
     let currentText = window.getSelection()?.toString() || "";
     let currentUrl = "";
@@ -2279,6 +2330,7 @@ function RichArticleEditor({
     saveSelection();
     setLinkText(currentText);
     setLinkUrl(currentUrl);
+    setEditingExistingLink(Boolean(currentUrl));
     setLinkModalOpen(true);
   };
 
@@ -2356,10 +2408,45 @@ function RichArticleEditor({
       }
     }
 
-    setLinkModalOpen(false);
-    setLinkUrl("");
-    setLinkText("");
+    closeLinkModal();
   };
+
+  const removeLink = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    restoreSelection();
+    editor.focus();
+
+    const selection = window.getSelection();
+    const existingAnchor = findSelectedAnchor();
+
+    if (existingAnchor?.parentNode) {
+      const firstChild = existingAnchor.firstChild;
+      const lastChild = existingAnchor.lastChild;
+      const parent = existingAnchor.parentNode;
+
+      while (existingAnchor.firstChild) {
+        parent.insertBefore(existingAnchor.firstChild, existingAnchor);
+      }
+      parent.removeChild(existingAnchor);
+
+      if (selection && firstChild && lastChild) {
+        const range = document.createRange();
+        range.setStartBefore(firstChild);
+        range.setEndAfter(lastChild);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        savedSelectionRef.current = range.cloneRange();
+      }
+    } else {
+      document.execCommand("unlink", false);
+      saveSelection();
+    }
+
+    emitChange();
+    closeLinkModal();
+  }, [closeLinkModal, emitChange, findSelectedAnchor, restoreSelection, saveSelection]);
 
   const insertImage = () => {
     saveSelection();
@@ -2684,6 +2771,15 @@ function RichArticleEditor({
           <button
             type="button"
             className="bp-editor-icon-button"
+            title="Remove link"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={removeLink}
+          >
+            <Icon source={DeleteIcon} tone="base" />
+          </button>
+          <button
+            type="button"
+            className="bp-editor-icon-button"
             title="Insert image"
             onMouseDown={(event) => event.preventDefault()}
             onClick={insertImage}
@@ -2801,14 +2897,19 @@ function RichArticleEditor({
 
       <Modal
         open={linkModalOpen}
-        onClose={() => setLinkModalOpen(false)}
-        title="Add link"
+        onClose={closeLinkModal}
+        title={editingExistingLink ? "Edit link" : "Add link"}
         primaryAction={{
-          content: "Insert link",
+          content: editingExistingLink ? "Update link" : "Insert link",
           onAction: applyLink,
           disabled: !normalizeEditorUrl(linkUrl),
         }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setLinkModalOpen(false) }]}
+        secondaryActions={[
+          ...(editingExistingLink
+            ? [{ content: "Remove link", destructive: true, onAction: removeLink }]
+            : []),
+          { content: "Cancel", onAction: closeLinkModal },
+        ]}
       >
         <Modal.Section>
           <BlockStack gap="400">
