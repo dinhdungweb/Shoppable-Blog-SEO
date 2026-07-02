@@ -261,6 +261,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const chartData = buildChartData(currentEvents, priceMap, currentStart, now);
   const postRows = buildPostRows(Array.from(articleSourceMap.values()), currentEvents, priceMap, productCountMap, seoScoreMap);
   const productRows = buildProductRows(currentEvents, priceMap, productInfoMap);
+  const topClickedProducts = sortProductRows(productRows, "clicks").slice(0, 5);
+  const topAddToCartProducts = sortProductRows(productRows, "addToCarts").slice(0, 5);
+  const topPurchasedProducts = sortProductRows(productRows, "purchases").slice(0, 5);
   const sourceData = buildSourceData(currentEvents);
   const insights = buildInsights({
     currentMetrics,
@@ -282,7 +285,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     chartData,
     sourceData,
     topPosts: postRows.slice(0, 8),
-    topProducts: productRows.slice(0, 6),
+    topProducts: topClickedProducts,
+    topClickedProducts,
+    topAddToCartProducts,
+    topPurchasedProducts,
     insights,
   });
 };
@@ -299,6 +305,8 @@ export default function Analytics() {
     sourceData,
     topPosts,
     topProducts,
+    topAddToCartProducts,
+    topPurchasedProducts,
     insights,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
@@ -598,7 +606,7 @@ export default function Analytics() {
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd" fontWeight="bold">
-                  Top products clicked from blog
+                  Product leaderboards
                 </Text>
                 <Button variant="plain" onClick={() => navigate("/app/blogs")}>
                   View all
@@ -627,6 +635,24 @@ export default function Analytics() {
                   <p>Product performance appears after visitors click products embedded in blog posts.</p>
                 </EmptyState>
               )}
+              <Divider />
+              <ProductLeaderboardSection
+                title="Top add to cart products"
+                products={topAddToCartProducts}
+                metricKey="addToCarts"
+                metricLabel="add to carts"
+                emptyHeading="No add to cart events yet"
+                emptyBody="Add to cart performance appears after the Web Pixel receives product_added_to_cart events."
+              />
+              <Divider />
+              <ProductLeaderboardSection
+                title="Top purchased products"
+                products={topPurchasedProducts}
+                metricKey="purchases"
+                metricLabel="purchases"
+                emptyHeading="No purchase events yet"
+                emptyBody="Purchased products appear after checkout_completed events are attributed to blog traffic."
+              />
             </BlockStack>
           </Card>
         </InlineGrid>
@@ -774,6 +800,53 @@ function InsightCard({
   );
 }
 
+function ProductLeaderboardSection({
+  title,
+  products,
+  metricKey,
+  metricLabel,
+  emptyHeading,
+  emptyBody,
+}: {
+  title: string;
+  products: ProductRow[];
+  metricKey: "clicks" | "addToCarts" | "purchases";
+  metricLabel: string;
+  emptyHeading: string;
+  emptyBody: string;
+}) {
+  return (
+    <BlockStack gap="300">
+      <Text as="h3" variant="headingSm" fontWeight="bold">
+        {title}
+      </Text>
+      {products.length ? (
+        <div className="bp-analytics-product-list">
+          {products.map((product) => (
+            <div key={`${title}-${product.id}`} className="bp-analytics-product-row">
+              <div className="bp-analytics-product-main">
+                <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
+                <div className="bp-analytics-product-text">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>
+                    {product.title}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {formatNumber(product[metricKey])} {metricLabel} · {formatMoney(product.revenue)} revenue
+                  </Text>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState heading={emptyHeading} image={PLACEHOLDER_IMAGE}>
+          <p>{emptyBody}</p>
+        </EmptyState>
+      )}
+    </BlockStack>
+  );
+}
+
 function buildPostRows(
   articles: ArticleSource[],
   events: TrackedEvent[],
@@ -852,6 +925,20 @@ function buildProductRows(
       };
     })
     .sort((a, b) => b.revenue - a.revenue || b.clicks - a.clicks || a.title.localeCompare(b.title));
+}
+
+function sortProductRows(products: ProductRow[], metricKey: "clicks" | "addToCarts" | "purchases") {
+  return products
+    .filter((product) => product[metricKey] > 0)
+    .sort(
+      (a, b) =>
+        b[metricKey] - a[metricKey] ||
+        b.revenue - a.revenue ||
+        b.purchases - a.purchases ||
+        b.addToCarts - a.addToCarts ||
+        b.clicks - a.clicks ||
+        a.title.localeCompare(b.title),
+    );
 }
 
 type TrackedEvent = {

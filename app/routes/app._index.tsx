@@ -83,6 +83,13 @@ type PeriodMetrics = {
   revenue: number;
 };
 
+type DashboardProduct = PeriodMetrics & {
+  id: string;
+  title: string;
+  image: string;
+  price: number;
+};
+
 type ChartPoint = PeriodMetrics & {
   date: string;
 };
@@ -186,7 +193,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }));
 
   const [
-    config,
+    ,
     linkedProducts,
     seoRows,
     allEvents,
@@ -333,10 +340,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const productCountMap = new Map<string, number>();
   const productPriceMap = new Map<string, number>();
+  const productInfoMap = new Map<string, { title: string; image: string; price: number }>();
 
   linkedProducts.forEach((product) => {
+    const price = parseMoney(product.productPrice);
     productCountMap.set(product.articleId, (productCountMap.get(product.articleId) || 0) + 1);
-    productPriceMap.set(`${product.articleId}:${product.productId}`, parseMoney(product.productPrice));
+    productPriceMap.set(`${product.articleId}:${product.productId}`, price);
+
+    if (!productInfoMap.has(product.productId)) {
+      productInfoMap.set(product.productId, {
+        title: product.productTitle || "Untitled product",
+        image: product.productImage || "",
+        price,
+      });
+    }
   });
 
   const fallbackArticleMap = new Map<string, (typeof baseArticles)[number]>();
@@ -385,6 +402,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const currentMetrics = getMetrics(currentEvents, productPriceMap);
   const previousMetrics = getMetrics(previousEvents, productPriceMap);
   const chartData = buildChartData(currentEvents, productPriceMap, currentStart, now);
+  const productRows = buildDashboardProductRows(currentEvents, productPriceMap, productInfoMap);
+  const topAddToCartProducts = sortDashboardProductRows(productRows, "addToCarts").slice(0, 4);
+  const topPurchasedProducts = sortDashboardProductRows(productRows, "purchases").slice(0, 4);
   const articleMetricsMap = getArticleMetricsMap(currentEvents, productPriceMap);
   const articleSources = baseArticles.length ? baseArticles : Array.from(fallbackArticleMap.values());
 
@@ -453,6 +473,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     metrics: currentMetrics,
     previousMetrics,
     chartData,
+    topAddToCartProducts,
+    topPurchasedProducts,
     counts: {
       totalPosts: articles.length,
       publishedPosts: publishedArticles.length,
@@ -511,6 +533,8 @@ export default function Dashboard() {
     metrics,
     previousMetrics,
     chartData,
+    topAddToCartProducts,
+    topPurchasedProducts,
     counts,
     setup,
     recentPosts,
@@ -721,6 +745,21 @@ export default function Dashboard() {
                   </EmptyState>
                 )}
               </Box>
+
+              <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+                <CompactProductLeaderboard
+                  title="Top add to cart products"
+                  products={topAddToCartProducts}
+                  metricKey="addToCarts"
+                  metricLabel="add to carts"
+                />
+                <CompactProductLeaderboard
+                  title="Top purchased products"
+                  products={topPurchasedProducts}
+                  metricKey="purchases"
+                  metricLabel="purchases"
+                />
+              </InlineGrid>
             </BlockStack>
           </Card>
         </InlineGrid>
@@ -1006,6 +1045,54 @@ function PerformanceStat({
   );
 }
 
+function CompactProductLeaderboard({
+  title,
+  products,
+  metricKey,
+  metricLabel,
+}: {
+  title: string;
+  products: DashboardProduct[];
+  metricKey: "addToCarts" | "purchases";
+  metricLabel: string;
+}) {
+  return (
+    <Box borderColor="border" borderWidth="025" borderRadius="200" padding="300">
+      <BlockStack gap="300">
+        <Text as="h3" variant="headingSm" fontWeight="bold">
+          {title}
+        </Text>
+        {products.length ? (
+          <BlockStack gap="250">
+            {products.map((product) => (
+              <InlineStack key={`${title}-${product.id}`} align="space-between" blockAlign="center" gap="300" wrap={false}>
+                <InlineStack gap="200" blockAlign="center" wrap={false}>
+                  <Thumbnail source={product.image || ImageIcon} alt={product.title} size="small" />
+                  <BlockStack gap="050">
+                    <Text as="span" variant="bodySm" fontWeight="semibold" truncate>
+                      {product.title}
+                    </Text>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {formatMoney(product.revenue)} revenue
+                    </Text>
+                  </BlockStack>
+                </InlineStack>
+                <Text as="span" variant="bodySm" fontWeight="bold">
+                  {formatNumber(product[metricKey])} {metricLabel}
+                </Text>
+              </InlineStack>
+            ))}
+          </BlockStack>
+        ) : (
+          <Text as="p" variant="bodySm" tone="subdued">
+            No events yet.
+          </Text>
+        )}
+      </BlockStack>
+    </Box>
+  );
+}
+
 function buildRecommendedActions({
   missingMetaDescriptions,
   noLinkedProducts,
@@ -1100,6 +1187,55 @@ function getArticleMetricsMap(
   return map;
 }
 
+function buildDashboardProductRows(
+  events: Array<{ articleId: string; productId: string; eventType: string }>,
+  priceMap: Map<string, number>,
+  productInfoMap: Map<string, { title: string; image: string; price: number }>,
+) {
+  const map = new Map<string, DashboardProduct>();
+
+  productInfoMap.forEach((info, productId) => {
+    map.set(productId, {
+      id: productId,
+      title: info.title,
+      image: info.image,
+      price: info.price,
+      ...emptyMetrics(),
+    });
+  });
+
+  events.forEach((event) => {
+    if (event.productId === "all") return;
+    const productId = normalizeProductId(event.productId);
+    const existing = map.get(productId) || {
+      id: productId,
+      title: "Untitled product",
+      image: "",
+      price: 0,
+      ...emptyMetrics(),
+    };
+
+    addEventToMetrics(existing, { ...event, productId }, priceMap);
+    map.set(productId, existing);
+  });
+
+  return Array.from(map.values());
+}
+
+function sortDashboardProductRows(products: DashboardProduct[], metricKey: "addToCarts" | "purchases") {
+  return products
+    .filter((product) => product[metricKey] > 0)
+    .sort(
+      (a, b) =>
+        b[metricKey] - a[metricKey] ||
+        b.revenue - a.revenue ||
+        b.purchases - a.purchases ||
+        b.addToCarts - a.addToCarts ||
+        b.clicks - a.clicks ||
+        a.title.localeCompare(b.title),
+    );
+}
+
 function addEventToMetrics(
   metrics: PeriodMetrics,
   event: { articleId: string; productId: string; eventType: string },
@@ -1122,6 +1258,12 @@ function addEventToMetrics(
   }
 
   return metrics;
+}
+
+function normalizeProductId(value: string) {
+  if (/^\d+$/.test(value)) return `gid://shopify/Product/${value}`;
+  if (!value.startsWith("gid://")) return `gid://shopify/Product/${value}`;
+  return value;
 }
 
 function buildChartData(
