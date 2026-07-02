@@ -103,6 +103,13 @@ type ShopifyImageFile = {
   updatedAt?: string;
 };
 
+type ShopifyImageFileResult = {
+  images: ShopifyImageFile[];
+  error: string;
+  hasNextPage: boolean;
+  endCursor: string | null;
+};
+
 type EditorImageAlignment = "left" | "center" | "right";
 type EditorImageSpacing = {
   top: string;
@@ -118,7 +125,10 @@ type ProductBlockOption = {
   productCount: number;
 };
 
+const EDITOR_BLOCK_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"]);
+
 const DEFAULT_PRODUCT_BLOCK_ID = "default";
+const IMAGE_FILE_PAGE_SIZE = 50;
 const PRODUCT_BLOCK_MARKER_PATTERN = /\[\[SBS_PRODUCTS(?::([a-zA-Z0-9_-]+)(?::([a-zA-Z0-9_-]+))?)?\]\]/g;
 const LEGACY_PRODUCT_STYLE_TOKENS = new Set(["carousel", "grid"]);
 
@@ -857,13 +867,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (intent === "search_images") {
     const query = cleanString(formData.get("query")).toLowerCase();
-    const result = await fetchShopifyImageFiles(admin, query);
+    const cursor = cleanString(formData.get("cursor"));
+    const result = await fetchShopifyImageFiles(admin, query, cursor || null);
 
     return json({
       success: !result.error,
       action: "images_searched",
       query,
+      cursor,
       images: result.images,
+      hasNextPage: result.hasNextPage,
+      endCursor: result.endCursor,
       error: result.error,
     });
   }
@@ -929,6 +943,8 @@ export default function ArticleDetail() {
   const [featuredImageAlt, setFeaturedImageAlt] = useState(article.image?.altText || "");
   const [imageFiles, setImageFiles] = useState<ShopifyImageFile[]>((fileImages || []) as unknown as ShopifyImageFile[]);
   const [imageFilesMessage, setImageFilesMessage] = useState(fileImagesError || "");
+  const [imageFilesHasNextPage, setImageFilesHasNextPage] = useState(false);
+  const [imageFilesEndCursor, setImageFilesEndCursor] = useState<string | null>(null);
   const [imageSearchQuery, setImageSearchQuery] = useState("");
   const [selectedImage, setSelectedImage] = useState<ShopifyImageFile | null>(null);
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
@@ -943,7 +959,7 @@ export default function ArticleDetail() {
   const editorImageInsertRef = useRef<((image: ShopifyImageFile) => void) | null>(null);
   const previousProductBlockIdsRef = useRef<string[]>([]);
   const imageFetcherSubmitRef = useRef(imageFetcher.submit);
-  const imageResultsCacheRef = useRef(new Map<string, { images: ShopifyImageFile[]; error: string }>());
+  const imageResultsCacheRef = useRef(new Map<string, ShopifyImageFileResult>());
   const imageRequestsInFlightRef = useRef(new Set<string>());
 
   const fetcherData = fetcher.data as any;
@@ -1001,6 +1017,11 @@ export default function ArticleDetail() {
     isImageModalOpen &&
     imageFetcher.state !== "idle" &&
     !imageResultsCacheRef.current.has(normalizedImageQuery);
+  const isLoadingMoreImages =
+    isImageModalOpen &&
+    imageFetcher.state !== "idle" &&
+    Boolean(imageFilesEndCursor) &&
+    imageRequestsInFlightRef.current.has(`${normalizedImageQuery}:${imageFilesEndCursor}`);
   const isUploadingImage = uploadFetcher.state !== "idle";
   const shouldShowSaveBar = isDirty && !isImageModalOpen && !showStyleModal;
   const isVisible = visibility !== "hidden";
@@ -1118,16 +1139,25 @@ export default function ArticleDetail() {
     if (imageFetcherData.action !== "images_searched") return;
 
     const query = imageFetcherData.query || "";
+    const cursor = imageFetcherData.cursor || "";
+    const requestKey = `${query}:${cursor}`;
+    const existing = imageResultsCacheRef.current.get(query);
+    const incomingImages = (imageFetcherData.images || []) as ShopifyImageFile[];
+    const mergedImages = cursor ? mergeImageFiles(existing?.images || [], incomingImages) : incomingImages;
     const result = {
-      images: imageFetcherData.images || [],
+      images: mergedImages,
       error: imageFetcherData.error || "",
+      hasNextPage: Boolean(imageFetcherData.hasNextPage),
+      endCursor: imageFetcherData.endCursor || null,
     };
 
-    imageRequestsInFlightRef.current.clear();
+    imageRequestsInFlightRef.current.delete(requestKey);
     imageResultsCacheRef.current.set(query, result);
     if (query === normalizedImageQuery) {
       setImageFiles(result.images);
       setImageFilesMessage(result.error);
+      setImageFilesHasNextPage(result.hasNextPage);
+      setImageFilesEndCursor(result.endCursor);
     }
   }, [imageFetcherData, normalizedImageQuery]);
 
@@ -1163,21 +1193,39 @@ export default function ArticleDetail() {
     if (cached) {
       setImageFiles(cached.images);
       setImageFilesMessage(cached.error);
+      setImageFilesHasNextPage(cached.hasNextPage);
+      setImageFilesEndCursor(cached.endCursor);
       return;
     }
 
-    if (imageRequestsInFlightRef.current.has(query)) return;
+    const requestKey = `${query}:`;
+    if (imageRequestsInFlightRef.current.has(requestKey)) return;
 
     const timeout = window.setTimeout(() => {
       const formData = new FormData();
       formData.append("intent", "search_images");
       formData.append("query", query);
-      imageRequestsInFlightRef.current.add(query);
+      imageRequestsInFlightRef.current.add(requestKey);
       imageFetcherSubmitRef.current(formData, { method: "POST" });
     }, query ? 300 : 0);
 
     return () => window.clearTimeout(timeout);
   }, [isImageModalOpen, normalizedImageQuery]);
+
+  const loadMoreImages = useCallback(() => {
+    if (!imageFilesHasNextPage || !imageFilesEndCursor) return;
+
+    const query = normalizedImageQuery;
+    const requestKey = `${query}:${imageFilesEndCursor}`;
+    if (imageRequestsInFlightRef.current.has(requestKey)) return;
+
+    const formData = new FormData();
+    formData.append("intent", "search_images");
+    formData.append("query", query);
+    formData.append("cursor", imageFilesEndCursor);
+    imageRequestsInFlightRef.current.add(requestKey);
+    imageFetcherSubmitRef.current(formData, { method: "POST" });
+  }, [imageFilesEndCursor, imageFilesHasNextPage, normalizedImageQuery]);
 
   const markDirty = useCallback(() => setIsDirty(true), []);
 
@@ -1807,11 +1855,14 @@ export default function ArticleDetail() {
         selectedImage={selectedImage}
         searchQuery={imageSearchQuery}
         loading={isLoadingImages}
+        loadingMore={isLoadingMoreImages}
         uploading={isUploadingImage}
         message={imageFilesMessage}
+        hasMore={imageFilesHasNextPage}
         onSearchQueryChange={setImageSearchQuery}
         onUploadImage={uploadImageFile}
         onSelectImage={setSelectedImage}
+        onLoadMore={loadMoreImages}
         onClose={closeImagePicker}
         onDone={applyPickedImage}
       />
@@ -1942,11 +1993,14 @@ function ImagePickerModal({
   selectedImage,
   searchQuery,
   loading,
+  loadingMore,
   uploading,
   message,
+  hasMore,
   onSearchQueryChange,
   onUploadImage,
   onSelectImage,
+  onLoadMore,
   onClose,
   onDone,
 }: {
@@ -1955,11 +2009,14 @@ function ImagePickerModal({
   selectedImage: ShopifyImageFile | null;
   searchQuery: string;
   loading: boolean;
+  loadingMore: boolean;
   uploading: boolean;
   message?: string;
+  hasMore: boolean;
   onSearchQueryChange: (value: string) => void;
   onUploadImage: (file: File) => void;
   onSelectImage: (image: ShopifyImageFile) => void;
+  onLoadMore: () => void;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -2052,30 +2109,39 @@ function ImagePickerModal({
               </Text>
             </div>
           ) : images.length ? (
-            <div className="bp-image-picker-grid">
-              {images.map((image) => {
-                const selected = selectedImage?.id === image.id || selectedImage?.url === image.url;
-                return (
-                  <button
-                    key={image.id}
-                    type="button"
-                    className={`bp-image-picker-item${selected ? " bp-image-picker-item--selected" : ""}`}
-                    onClick={() => onSelectImage(image)}
-                    onDoubleClick={() => {
-                      onSelectImage(image);
-                      onDone();
-                    }}
-                  >
-                    <span className="bp-image-picker-check">{selected ? <Icon source={CheckIcon} tone="base" /> : null}</span>
-                    <span className="bp-image-picker-thumb">
-                      <img src={image.thumbnailUrl || image.url} alt={image.alt || image.title} loading="lazy" decoding="async" />
-                    </span>
-                    <span className="bp-image-picker-title">{compactImageTitle(image.title)}</span>
-                    <span className="bp-image-picker-meta">{imageFormatFromUrl(image.url)}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <>
+              <div className="bp-image-picker-grid">
+                {images.map((image) => {
+                  const selected = selectedImage?.id === image.id || selectedImage?.url === image.url;
+                  return (
+                    <button
+                      key={image.id}
+                      type="button"
+                      className={`bp-image-picker-item${selected ? " bp-image-picker-item--selected" : ""}`}
+                      onClick={() => onSelectImage(image)}
+                      onDoubleClick={() => {
+                        onSelectImage(image);
+                        onDone();
+                      }}
+                    >
+                      <span className="bp-image-picker-check">{selected ? <Icon source={CheckIcon} tone="base" /> : null}</span>
+                      <span className="bp-image-picker-thumb">
+                        <img src={image.thumbnailUrl || image.url} alt={image.alt || image.title} loading="lazy" decoding="async" />
+                      </span>
+                      <span className="bp-image-picker-title">{compactImageTitle(image.title)}</span>
+                      <span className="bp-image-picker-meta">{imageFormatFromUrl(image.url)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {hasMore ? (
+                <InlineStack align="center">
+                  <Button loading={loadingMore} onClick={onLoadMore}>
+                    Load more
+                  </Button>
+                </InlineStack>
+              ) : null}
+            </>
           ) : (
             <div className="bp-image-picker-empty">
               <Text as="span" variant="bodyMd" tone="subdued">
@@ -2143,6 +2209,35 @@ function ArticleImageCard({
   );
 }
 
+function readEditorBlockType(editor: HTMLElement, selection: Selection | null) {
+  if (!selection || selection.rangeCount === 0) return "p";
+
+  const range = selection.getRangeAt(0);
+  let node: Node | null = selection.anchorNode || range.startContainer || range.commonAncestorContainer;
+
+  if (node?.nodeType === Node.TEXT_NODE) {
+    node = node.parentNode;
+  }
+
+  if (!node || !editor.contains(node)) {
+    node = range.commonAncestorContainer;
+    if (node.nodeType === Node.TEXT_NODE) {
+      node = node.parentNode;
+    }
+  }
+
+  while (node && node !== editor) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const tagName = (node as HTMLElement).tagName.toLowerCase();
+      if (EDITOR_BLOCK_TAGS.has(tagName)) return tagName;
+    }
+
+    node = node.parentNode;
+  }
+
+  return "p";
+}
+
 function RichArticleEditor({
   value,
   onChange,
@@ -2174,6 +2269,7 @@ function RichArticleEditor({
   const [alignPopoverActive, setAlignPopoverActive] = useState(false);
   const [colorPopoverActive, setColorPopoverActive] = useState(false);
   const [currentAlignment, setCurrentAlignment] = useState<"justifyLeft" | "justifyCenter" | "justifyRight">("justifyLeft");
+  const [currentBlockType, setCurrentBlockType] = useState("p");
   const [imageEditModalOpen, setImageEditModalOpen] = useState(false);
   const [editImageSize, setEditImageSize] = useState<EditorImageSize>("original");
   const [editImageAlt, setEditImageAlt] = useState("");
@@ -2210,6 +2306,7 @@ function RichArticleEditor({
     const container = range.commonAncestorContainer;
     if (editor.contains(container.nodeType === Node.TEXT_NODE ? container.parentNode : container)) {
       savedSelectionRef.current = range.cloneRange();
+      setCurrentBlockType(readEditorBlockType(editor, selection));
     }
   }, []);
 
@@ -2245,6 +2342,11 @@ function RichArticleEditor({
       document.execCommand(command, false, commandValue);
       emitChange();
       saveSelection();
+      if (command === "formatBlock" && commandValue) {
+        setCurrentBlockType(commandValue);
+      } else {
+        setCurrentBlockType(readEditorBlockType(editor, window.getSelection()));
+      }
     },
     [emitChange, restoreSelection, saveSelection],
   );
@@ -2635,9 +2737,13 @@ function RichArticleEditor({
           <select
             className="bp-editor-select"
             aria-label="Text style"
-            defaultValue="p"
+            value={currentBlockType}
             onMouseDown={saveSelection}
-            onChange={(event) => runCommand("formatBlock", event.currentTarget.value)}
+            onChange={(event) => {
+              const nextBlockType = event.currentTarget.value;
+              setCurrentBlockType(nextBlockType);
+              runCommand("formatBlock", nextBlockType);
+            }}
           >
             <option value="p">Paragraph</option>
             <option value="h1">Heading 1</option>
@@ -3782,13 +3888,26 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   ]);
 }
 
-async function fetchShopifyImageFiles(admin: any, search = "") {
+function mergeImageFiles(existing: ShopifyImageFile[], incoming: ShopifyImageFile[]) {
+  const seen = new Set(existing.map((image) => image.id || image.url));
+  return [
+    ...existing,
+    ...incoming.filter((image) => {
+      const key = image.id || image.url;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }),
+  ];
+}
+
+async function fetchShopifyImageFiles(admin: any, search = "", after: string | null = null) {
   try {
     const response = await withTimeout<any>(
       admin.graphql(
         `#graphql
-      query GetImageFiles($query: String) {
-        files(first: 24, query: $query, sortKey: UPDATED_AT, reverse: true) {
+      query GetImageFiles($query: String, $after: String) {
+        files(first: ${IMAGE_FILE_PAGE_SIZE}, after: $after, query: $query, sortKey: UPDATED_AT, reverse: true) {
           nodes {
             __typename
             id
@@ -3809,9 +3928,13 @@ async function fetchShopifyImageFiles(admin: any, search = "") {
               }
             }
           }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
         }
       }`,
-        { variables: { query: search || null } },
+        { variables: { query: search || null, after } },
       ),
       8000,
       "Shopify image search timed out. Try a more specific search.",
@@ -3822,19 +3945,26 @@ async function fetchShopifyImageFiles(admin: any, search = "") {
       return {
         images: [] as ShopifyImageFile[],
         error: result.errors[0]?.message || "Could not load Shopify images.",
+        hasNextPage: false,
+        endCursor: null,
       };
     }
 
+    const pageInfo = result.data?.files?.pageInfo;
     return {
       images: (result.data?.files?.nodes || [])
         .map(normalizeShopifyImageFile)
         .filter(Boolean) as ShopifyImageFile[],
       error: "",
+      hasNextPage: Boolean(pageInfo?.hasNextPage),
+      endCursor: pageInfo?.endCursor || null,
     };
   } catch (error) {
     return {
       images: [] as ShopifyImageFile[],
       error: error instanceof Error ? error.message : "Could not load Shopify images.",
+      hasNextPage: false,
+      endCursor: null,
     };
   }
 }
