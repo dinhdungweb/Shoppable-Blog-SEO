@@ -307,8 +307,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   await Promise.all(
     audits.map(({ article, audit }) => {
       const stored = storedSeoMap.get(article.id);
-      const metaTitle = stored?.metaTitle || article.seoTitle || null;
-      const metaDescription = stored?.metaDescription || article.seoDescription || null;
+      const metaTitle = getEffectiveSeoTitle(stored?.metaTitle, article.title) || null;
+      const metaDescription = getEffectiveSeoDescription(stored?.metaDescription, article) || null;
 
       return prisma.articleSEO.upsert({
         where: { articleId: article.id },
@@ -887,8 +887,8 @@ function auditArticle(
   storedSeo?: StoredSeoInput | null,
 ) {
   const issues: SeoIssue[] = [];
-  const seoTitle = textValue(storedSeo?.metaTitle) || article.seoTitle.trim();
-  const seoDescription = textValue(storedSeo?.metaDescription) || article.seoDescription.trim();
+  const seoTitle = getEffectiveSeoTitle(storedSeo?.metaTitle, article.title);
+  const seoDescription = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
   const bodyText = stripHtml(`${article.summary || ""} ${article.body || ""}`);
   const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
 
@@ -1058,8 +1058,8 @@ function auditArticle(
 
 function calculateBlogDetailSeoScore(article: ArticleInput, productCount: number, storedSeo?: StoredSeoInput | null) {
   let score = 100;
-  const title = textValue(storedSeo?.metaTitle) || article.title || "";
-  const summary = textValue(storedSeo?.metaDescription) || article.summary || "";
+  const title = getEffectiveSeoTitle(storedSeo?.metaTitle, article.title);
+  const summary = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
   const body = article.body || "";
   const text = stripHtml(body);
   const wordCount = text ? text.split(/\s+/).length : 0;
@@ -1244,6 +1244,32 @@ function stripHtml(value: string) {
 
 function textValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isLikelyStaleAutoMetaTitle(metaTitle: string, articleTitle: string) {
+  const meta = metaTitle.trim();
+  const title = articleTitle.trim();
+
+  return Boolean(
+    meta &&
+      title &&
+      meta.length <= 2 &&
+      meta.length < title.length &&
+      title.toLowerCase().startsWith(meta.toLowerCase()),
+  );
+}
+
+function getEffectiveSeoTitle(metaTitle: unknown, articleTitle: unknown) {
+  const meta = textValue(metaTitle);
+  const title = textValue(articleTitle);
+
+  if (!meta || isLikelyStaleAutoMetaTitle(meta, title)) return title;
+
+  return meta;
+}
+
+function getEffectiveSeoDescription(metaDescription: unknown, article: ArticleInput) {
+  return textValue(metaDescription) || textValue(article.seoDescription) || textValue(article.summary);
 }
 
 function slugifyKeyword(value: string) {
