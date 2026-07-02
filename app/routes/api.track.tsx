@@ -57,7 +57,10 @@ async function recordWidgetEvent({
   sessionId?: string | null;
   referrer?: string | null;
 }) {
-  if (!shop || !articleId || !productId || !eventType) {
+  const normalizedShop = cleanShopDomain(shop);
+  const normalizedArticleId = normalizeArticleId(articleId);
+
+  if (!normalizedShop || !normalizedArticleId || !productId || !eventType) {
     return json({ error: "Missing required fields" }, { status: 400, headers: TRACK_HEADERS });
   }
 
@@ -66,7 +69,7 @@ async function recordWidgetEvent({
     return json({ error: "Invalid event type" }, { status: 400, headers: TRACK_HEADERS });
   }
 
-  const shouldTrack = await shouldRecordTracking(shop);
+  const shouldTrack = await shouldRecordTracking(normalizedShop);
   if (!shouldTrack) {
     return json({ success: true, skipped: true }, { headers: TRACK_HEADERS });
   }
@@ -81,8 +84,8 @@ async function recordWidgetEvent({
 
   await prisma.widgetEvent.create({
     data: {
-      shop,
-      articleId,
+      shop: normalizedShop,
+      articleId: normalizedArticleId,
       productId: normalizedProductId,
       blockId: cleanProductBlockId(blockId),
       eventType,
@@ -125,6 +128,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     headers: TRACK_HEADERS,
   });
 };
+
+function cleanShopDomain(value?: string | null) {
+  const rawValue = (value || "").trim().toLowerCase();
+  if (!rawValue) return "";
+
+  try {
+    const url =
+      rawValue.startsWith("http://") || rawValue.startsWith("https://")
+        ? new URL(rawValue)
+        : null;
+    return (url ? url.hostname : rawValue).replace(/^\/+/, "").split("/")[0];
+  } catch {
+    return rawValue.replace(/^https?:\/\//, "").split("/")[0];
+  }
+}
+
+function normalizeArticleId(value?: string | null) {
+  const articleId = (value || "").trim();
+  if (!articleId || articleId === "unknown") return "";
+  if (/^\d+$/.test(articleId)) return `gid://shopify/Article/${articleId}`;
+  return articleId;
+}
 
 async function shouldRecordTracking(shop: string) {
   const config = await prisma.shopConfig.findUnique({

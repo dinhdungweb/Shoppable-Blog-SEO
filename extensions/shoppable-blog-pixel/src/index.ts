@@ -1,6 +1,6 @@
 import { register } from "@shopify/web-pixels-extension";
 
-register(({ analytics, browser, init }) => {
+register(({ analytics, browser, init, settings }) => {
   const TRACK_API_URL = "https://shopable-blog.bluepeaks.top/api/track";
   const STORAGE_KEY = "sbs_attribution";
 
@@ -18,7 +18,15 @@ register(({ analytics, browser, init }) => {
         await browser.localStorage.removeItem(STORAGE_KEY);
         return null;
       }
-      return parsed;
+
+      const articleId = normalizeArticleId(parsed.articleId);
+      if (!articleId) return null;
+
+      return {
+        ...parsed,
+        articleId,
+        blockId: cleanBlockId(parsed.blockId),
+      };
     } catch (e) {
       return null;
     }
@@ -27,8 +35,8 @@ register(({ analytics, browser, init }) => {
   async function setAttribution(articleId: string, blockId: string) {
     try {
       await browser.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        articleId,
-        blockId,
+        articleId: normalizeArticleId(articleId),
+        blockId: cleanBlockId(blockId),
         timestamp: Date.now()
       }));
     } catch (e) {
@@ -37,7 +45,9 @@ register(({ analytics, browser, init }) => {
   }
 
   function sendTrackEvent(eventType: string, productId: string, attribution: any) {
-    const shop = init.context.document.location.hostname;
+    const shop = getCanonicalShop();
+    const articleId = normalizeArticleId(attribution.articleId);
+    if (!shop || !articleId || !productId) return;
     
     // Using fetch POST
     fetch(TRACK_API_URL, {
@@ -47,13 +57,48 @@ register(({ analytics, browser, init }) => {
       },
       body: JSON.stringify({
         shop: shop,
-        articleId: attribution.articleId,
-        blockId: attribution.blockId,
+        articleId,
+        blockId: cleanBlockId(attribution.blockId),
         productId: productId,
         eventType: eventType,
         sessionId: init.context.document.location.hostname + "-" + Date.now() // Unique enough for pixel
       })
     }).catch(() => {});
+  }
+
+  function getCanonicalShop() {
+    return (
+      normalizeShopDomain(settings?.accountID) ||
+      normalizeShopDomain(init.data?.shop?.myshopifyDomain) ||
+      normalizeShopDomain(init.context.document.location.hostname)
+    );
+  }
+
+  function normalizeShopDomain(value: unknown) {
+    const rawValue = String(value || "").trim().toLowerCase();
+    if (!rawValue) return "";
+
+    try {
+      const url = rawValue.startsWith("http://") || rawValue.startsWith("https://")
+        ? new URL(rawValue)
+        : null;
+      return (url ? url.hostname : rawValue).replace(/^\/+/, "").split("/")[0];
+    } catch (e) {
+      return rawValue.replace(/^https?:\/\//, "").split("/")[0];
+    }
+  }
+
+  function normalizeArticleId(value: unknown) {
+    const articleId = String(value || "").trim();
+    if (!articleId || articleId === "unknown") return "";
+    if (/^\d+$/.test(articleId)) return `gid://shopify/Article/${articleId}`;
+    return articleId;
+  }
+
+  function cleanBlockId(value: unknown) {
+    const blockId = String(value || "").trim();
+    if (!blockId || blockId === "carousel" || blockId === "grid") return "default";
+    return blockId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) || "default";
   }
 
   // 1. Listen to page view to extract UTM parameters and set attribution
@@ -65,8 +110,8 @@ register(({ analytics, browser, init }) => {
       
       // If the user came from the Shoppable Blog Widget
       if (utmMedium === "shoppable_blog") {
-        const articleId = url.searchParams.get("utm_term") || "unknown";
-        const blockId = url.searchParams.get("utm_content") || "default";
+        const articleId = normalizeArticleId(url.searchParams.get("utm_term"));
+        const blockId = cleanBlockId(url.searchParams.get("utm_content"));
         
         if (articleId) {
           await setAttribution(articleId, blockId);
