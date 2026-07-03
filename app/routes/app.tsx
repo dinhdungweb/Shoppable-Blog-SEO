@@ -12,25 +12,28 @@ import { scheduleCrispChatLoad } from "../utils/crisp-chat";
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  return {
+    apiKey: process.env.SHOPIFY_API_KEY || "",
+    shop: session.shop,
+  };
 };
 
-function CrispChatLoader() {
+function CrispChatLoader({ shop }: { shop?: string }) {
   useEffect(() => {
-    return scheduleCrispChatLoad();
-  }, []);
+    return scheduleCrispChatLoad(shop);
+  }, [shop]);
 
   return null;
 }
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, shop } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
-      <CrispChatLoader />
+      <CrispChatLoader shop={shop} />
       <NavMenu>
         <Link to="/app" rel="home">
           Dashboard

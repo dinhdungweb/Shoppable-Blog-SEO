@@ -4071,8 +4071,8 @@ async function fetchShopifyImageFiles(admin: any, search = "", after: string | n
     const response = await withTimeout<any>(
       admin.graphql(
         `#graphql
-      query GetImageFiles($query: String, $after: String) {
-        files(first: ${IMAGE_FILE_PAGE_SIZE}, after: $after, query: $query, sortKey: UPDATED_AT, reverse: true) {
+      query GetImageFiles($query: String, $after: String, $first: Int = 50) {
+        files(first: $first, after: $after, query: $query, sortKey: UPDATED_AT, reverse: true) {
           nodes {
             __typename
             id
@@ -4099,7 +4099,7 @@ async function fetchShopifyImageFiles(admin: any, search = "", after: string | n
           }
         }
       }`,
-        { variables: { query: search || null, after } },
+        { variables: { query: search || null, after, first: IMAGE_FILE_PAGE_SIZE } },
       ),
       8000,
       "Shopify image search timed out. Try a more specific search.",

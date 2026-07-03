@@ -9,7 +9,32 @@ export const TOC_AUTO_INSERT_POSITION_OPTIONS = [
   "after-paragraph-3",
 ] as const;
 
-export const CONTENT_NAV_DEFAULTS = {
+export type ContentNavConfig = {
+  appStatus: boolean;
+  breadcrumbsEnabled: boolean;
+  breadcrumbsStyle: (typeof BREADCRUMB_STYLE_OPTIONS)[number];
+  breadcrumbsShowHome: boolean;
+  breadcrumbsHomeLabel: string;
+  breadcrumbsShowBlog: boolean;
+  breadcrumbsCurrentClickable: boolean;
+  breadcrumbsSeparator: string;
+  tocEnabled: boolean;
+  tocAutoInsertEnabled: boolean;
+  tocAutoInsertPosition: (typeof TOC_AUTO_INSERT_POSITION_OPTIONS)[number];
+  tocTitle: string;
+  tocLevels: (typeof TOC_LEVEL_OPTIONS)[number];
+  tocStyle: (typeof TOC_STYLE_OPTIONS)[number];
+  tocLayout: (typeof TOC_LAYOUT_OPTIONS)[number];
+  tocNumbering: boolean;
+  tocSmoothScroll: boolean;
+  tocMobileCollapsed: boolean;
+  tocStickyOffset: number;
+  contentNavPrimaryColor: string;
+  contentNavCustomCss: string;
+  [key: string]: any;
+};
+
+export const CONTENT_NAV_DEFAULTS: ContentNavConfig = {
   appStatus: true,
   breadcrumbsEnabled: true,
   breadcrumbsStyle: "minimal",
@@ -33,9 +58,9 @@ export const CONTENT_NAV_DEFAULTS = {
   contentNavCustomCss: "",
 };
 
-export function normalizeContentNavConfig<T extends Partial<typeof CONTENT_NAV_DEFAULTS> | null | undefined>(
-  config: T,
-) {
+export function normalizeContentNavConfig(
+  config?: Record<string, any> | null,
+): ContentNavConfig {
   return {
     ...CONTENT_NAV_DEFAULTS,
     ...(config || {}),

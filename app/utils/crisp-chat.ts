@@ -7,8 +7,7 @@ declare global {
   interface Window {
     $crisp?: unknown[];
     CRISP_WEBSITE_ID?: string;
-    requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
-    cancelIdleCallback?: (handle: number) => void;
+    __sbsCrispShop?: string;
   }
 }
 
@@ -18,15 +17,20 @@ function canUseDOM() {
   return typeof window !== "undefined" && typeof document !== "undefined";
 }
 
-function setCrispGlobals() {
+function setCrispGlobals(shop?: string) {
   window.$crisp = window.$crisp || [];
   window.CRISP_WEBSITE_ID = CRISP_WEBSITE_ID;
+
+  if (shop && window.__sbsCrispShop !== shop) {
+    (window.$crisp as unknown[][]).push(["set", "session:data", [[["shop", shop]]]]);
+    window.__sbsCrispShop = shop;
+  }
 }
 
-export function loadCrispChat() {
+export function loadCrispChat(shop?: string) {
   if (!canUseDOM()) return Promise.resolve(false);
 
-  setCrispGlobals();
+  setCrispGlobals(shop);
 
   if (document.querySelector(CRISP_SCRIPT_SELECTOR)) {
     return Promise.resolve(true);
@@ -51,18 +55,21 @@ export function loadCrispChat() {
   return crispLoadPromise;
 }
 
-export function scheduleCrispChatLoad() {
+export function scheduleCrispChatLoad(shop?: string) {
   if (!canUseDOM()) return () => {};
+
+  setCrispGlobals(shop);
 
   let timeoutId: number | undefined;
   let idleCallbackId: number | undefined;
 
   const loadWhenReady = () => {
-    loadCrispChat().catch(() => {});
+    loadCrispChat(shop).catch(() => {});
   };
 
-  if (window.requestIdleCallback) {
-    idleCallbackId = window.requestIdleCallback(loadWhenReady, {
+  const win = window as any;
+  if (win.requestIdleCallback) {
+    idleCallbackId = win.requestIdleCallback(loadWhenReady, {
       timeout: CRISP_IDLE_TIMEOUT_MS,
     });
   } else {
@@ -70,8 +77,8 @@ export function scheduleCrispChatLoad() {
   }
 
   return () => {
-    if (idleCallbackId && window.cancelIdleCallback) {
-      window.cancelIdleCallback(idleCallbackId);
+    if (idleCallbackId && win.cancelIdleCallback) {
+      win.cancelIdleCallback(idleCallbackId);
     }
 
     if (timeoutId) {
@@ -80,10 +87,10 @@ export function scheduleCrispChatLoad() {
   };
 }
 
-export function openCrispChat() {
+export function openCrispChat(shop?: string) {
   if (!canUseDOM()) return;
 
-  setCrispGlobals();
-  window.$crisp?.push(["do", "chat:open"]);
-  loadCrispChat().catch(() => {});
+  setCrispGlobals(shop);
+  (window.$crisp as unknown[][])?.push(["do", "chat:open"]);
+  loadCrispChat(shop).catch(() => {});
 }
