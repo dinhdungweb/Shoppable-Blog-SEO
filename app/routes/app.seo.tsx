@@ -182,8 +182,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       update: {},
       create: { shop },
     }),
-    prisma.searchConsoleConnection.findUnique({ where: { shop } }),
-    prisma.searchConsoleMetric.findMany({ where: { shop, windowDays: 28 }, orderBy: { impressions: "desc" } }),
+    prisma.searchConsoleConnection.findUnique({ where: { shop } }).catch((error) => {
+      console.error("Search Console connection table unavailable:", error);
+      return null;
+    }),
+    prisma.searchConsoleMetric.findMany({ where: { shop, windowDays: 28 }, orderBy: { impressions: "desc" } }).catch((error) => {
+      console.error("Search Console metrics table unavailable:", error);
+      return [];
+    }),
   ]);
 
   const fallbackArticleMap = new Map<string, ArticleInput>();

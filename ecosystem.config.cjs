@@ -3,7 +3,8 @@ module.exports = {
     {
       name: 'shoppable-blog-seo',
       script: 'npm',
-      args: 'run start',
+      // Deploy pending Prisma migrations before accepting traffic.
+      args: 'run docker-start',
       env: {
         NODE_ENV: 'production',
         PORT: 3004,
