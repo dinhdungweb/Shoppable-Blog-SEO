@@ -1,0 +1,4 @@
+ALTER TABLE "SeoBulkChange"
+  ADD COLUMN "imageUrl" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "beforeImageAlt" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "afterImageAlt" TEXT NOT NULL DEFAULT '';

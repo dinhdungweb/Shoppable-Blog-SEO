@@ -235,6 +235,9 @@ model SeoBulkChange {
   beforeMetaDescription String    @default("")
   afterMetaTitle        String    @default("")
   afterMetaDescription  String    @default("")
+  imageUrl              String    @default("")
+  beforeImageAlt        String    @default("")
+  afterImageAlt         String    @default("")
   status                String    @default("applied")
   appliedAt             DateTime  @default(now())
   undoneAt              DateTime?
