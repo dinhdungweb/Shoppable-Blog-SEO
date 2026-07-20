@@ -77,23 +77,23 @@ export function auditSeo({
       category: "basic",
       type: "content_length",
       label: "Content length",
-      message: `Your article is too short (${wordCount} words). Aim for at least 600 words.`,
-      severity: "critical",
-      impact: "High",
+      message: `The article has ${wordCount} words. Check whether it fully satisfies the reader's intent; Google has no preferred word count.`,
+      severity: wordCount < 80 ? "critical" : "warning",
+      impact: wordCount < 80 ? "High" : "Medium",
       effort: "Medium",
     });
-    score -= 15;
+    score -= wordCount < 80 ? 12 : 4;
   } else if (wordCount < 600) {
     issues.push({
       category: "basic",
       type: "content_length",
       label: "Content length",
-      message: `Your article is ${wordCount} words. Aim for at least 600 words.`,
-      severity: "warning",
-      impact: "Medium",
+      message: `The article has ${wordCount} words. Expand it only if important questions or evidence are missing.`,
+      severity: "info",
+      impact: "Low",
       effort: "Medium",
     });
-    score -= 5;
+    score -= 1;
   } else {
     issues.push({
       category: "basic",
@@ -135,7 +135,7 @@ export function auditSeo({
       impact: "Medium",
       effort: "Low",
     });
-    score -= 3;
+    score -= 1;
   } else {
     issues.push({
       category: "additional",
@@ -150,13 +150,12 @@ export function auditSeo({
     issues.push({
       category: "additional",
       type: "dofollow_external_links",
-      label: "DoFollow external links",
-      message: "Add DoFollow links pointing to external resources.",
-      severity: "warning",
+      label: "External link qualification",
+      message: "No standard external reference link was found. Add one only when it gives readers useful evidence.",
+      severity: "info",
       impact: "Low",
       effort: "Low",
     });
-    score -= 2;
   } else {
     issues.push({
       category: "additional",
@@ -244,7 +243,7 @@ export function auditSeo({
       impact: "Low",
       effort: "Low",
     });
-    score -= 2;
+    // Numbers can improve some titles, but they are not an SEO requirement.
   } else {
     issues.push({
       category: "content_readability",
@@ -320,7 +319,7 @@ export function auditSeo({
             impact: "High",
             effort: "Low",
           });
-          score -= 10;
+          score -= 5;
         }
 
         if (inSummary) {
@@ -341,7 +340,7 @@ export function auditSeo({
             impact: "Medium",
             effort: "Low",
           });
-          score -= 5;
+          score -= 2;
         }
 
         if (inHandle) {
@@ -362,7 +361,7 @@ export function auditSeo({
             impact: "Medium",
             effort: "Low",
           });
-          score -= 5;
+          score -= 2;
         }
 
         if (inFirst10) {
@@ -383,7 +382,7 @@ export function auditSeo({
             impact: "Medium",
             effort: "Low",
           });
-          score -= 5;
+          score -= 2;
         }
 
         if (occurrences > 0) {
@@ -404,7 +403,7 @@ export function auditSeo({
             impact: "High",
             effort: "Medium",
           });
-          score -= 15;
+          score -= 6;
         }
 
         if (inHeading) {
@@ -425,16 +424,16 @@ export function auditSeo({
             impact: "Low",
             effort: "Medium",
           });
-          score -= 2;
+          score -= 1;
         }
 
         if (occurrences > 0) {
-          if (density >= 0.5 && density <= 2.5) {
+          if (density >= 0.5 && density <= 4) {
             issues.push({
               category: "additional",
               type: "kw_density",
               label: "Keyword Density",
-              message: `Keyword density is ${density.toFixed(2)}%, which is great.`,
+              message: `The exact focus phrase appears naturally in the article (${density.toFixed(2)}%).`,
               severity: "good",
             });
           } else if (density < 0.5) {
@@ -442,31 +441,30 @@ export function auditSeo({
               category: "additional",
               type: "kw_density",
               label: "Keyword Density",
-              message: `Keyword density is ${density.toFixed(2)}%, which is low. Aim for ~1%.`,
-              severity: "warning",
+              message: `The exact phrase appears at ${density.toFixed(2)}% density. This is informational; use natural variants when they help readers.`,
+              severity: "info",
               impact: "Low",
               effort: "Medium",
             });
-            score -= 2;
-          } else {
+          } else if (density > 4) {
             issues.push({
               category: "additional",
               type: "kw_density",
               label: "Keyword Density",
-              message: `Keyword density is ${density.toFixed(2)}%, which is high. Don't over-optimize.`,
+              message: `The exact phrase appears at ${density.toFixed(2)}% density. Review the copy for repetitive or unnatural wording.`,
               severity: "warning",
               impact: "Low",
               effort: "Medium",
             });
-            score -= 2;
+            score -= 1;
           }
         } else {
           issues.push({
             category: "additional",
             type: "kw_density",
             label: "Keyword Density",
-            message: "Keyword Density is 0. Aim for around 1% Keyword Density.",
-            severity: "warning",
+            message: "The exact focus phrase was not found. Natural variants may still cover the topic.",
+            severity: "info",
             impact: "Low",
             effort: "Medium",
           });
@@ -490,7 +488,7 @@ export function auditSeo({
             impact: "Low",
             effort: "Low",
           });
-          score -= 2;
+          score -= 1;
         }
 
         if (titleLower.indexOf(keyword) >= 0 && titleLower.indexOf(keyword) < 20) {
@@ -523,7 +521,7 @@ export function auditSeo({
           impact: "Low",
           effort: "Low",
         });
-        score -= 3;
+        score -= 1;
       } else {
         issues.push({
           category: "additional",
@@ -536,69 +534,15 @@ export function auditSeo({
     });
   } else {
     issues.push({
-      category: "basic",
-      type: "kw_title",
-      label: "Keyword in Title",
-      message: "Add Focus Keyword to the SEO title.",
-      severity: "critical",
-      impact: "High",
-      effort: "Low",
-    });
-    issues.push({
-      category: "basic",
-      type: "kw_summary",
-      label: "Keyword in Meta",
-      message: "Add Focus Keyword to your SEO Meta Description.",
-      severity: "critical",
-      impact: "Medium",
-      effort: "Low",
-    });
-    issues.push({
-      category: "basic",
-      type: "kw_url",
-      label: "Keyword in URL",
-      message: "Use Focus Keyword in the URL.",
-      severity: "critical",
-      impact: "Medium",
-      effort: "Low",
-    });
-    issues.push({
-      category: "basic",
-      type: "kw_early",
-      label: "Keyword at Start",
-      message: "Use Focus Keyword at the beginning of your content.",
-      severity: "critical",
-      impact: "Medium",
-      effort: "Low",
-    });
-    issues.push({
-      category: "basic",
-      type: "kw_content",
-      label: "Keyword in Content",
-      message: "Use Focus Keyword in the content.",
-      severity: "critical",
-      impact: "High",
-      effort: "Medium",
-    });
-    issues.push({
       category: "additional",
       type: "kw_missing",
-      label: "Missing Focus Keyword",
-      message: "Set a Focus Keyword for this content.",
-      severity: "critical",
-      impact: "High",
-      effort: "Low",
-    });
-    issues.push({
-      category: "title_readability",
-      type: "kw_title_pos",
-      label: "Keyword Position",
-      message: "Use the Focus Keyword near the beginning of SEO title.",
-      severity: "critical",
+      label: "Primary topic not set",
+      message: "Optionally set a primary topic for reporting and cannibalization detection.",
+      severity: "info",
       impact: "Low",
       effort: "Low",
     });
-    score -= 30;
+    score -= 3;
   }
 
   return {

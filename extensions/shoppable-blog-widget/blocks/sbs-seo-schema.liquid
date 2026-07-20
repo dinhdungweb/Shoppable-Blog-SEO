@@ -9,10 +9,12 @@
 {
   "@context": "https://schema.org",
   "@type": "BlogPosting",
+  "@id": {{ canonical_url | append: '#article' | json }},
   "headline": {{ article.title | json }},
-  "description": {{ article.excerpt | strip_html | truncate: 160 | json }},
+  "description": {% if article.excerpt != blank %}{{ article.excerpt | strip_html | truncate: 300 | json }}{% else %}{{ article.content | strip_html | truncate: 300 | json }}{% endif %},
   "author": {
     "@type": "Person",
+    "@id": {{ shop.url | append: '#author-' | append: article.author | handleize | json }},
     "name": {{ article.author | json }}
   },
   "datePublished": {{ article.published_at | date: "%Y-%m-%dT%H:%M:%S%z" | json }},
@@ -22,12 +24,14 @@
   {% endif %}
   "publisher": {
     "@type": "Organization",
+    "@id": {{ shop.url | append: '#organization' | json }},
     "name": {{ shop.name | json }},
     "url": {{ shop.url | json }}
   },
   "mainEntityOfPage": {
     "@type": "WebPage",
-    "@id": {{ canonical_url | json }}
+    "@id": {{ canonical_url | append: '#webpage' | json }},
+    "url": {{ canonical_url | json }}
   },
   "url": {{ canonical_url | json }}
 }
@@ -38,6 +42,7 @@
 {
   "@context": "https://schema.org",
   "@type": "BreadcrumbList",
+  "@id": {{ canonical_url | append: '#breadcrumb' | json }},
   "itemListElement": [
     {
       "@type": "ListItem",

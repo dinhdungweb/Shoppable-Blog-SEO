@@ -8,6 +8,7 @@ import {
   Box,
   Button,
   Card,
+  Banner,
   Divider,
   EmptyState,
   Icon,
@@ -18,6 +19,7 @@ import {
   Modal,
   Page,
   ProgressBar,
+  Select,
   Tabs,
   Text,
   Thumbnail,
@@ -38,6 +40,9 @@ import prisma from "../db.server";
 import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
+import { auditSeoPortfolio } from "../seo-portfolio-audit";
+import { buildSearchOpportunities, summarizeSearchMetrics } from "../search-console-opportunities";
+import { disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -58,6 +63,7 @@ type ArticleInput = {
   blogId: string;
   blogTitle: string;
   blogHandle: string;
+  authorName: string;
 };
 
 type StoredSeoInput = {
@@ -85,6 +91,9 @@ type AuditedPost = ArticleInput & {
   score: number;
   issues: SeoIssue[];
   lastAnalyzedAt: string | null;
+  effectiveSeoTitle: string;
+  effectiveSeoDescription: string;
+  focusKeyword: string;
 };
 
 type IssueGroup = {
@@ -145,7 +154,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shopifyError = "Could not load Shopify blog posts.";
   }
 
-  const [linkedProducts, seoRows, config] = await Promise.all([
+  const [linkedProducts, seoRows, config, searchConnection, searchMetrics] = await Promise.all([
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
       select: {
@@ -173,6 +182,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       update: {},
       create: { shop },
     }),
+    prisma.searchConsoleConnection.findUnique({ where: { shop } }),
+    prisma.searchConsoleMetric.findMany({ where: { shop, windowDays: 28 }, orderBy: { impressions: "desc" } }),
   ]);
 
   const fallbackArticleMap = new Map<string, ArticleInput>();
@@ -192,6 +203,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         blogId: product.blogId || "",
         blogTitle: "Blog",
         blogHandle: "",
+        authorName: "",
       });
     }
   });
@@ -211,6 +223,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         blogId: "",
         blogTitle: "Blog",
         blogHandle: "",
+        authorName: "",
       });
     }
   });
@@ -244,10 +257,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         productCount,
         score: audit.score,
         issues: audit.issues,
+        effectiveSeoTitle: getEffectiveSeoTitle(stored?.metaTitle, article),
+        effectiveSeoDescription: getEffectiveSeoDescription(stored?.metaDescription, article),
+        focusKeyword: textValue(stored?.focusKeyword),
         lastAnalyzedAt: stored?.lastAnalyzedAt ? stored.lastAnalyzedAt.toISOString() : null,
       };
-    })
-    .sort((a, b) => a.score - b.score || b.issues.length - a.issues.length || a.title.localeCompare(b.title));
+    });
+  applyPortfolioIssues(auditedPosts);
+  auditedPosts.sort((a, b) => a.score - b.score || b.issues.length - a.issues.length || a.title.localeCompare(b.title));
 
   const issueGroups = buildIssueGroups(auditedPosts);
   const issueStats = getIssueStats(issueGroups);
@@ -257,6 +274,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (!latest || row.lastAnalyzedAt > latest) return row.lastAnalyzedAt;
     return latest;
   }, null);
+  const availableSites = (searchConnection?.availableSites as Array<{ siteUrl: string; permissionLevel: string }> | null) || [];
+  const searchSummary = summarizeSearchMetrics(searchMetrics);
+  const searchOpportunities = buildSearchOpportunities(searchMetrics);
 
   return json({
     shopifyError,
@@ -269,6 +289,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     totalPosts: auditedPosts.length,
     lastScanAt: lastScanAt ? lastScanAt.toISOString() : null,
     postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6),
+    searchConsole: {
+      configured: isSearchConsoleConfigured(), connected: Boolean(searchConnection), selectedSiteUrl: searchConnection?.selectedSiteUrl || "",
+      availableSites, lastSyncedAt: searchConnection?.lastSyncedAt?.toISOString() || null, error: searchConnection?.lastSyncError || "",
+      summary: searchSummary, opportunities: searchOpportunities,
+    },
   });
 };
 
@@ -278,6 +303,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { limits } = await getActivePlanAndLimits(billing);
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  if (intent === "google_select") {
+    try { await selectSearchConsoleSite(shop, String(formData.get("siteUrl") || "")); return json({ success: true, googleAction: "selected" }); }
+    catch (error) { return json({ error: error instanceof Error ? error.message : "Could not select property." }, { status: 400 }); }
+  }
+  if (intent === "google_sync") {
+    try { const syncedCount = await syncSearchConsole(shop); return json({ success: true, googleAction: "synced", syncedCount }); }
+    catch (error) { return json({ error: error instanceof Error ? error.message : "Search Console sync failed." }, { status: 400 }); }
+  }
+  if (intent === "google_disconnect") {
+    await disconnectSearchConsole(shop);
+    return json({ success: true, googleAction: "disconnected" });
+  }
 
   if (intent !== "scan_all") {
     return json({ error: "Unsupported action" }, { status: 400 });
@@ -321,11 +359,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     tocEnabled: contentNavConfig.tocEnabled,
     tocAutoInsertEnabled: contentNavConfig.tocAutoInsertEnabled,
   };
-  const audits = articles.map((article) => {
+  const audits: AuditedPost[] = articles.map((article) => {
     const stored = storedSeoMap.get(article.id);
     const audit = auditArticle(article, productCountMap.get(article.id) || 0, seoAuditConfig, stored, shop, shopDomains);
-    return { article, audit };
+    return {
+      ...article,
+      productCount: productCountMap.get(article.id) || 0,
+      score: audit.score,
+      issues: audit.issues,
+      lastAnalyzedAt: stored?.lastAnalyzedAt?.toISOString() || null,
+      effectiveSeoTitle: getEffectiveSeoTitle(stored?.metaTitle, article),
+      effectiveSeoDescription: getEffectiveSeoDescription(stored?.metaDescription, article),
+      focusKeyword: textValue(stored?.focusKeyword),
+    };
   });
+  applyPortfolioIssues(audits);
 
   const articleIds = articles.map((a) => a.id);
 
@@ -338,8 +386,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   await Promise.all(
-    audits.map(({ article, audit }) => {
-      const stored = storedSeoMap.get(article.id);
+    audits.map((audit) => {
+      const article = audit;
+      const stored = storedSeoMap.get(audit.id);
       const metaTitle = textValue(stored?.metaTitle) || null;
       const metaDescription = textValue(stored?.metaDescription) || null;
 
@@ -371,7 +420,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({
     success: true,
     scannedCount: audits.length,
-    averageScore: getAverageScore(audits.map(({ article, audit }) => ({ ...article, productCount: productCountMap.get(article.id) || 0, score: audit.score, issues: audit.issues, lastAnalyzedAt: new Date().toISOString() }))),
+    averageScore: getAverageScore(audits),
   });
 };
 
@@ -387,6 +436,7 @@ export default function SEOOptimizer() {
     totalPosts,
     lastScanAt,
     postsNeedingAttention,
+    searchConsole,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -400,12 +450,13 @@ export default function SEOOptimizer() {
   );
   const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(visibleIssues as any);
   const isScanning = scanFetcher.state !== "idle";
+  const isGoogleBusy = isScanning && String(scanFetcher.formData?.get("intent") || "").startsWith("google_");
 
   useEffect(() => {
-    const data = scanFetcher.data as { success?: boolean; scannedCount?: number; averageScore?: number; error?: string } | undefined;
+    const data = scanFetcher.data as { success?: boolean; scannedCount?: number; averageScore?: number; error?: string; googleAction?: string; syncedCount?: number } | undefined;
     if (!data) return;
     if (data.success) {
-      shopify.toast.show(`SEO scan complete: ${data.scannedCount || 0} posts, avg ${data.averageScore || 0}/100`);
+      shopify.toast.show(data.googleAction ? (data.googleAction === "synced" ? `Search Console synced: ${data.syncedCount || 0} rows` : `Search Console ${data.googleAction}`) : `SEO scan complete: ${data.scannedCount || 0} posts, avg ${data.averageScore || 0}/100`);
     } else if (data.error) {
       shopify.toast.show(data.error, { isError: true });
     }
@@ -480,6 +531,8 @@ export default function SEOOptimizer() {
             </Text>
           </Card>
         )}
+
+        <SearchConsoleCard data={searchConsole} busy={isGoogleBusy} submit={(values) => scanFetcher.submit(values, { method: "post" })} />
 
         <InlineGrid columns={{ xs: 1, sm: 2, md: 5 }} gap="400">
           <MetricCard
@@ -768,6 +821,59 @@ export default function SEOOptimizer() {
   );
 }
 
+type SearchConsoleData = {
+  configured: boolean;
+  connected: boolean;
+  selectedSiteUrl: string;
+  availableSites: Array<{ siteUrl: string; permissionLevel: string }>;
+  lastSyncedAt: string | null;
+  error: string;
+  summary: { clicks: number; impressions: number; ctr: number; position: number };
+  opportunities: Array<{ id: string; title: string; detail: string; pageUrl: string; query: string; type: string }>;
+};
+
+function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; busy: boolean; submit: (values: Record<string, string>) => void }) {
+  if (!data.configured) return (
+    <Banner title="Google Search Console is ready to configure" tone="info">
+      <p>Add GOOGLE_SEARCH_CONSOLE_CLIENT_ID, GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET and SHOPIFY_APP_URL to enable real search performance data.</p>
+    </Banner>
+  );
+  if (!data.connected) return (
+    <Card padding="400">
+      <InlineStack align="space-between" blockAlign="center">
+        <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">Connect read-only data to find pages with ranking and click opportunities.</Text></BlockStack>
+        <Button variant="primary" url="/app/seo/google/connect" target="_top">Connect Google</Button>
+      </InlineStack>
+    </Card>
+  );
+  const options = [{ label: "Select a property", value: "" }, ...data.availableSites.map((site) => ({ label: `${site.siteUrl} (${site.permissionLevel})`, value: site.siteUrl }))];
+  return (
+    <Card padding="400">
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center">
+          <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">{data.lastSyncedAt ? `Last synced ${formatDate(data.lastSyncedAt)}` : "Connected — select a property and sync."}</Text></BlockStack>
+          <InlineStack gap="200"><Button loading={busy} disabled={!data.selectedSiteUrl} onClick={() => submit({ intent: "google_sync" })}>Sync data</Button><Button tone="critical" onClick={() => submit({ intent: "google_disconnect" })}>Disconnect</Button></InlineStack>
+        </InlineStack>
+        {data.error && <Banner tone="critical"><p>{data.error}</p></Banner>}
+        <Select label="Search Console property" options={options} value={data.selectedSiteUrl} onChange={(siteUrl) => siteUrl && submit({ intent: "google_select", siteUrl })} />
+        <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
+          <MetricCard title="Organic clicks" value={String(data.summary.clicks)} tone="info" icon={ChartVerticalFilledIcon} progress={0} />
+          <MetricCard title="Impressions" value={String(data.summary.impressions)} tone="info" icon={ChartVerticalFilledIcon} progress={0} />
+          <MetricCard title="Average CTR" value={`${(data.summary.ctr * 100).toFixed(1)}%`} tone="info" icon={ChartVerticalFilledIcon} progress={Math.min(100, data.summary.ctr * 100)} />
+          <MetricCard title="Average position" value={data.summary.position ? data.summary.position.toFixed(1) : "—"} tone="info" icon={ChartVerticalFilledIcon} progress={0} />
+        </InlineGrid>
+        {data.opportunities.length > 0 && <BlockStack gap="200">
+          <Text as="h3" variant="headingSm">Top search opportunities</Text>
+          {data.opportunities.slice(0, 6).map((item) => <InlineStack key={item.id} align="space-between" blockAlign="center" wrap={false}>
+            <BlockStack gap="050"><Text as="span" fontWeight="semibold">{item.title}</Text><Text as="span" variant="bodySm" tone="subdued">{item.query || "Page total"} · {item.detail}</Text></BlockStack>
+            <Button size="micro" url={item.pageUrl} target="_blank">Open page</Button>
+          </InlineStack>)}
+        </BlockStack>}
+      </BlockStack>
+    </Card>
+  );
+}
+
 function MetricCard({
   title,
   value,
@@ -834,6 +940,7 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
               title
               handle
               updatedAt
+              author { name }
               body
               summary
               image {
@@ -869,6 +976,7 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
               title
               handle
               updatedAt
+              author { name }
               image {
                 url
                 altText
@@ -912,6 +1020,7 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
       blogId: article.blog?.id || blog.id,
       blogTitle: article.blog?.title || blog.title || "Blog",
       blogHandle: article.blog?.handle || blog.handle || "",
+      authorName: article.author?.name || "",
     })),
   );
 }
@@ -940,6 +1049,8 @@ function auditArticle(
   const allImageAltText = `${article.imageAlt || ""} ${bodyImageAltText}`.trim();
   const hasAnyImage = Boolean(article.imageUrl) || /<img\b/i.test(body);
   const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
+  const imageStats = analyzeImages(body);
+  const markupStats = analyzeTechnicalMarkup(body);
   const focusKeyword = textValue(storedSeo?.focusKeyword);
   const keywords = focusKeyword
     .split(",")
@@ -1050,6 +1161,97 @@ function auditArticle(
     );
   }
 
+  if (imageStats.inlineMissingAlt > 0) {
+    addIssue({
+      type: "inline_images_missing_alt",
+      category: "image",
+      label: "Inline images missing alt text",
+      message: `${imageStats.inlineMissingAlt} inline image(s) have no alt attribute.`,
+      severity: "warning",
+      impact: "Medium",
+      effort: "Low",
+      fix: "Add concise descriptive alt text, or alt=\"\" for decorative images.",
+    }, 5);
+  }
+
+  if (imageStats.missingDimensions > 0) {
+    addIssue({
+      type: "images_missing_dimensions",
+      category: "image",
+      label: "Images missing dimensions",
+      message: `${imageStats.missingDimensions} inline image(s) are missing width or height attributes.`,
+      severity: "warning",
+      impact: "Medium",
+      effort: "Low",
+      fix: "Set intrinsic width and height to reduce layout shift.",
+    }, 3);
+  }
+
+  if (imageStats.genericFilenames > 0) {
+    addIssue({
+      type: "generic_image_filenames",
+      category: "image",
+      label: "Generic image filenames",
+      message: `${imageStats.genericFilenames} image(s) use a generic filename that provides little context.`,
+      severity: "info",
+      impact: "Low",
+      effort: "Medium",
+      fix: "Use short descriptive filenames when uploading replacement images.",
+    }, 1);
+  }
+
+  if (!article.authorName.trim()) {
+    addIssue({
+      type: "missing_author",
+      category: "content",
+      label: "Missing author attribution",
+      message: "The article has no author information in Shopify data.",
+      severity: "warning",
+      impact: "Medium",
+      effort: "Low",
+      fix: "Assign an accurate author and expose a useful author profile in the theme.",
+    }, 4);
+  }
+
+  if (markupStats.unsafeLinks > 0) {
+    addIssue({
+      type: "unsafe_or_uncrawlable_links",
+      category: "on_page",
+      label: "Uncrawlable links",
+      message: `${markupStats.unsafeLinks} link(s) use an empty or JavaScript URL.`,
+      severity: "critical",
+      impact: "High",
+      effort: "Low",
+      fix: "Replace empty and JavaScript href values with real crawlable URLs or buttons.",
+    }, 8);
+  }
+
+  if (markupStats.skippedHeadingLevels > 0) {
+    addIssue({
+      type: "heading_hierarchy",
+      category: "content",
+      label: "Heading hierarchy",
+      message: `${markupStats.skippedHeadingLevels} heading transition(s) skip a level.`,
+      severity: "warning",
+      impact: "Low",
+      effort: "Low",
+      fix: "Keep the outline sequential, such as H2 followed by H3 rather than H4.",
+    }, 2);
+  }
+
+  if (markupStats.duplicateHeadingIds > 0) {
+    addIssue({
+      type: "duplicate_heading_ids",
+      category: "on_page",
+      label: "Duplicate heading anchors",
+      message: `${markupStats.duplicateHeadingIds} heading id(s) are duplicated and can break TOC links.`,
+      severity: "warning",
+      impact: "Medium",
+      effort: "Low",
+      fix: "Give every heading a unique id value.",
+    }, 3);
+  }
+
   if (productCount === 0) {
     addIssue(
       {
@@ -1072,11 +1274,11 @@ function auditArticle(
         type: "thin_content",
         category: "content",
         label: "Thin content",
-        message: `Content is only ${wordCount} words long. Aim for at least 600 words.`,
-        severity: "critical",
-        impact: "High",
+        message: `Content is ${wordCount} words long. Confirm that it completely answers the intended reader need; there is no required SEO word count.`,
+        severity: wordCount < 80 ? "critical" : "warning",
+        impact: wordCount < 80 ? "High" : "Medium",
         effort: "Medium",
-        fix: "Add more useful sections, examples, or product context.",
+        fix: "Add original evidence, examples, comparisons, or missing answers—not filler text.",
       },
       8,
     );
@@ -1086,11 +1288,11 @@ function auditArticle(
         type: "short_content",
         category: "content",
         label: "Short content",
-        message: `Content is ${wordCount} words long. Consider expanding it to 600+ words.`,
-        severity: "warning",
-        impact: "Medium",
+        message: `Content is ${wordCount} words long. Expand it only if important questions or evidence are missing.`,
+        severity: "info",
+        impact: "Low",
         effort: "Medium",
-        fix: "Add more useful sections, examples, or product context.",
+        fix: "Review search intent and add only information that improves the reader's outcome.",
       },
       5,
     );
@@ -1202,12 +1404,12 @@ function auditArticle(
       {
         type: "missing_dofollow_external_links",
         category: "content",
-        label: "Missing DoFollow links",
-        message: "Add DoFollow links pointing to external resources.",
-        severity: "warning",
+        label: "External link qualification",
+        message: "No standard external reference link was found. This is optional when no citation would help readers.",
+        severity: "info",
         impact: "Low",
         effort: "Low",
-        fix: "Add at least one relevant external link without nofollow/sponsored/ugc.",
+        fix: "When citing evidence, use a relevant source and qualify sponsored or user-generated links appropriately.",
       },
       2,
     );
@@ -1234,12 +1436,12 @@ function auditArticle(
       {
         type: "title_number",
         category: "on_page",
-        label: "Number in SEO title",
-        message: "Your SEO title doesn't contain a number.",
-        severity: "warning",
+        label: "Title format opportunity",
+        message: "A number may improve clarity for list or comparison posts, but it is not an SEO requirement.",
+        severity: "info",
         impact: "Low",
         effort: "Low",
-        fix: "Add a useful number when it fits naturally, like 5 tips or 10 ideas.",
+        fix: "Use a number only when the content genuinely follows a numbered format.",
       },
       2,
     );
@@ -1347,17 +1549,17 @@ function auditArticle(
         },
         15,
       );
-    } else if (density < 0.5 || density > 2.5) {
+    } else if (density > 4) {
       addIssue(
         {
           type: "keyword_density",
           category: "content",
           label: "Keyword density",
-          message: `Keyword density is ${density.toFixed(2)}%. Aim for around 1% Keyword Density.`,
+          message: `The exact phrase appears at ${density.toFixed(2)}% density and may read repetitively.`,
           severity: "warning",
           impact: "Low",
           effort: "Medium",
-          fix: "Adjust keyword usage so it appears naturally without stuffing.",
+          fix: "Replace repetitive exact matches with natural language and useful topic variants.",
         },
         2,
       );
@@ -1419,10 +1621,10 @@ function auditArticle(
         category: "on_page",
         label: "Missing focus keyword",
         message: "Set a Focus Keyword for this content.",
-        severity: "critical",
-        impact: "High",
+        severity: "info",
+        impact: "Low",
         effort: "Low",
-        fix: "Add one primary keyword in Blog Detail before running SEO scan.",
+        fix: "Optionally set a primary topic to organize reporting; do not force an exact-match phrase into the copy.",
       },
       30,
     );
@@ -1445,7 +1647,13 @@ function auditArticle(
   }
 
   return {
-    score: calculateBlogDetailSeoScore(article, productCount, storedSeo, config, shopDomain, shopDomains),
+    score: Math.max(
+      0,
+      calculateBlogDetailSeoScore(article, productCount, storedSeo, config, shopDomain, shopDomains) -
+        Math.min(12, imageStats.inlineMissingAlt * 3 + imageStats.missingDimensions * 2 + imageStats.genericFilenames) -
+        (article.authorName.trim() ? 0 : 4) -
+        Math.min(10, markupStats.unsafeLinks * 5 + markupStats.skippedHeadingLevels + markupStats.duplicateHeadingIds * 2),
+    ),
     issues,
   };
 }
@@ -1568,6 +1776,39 @@ function getBodyImageAltText(body: string) {
   return alts.join(" ");
 }
 
+function analyzeImages(body: string) {
+  const stats = { inlineMissingAlt: 0, missingDimensions: 0, genericFilenames: 0 };
+  for (const match of body.matchAll(/<img\b([^>]*)>/gi)) {
+    const attrs = match[1] || "";
+    if (!/\balt\s*=/i.test(attrs)) stats.inlineMissingAlt += 1;
+    if (!/\bwidth\s*=/i.test(attrs) || !/\bheight\s*=/i.test(attrs)) stats.missingDimensions += 1;
+    const src = getHtmlAttribute(attrs, "src");
+    const filename = src.split(/[?#]/)[0].split("/").pop() || "";
+    if (/^(img|image|photo|pic|dsc|screenshot|untitled)[-_]?\d*\.(jpe?g|png|gif|webp|avif)$/i.test(filename)) {
+      stats.genericFilenames += 1;
+    }
+  }
+  return stats;
+}
+
+function analyzeTechnicalMarkup(body: string) {
+  let unsafeLinks = 0;
+  for (const match of body.matchAll(/<a\b([^>]*)>/gi)) {
+    const href = getHtmlAttribute(match[1] || "", "href").trim();
+    if (!href || /^javascript:/i.test(href)) unsafeLinks += 1;
+  }
+
+  const levels = Array.from(body.matchAll(/<h([2-6])\b/gi), (match) => Number(match[1]));
+  let skippedHeadingLevels = 0;
+  levels.forEach((level, index) => {
+    if (index > 0 && level > levels[index - 1] + 1) skippedHeadingLevels += 1;
+  });
+
+  const ids = Array.from(body.matchAll(/<h[2-6]\b([^>]*)>/gi), (match) => getHtmlAttribute(match[1] || "", "id")).filter(Boolean);
+  const duplicateHeadingIds = ids.length - new Set(ids).size;
+  return { unsafeLinks, skippedHeadingLevels, duplicateHeadingIds };
+}
+
 function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
   const map = new Map<string, IssueGroup>();
 
@@ -1598,6 +1839,36 @@ function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
   return Array.from(map.values()).sort(
     (a, b) => getImpactWeight(b.impact) - getImpactWeight(a.impact) || b.affected - a.affected || a.issue.localeCompare(b.issue),
   );
+}
+
+function applyPortfolioIssues(posts: AuditedPost[]) {
+  const portfolioIssues = auditSeoPortfolio(posts.map((post) => ({
+    id: post.id,
+    title: post.title,
+    seoTitle: post.effectiveSeoTitle,
+    seoDescription: post.effectiveSeoDescription,
+    focusKeyword: post.focusKeyword,
+    body: post.body,
+    blogHandle: post.blogHandle,
+    handle: post.handle,
+  })));
+
+  posts.forEach((post) => {
+    const additions = portfolioIssues.get(post.id) || [];
+    additions.forEach((issue) => {
+      post.issues.push({
+        type: issue.type,
+        category: issue.type === "orphan_article" || issue.type === "near_duplicate_content" ? "content" : "on_page",
+        label: issue.label,
+        message: issue.message,
+        severity: issue.severity,
+        impact: issue.impact,
+        effort: issue.effort,
+        fix: issue.fix,
+      });
+    });
+    post.score = Math.max(0, post.score - additions.reduce((sum, issue) => sum + issue.penalty, 0));
+  });
 }
 
 function getIssueStats(issueGroups: IssueGroup[]) {

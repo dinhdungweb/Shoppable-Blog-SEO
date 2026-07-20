@@ -1,0 +1,18 @@
+import { describe, expect, it } from "vitest";
+import { buildSearchOpportunities, summarizeSearchMetrics } from "./search-console-opportunities";
+
+describe("Search Console opportunities", () => {
+  it("finds low CTR, striking distance and cannibalization", () => {
+    const rows = [
+      { pageUrl: "https://x/a", query: "shoes", clicks: 1, impressions: 200, ctr: 0.005, position: 8, period: "current" },
+      { pageUrl: "https://x/b", query: "shoes", clicks: 2, impressions: 100, ctr: 0.02, position: 12, period: "current" },
+    ];
+    expect(new Set(buildSearchOpportunities(rows).map((item) => item.type))).toEqual(new Set(["low_ctr", "striking_distance", "cannibalization"]));
+  });
+  it("weights aggregate position by impressions", () => {
+    expect(summarizeSearchMetrics([
+      { pageUrl: "a", query: "a", clicks: 10, impressions: 100, ctr: .1, position: 2, period: "current" },
+      { pageUrl: "b", query: "b", clicks: 10, impressions: 300, ctr: .03, position: 10, period: "current" },
+    ]).position).toBe(8);
+  });
+});

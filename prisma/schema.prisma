@@ -179,3 +179,48 @@ model WidgetEvent {
   @@index([articleId, blockId])
   @@index([productId])
 }
+
+model SearchConsoleConnection {
+  id                       String   @id @default(cuid())
+  shop                     String   @unique
+  accessTokenEncrypted     String
+  refreshTokenEncrypted    String?
+  tokenExpiresAt           DateTime?
+  scope                    String?
+  selectedSiteUrl          String?
+  selectedPermissionLevel  String?
+  availableSites           Json?
+  lastSyncedAt             DateTime?
+  lastSyncError            String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+}
+
+model SearchConsoleOAuthState {
+  id        String   @id @default(cuid())
+  shop      String   @unique
+  stateHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+model SearchConsoleMetric {
+  id          String   @id @default(cuid())
+  shop        String
+  siteUrl     String
+  pageUrl     String
+  query       String   @default("")
+  windowDays  Int
+  period      String   @default("current")
+  clicks      Float    @default(0)
+  impressions Float    @default(0)
+  ctr         Float    @default(0)
+  position    Float    @default(0)
+  syncedAt    DateTime @default(now())
+
+  @@unique([shop, siteUrl, pageUrl, query, windowDays, period])
+  @@index([shop, siteUrl, windowDays, period])
+  @@index([shop, pageUrl])
+}
