@@ -224,3 +224,21 @@ model SearchConsoleMetric {
   @@index([shop, siteUrl, windowDays, period])
   @@index([shop, pageUrl])
 }
+
+model SeoBulkChange {
+  id                    String    @id @default(cuid())
+  batchId               String
+  shop                  String
+  articleId             String
+  articleTitle          String
+  beforeMetaTitle       String    @default("")
+  beforeMetaDescription String    @default("")
+  afterMetaTitle        String    @default("")
+  afterMetaDescription  String    @default("")
+  status                String    @default("applied")
+  appliedAt             DateTime  @default(now())
+  undoneAt              DateTime?
+
+  @@index([shop, appliedAt])
+  @@index([shop, batchId])
+}

@@ -1,224 +1,135 @@
+import crypto from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigate, useNavigation } from "@remix-run/react";
-import { Page, Layout, Card, IndexTable, TextField } from "@shopify/polaris";
-import { useState, useCallback } from "react";
+import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
+import { Banner, BlockStack, Button, Card, IndexTable, InlineStack, Layout, Modal, Page, Text, TextField } from "@shopify/polaris";
+import { useEffect, useMemo, useState } from "react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
+import prisma from "../db.server";
 
-interface ArticleData {
-  id: string;
-  title: string;
-  author: string;
-  handle: string;
-}
+type ArticleData = { id: string; title: string; metaTitle: string; metaDescription: string; suggestedMetaTitle: string; suggestedMetaDescription: string };
+type UpdateItem = { id: string; metaTitle: string; metaDescription: string };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, billing } = await authenticate.admin(request);
-  const url = new URL(request.url);
-  const idsParam = url.searchParams.get("ids");
-  if (!idsParam) return redirect("/app/blogs");
-
-  // ── Plan enforcement: Bulk Review is Growth plan only ─────────────────
+  const { admin, billing, session } = await authenticate.admin(request);
   const { limits, planKey } = await getActivePlanAndLimits(billing);
-  if (!limits.canBulkReview) {
-    return redirect(`/app/pricing?reason=bulk_edit&plan=${planKey}`);
-  }
-  // ──────────────────────────────────────────────────────────────────────
-
-  const idArray = idsParam.split(',').map(id => `gid://shopify/Article/${id}`);
-  
-  const response = await admin.graphql(
-    `#graphql
-    query GetArticles($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on Article {
-          id
-          title
-          author { name }
-          handle
-        }
-      }
-    }`,
-    { variables: { ids: idArray } }
-  );
-
-  const parsed = await response.json();
-  
-  const articles: ArticleData[] = (parsed.data?.nodes || [])
-    .filter(Boolean)
-    .map((node: any) => ({
-      id: node.id,
-      title: node.title || "",
-      author: node.author?.name || "",
-      handle: node.handle || ""
-    }));
-
-  return json({ articles });
+  if (!limits.canBulkReview) return redirect(`/app/pricing?reason=bulk_edit&plan=${planKey}`);
+  const ids = parseIds(new URL(request.url).searchParams.get("ids") || "");
+  if (!ids.length) return redirect("/app/blogs");
+  const response = await admin.graphql(`#graphql
+    query BulkSeoArticles($ids: [ID!]!) {
+      nodes(ids: $ids) { ... on Article { id title summary body
+        seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+        seoDescription: metafield(namespace: "global", key: "description_tag") { value }
+      } }
+    }`, { variables: { ids } });
+  const result: any = await response.json();
+  if (result.errors?.length) throw new Response(result.errors[0].message, { status: 502 });
+  const articles: ArticleData[] = (result.data?.nodes || []).filter(Boolean).map((node: any) => {
+    const metaTitle = clean(node.seoTitle?.value);
+    const metaDescription = clean(node.seoDescription?.value);
+    return { id: node.id, title: clean(node.title), metaTitle, metaDescription,
+      suggestedMetaTitle: suggestTitle(node.title), suggestedMetaDescription: suggestDescription(node.summary, node.body, node.title) };
+  });
+  const history = await prisma.seoBulkChange.findMany({ where: { shop: session.shop }, orderBy: { appliedAt: "desc" }, take: 10 });
+  return json({ articles, history: history.map((row) => ({ ...row, appliedAt: row.appliedAt.toISOString(), undoneAt: row.undoneAt?.toISOString() || null })) });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, billing } = await authenticate.admin(request);
+  const { admin, billing, session } = await authenticate.admin(request);
   const { limits, planKey } = await getActivePlanAndLimits(billing);
-  if (!limits.canBulkReview) {
-    return json(
-      {
-        error: "Bulk Review is a Growth plan feature.",
-        planKey,
-      },
-      { status: 403 },
-    );
+  if (!limits.canBulkReview) return json({ error: "Bulk Review is a Growth plan feature.", planKey }, { status: 403 });
+  const form = await request.formData();
+  const intent = String(form.get("intent") || "apply");
+  if (intent === "undo") {
+    const change = await prisma.seoBulkChange.findFirst({ where: { id: String(form.get("changeId") || ""), shop: session.shop, status: "applied" } });
+    if (!change) return json({ error: "This change is unavailable or already undone." }, { status: 404 });
+    const error = await setSeo(admin, change.articleId, change.beforeMetaTitle, change.beforeMetaDescription);
+    if (error) return json({ error }, { status: 400 });
+    await prisma.$transaction([
+      prisma.seoBulkChange.update({ where: { id: change.id }, data: { status: "undone", undoneAt: new Date() } }),
+      prisma.articleSEO.upsert({ where: { shop_articleId: { shop: session.shop, articleId: change.articleId } }, update: { metaTitle: nullable(change.beforeMetaTitle), metaDescription: nullable(change.beforeMetaDescription) }, create: { shop: session.shop, articleId: change.articleId, articleTitle: change.articleTitle, metaTitle: nullable(change.beforeMetaTitle), metaDescription: nullable(change.beforeMetaDescription) } }),
+    ]);
+    return json({ success: true, undone: true });
   }
-
-  const formData = await request.formData();
-  const payloadStr = formData.get("payload") as string;
-  
-  if (!payloadStr) return json({ error: "Missing payload" }, { status: 400 });
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payloadStr);
-  } catch {
-    return json({ error: "Invalid payload" }, { status: 400 });
-  }
-  if (
-    !Array.isArray(parsed) ||
-    parsed.length === 0 ||
-    parsed.length > 50 ||
-    parsed.some((item) =>
-      !item ||
-      typeof item.id !== "string" ||
-      !/^gid:\/\/shopify\/Article\/\d+$/.test(item.id) ||
-      typeof item.title !== "string" || item.title.trim().length === 0 || item.title.length > 255 ||
-      typeof item.author !== "string" || item.author.length > 255 ||
-      typeof item.handle !== "string" || !/^[a-z0-9][a-z0-9-]{0,254}$/.test(item.handle)
-    )
-  ) {
-    return json({ error: "Invalid article update payload" }, { status: 400 });
-  }
-  const items = parsed as ArticleData[];
-
+  const items = parsePayload(String(form.get("payload") || ""));
+  const response = await admin.graphql(`#graphql
+    query CurrentBulkSeo($ids: [ID!]!) { nodes(ids: $ids) { ... on Article { id title
+      seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+      seoDescription: metafield(namespace: "global", key: "description_tag") { value }
+    } } }`, { variables: { ids: items.map((item) => item.id) } });
+  const currentResult: any = await response.json();
+  if (currentResult.errors?.length) return json({ error: currentResult.errors[0].message }, { status: 502 });
+  const current = new Map((currentResult.data?.nodes || []).filter(Boolean).map((node: any) => [node.id, node]));
+  const batchId = crypto.randomUUID();
+  let applied = 0;
   for (const item of items) {
-    const response = await admin.graphql(
-      `#graphql
-      mutation UpdateArticle($id: ID!, $article: ArticleUpdateInput!) {
-        articleUpdate(id: $id, article: $article) {
-          article { id }
-          userErrors { field message }
-        }
-      }`,
-      {
-        variables: {
-          id: item.id,
-          article: {
-            title: item.title,
-            author: item.author,
-            handle: item.handle
-          }
-        }
-      }
-    );
-    const result: any = await response.json();
-    const errors = [
-      ...(Array.isArray(result.errors) ? result.errors : []),
-      ...(result.data?.articleUpdate?.userErrors || []),
-    ];
-    if (errors.length) {
-      return json({ error: errors.map((error: any) => error.message).join("; ") }, { status: 400 });
-    }
+    const article: any = current.get(item.id);
+    if (!article) continue;
+    const beforeTitle = clean(article.seoTitle?.value);
+    const beforeDescription = clean(article.seoDescription?.value);
+    if (beforeTitle === item.metaTitle && beforeDescription === item.metaDescription) continue;
+    const error = await setSeo(admin, item.id, item.metaTitle, item.metaDescription);
+    if (error) return json({ error: `${article.title}: ${error}`, applied }, { status: 400 });
+    await prisma.$transaction([
+      prisma.seoBulkChange.create({ data: { batchId, shop: session.shop, articleId: item.id, articleTitle: clean(article.title), beforeMetaTitle: beforeTitle, beforeMetaDescription: beforeDescription, afterMetaTitle: item.metaTitle, afterMetaDescription: item.metaDescription } }),
+      prisma.articleSEO.upsert({ where: { shop_articleId: { shop: session.shop, articleId: item.id } }, update: { articleTitle: clean(article.title), metaTitle: nullable(item.metaTitle), metaDescription: nullable(item.metaDescription) }, create: { shop: session.shop, articleId: item.id, articleTitle: clean(article.title), metaTitle: nullable(item.metaTitle), metaDescription: nullable(item.metaDescription) } }),
+    ]);
+    applied++;
   }
-
-  return redirect("/app/blogs");
+  return json({ success: true, applied });
 };
 
-export default function BulkEditArticles() {
-  const { articles } = useLoaderData<typeof loader>();
-  const submit = useSubmit();
+export default function BulkSeoEdit() {
+  const { articles, history } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
-  const navigation = useNavigation();
-
-  const [items, setItems] = useState<ArticleData[]>(articles);
-
-  const handleChange = useCallback((value: string, id: string, field: keyof ArticleData) => {
-    setItems((prev) => prev.map((item) => {
-      if (item.id === id) {
-        return { ...item, [field]: value };
-      }
-      return item;
-    }));
-  }, []);
-
-  const handleSave = () => {
-    const payload = JSON.stringify(items);
-    const formData = new FormData();
-    formData.append("payload", payload);
-    submit(formData, { method: "POST" });
-  };
-
-  const isSaving = navigation.state === "submitting";
-
-  return (
-    <Page
-      backAction={{ content: 'Blogs', onAction: () => navigate('/app/blogs') }}
-      title="Bulk edit articles"
-      primaryAction={{
-        content: 'Save',
-        onAction: handleSave,
-        loading: isSaving
-      }}
-    >
-      <Layout>
-        <Layout.Section>
-          <Card padding="0">
-            <IndexTable
-              resourceName={{ singular: 'article', plural: 'articles' }}
-              itemCount={items.length}
-              headings={[
-                { title: 'Title' },
-                { title: 'Author' },
-                { title: 'URL Handle' }
-              ]}
-              selectable={false}
-            >
-              {items.map((item, index) => (
-                <IndexTable.Row id={item.id} key={item.id} position={index}>
-                  <IndexTable.Cell>
-                    <div style={{ minWidth: '300px', padding: '8px 0' }}>
-                      <TextField
-                        label="Title"
-                        labelHidden
-                        value={item.title}
-                        onChange={(val) => handleChange(val, item.id, 'title')}
-                        autoComplete="off"
-                      />
-                    </div>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <div style={{ minWidth: '150px', padding: '8px 0' }}>
-                      <TextField
-                        label="Author"
-                        labelHidden
-                        value={item.author}
-                        onChange={(val) => handleChange(val, item.id, 'author')}
-                        autoComplete="off"
-                      />
-                    </div>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <div style={{ minWidth: '200px', padding: '8px 0' }}>
-                      <TextField
-                        label="Handle"
-                        labelHidden
-                        value={item.handle}
-                        onChange={(val) => handleChange(val, item.id, 'handle')}
-                        autoComplete="off"
-                      />
-                    </div>
-                  </IndexTable.Cell>
-                </IndexTable.Row>
-              ))}
-            </IndexTable>
-          </Card>
-        </Layout.Section>
-      </Layout>
-    </Page>
-  );
+  const fetcher = useFetcher<typeof action>();
+  const [items, setItems] = useState(articles.map((article) => ({ ...article, metaTitle: article.suggestedMetaTitle, metaDescription: article.suggestedMetaDescription })));
+  const [preview, setPreview] = useState(false);
+  const changed = useMemo(() => items.filter((item, i) => item.metaTitle !== articles[i]?.metaTitle || item.metaDescription !== articles[i]?.metaDescription), [articles, items]);
+  useEffect(() => { if (fetcher.data && "success" in fetcher.data && fetcher.data.success) { setPreview(false); } }, [fetcher.data]);
+  const update = (id: string, field: "metaTitle" | "metaDescription", value: string) => setItems((rows) => rows.map((row) => row.id === id ? { ...row, [field]: value } : row));
+  const apply = () => fetcher.submit({ intent: "apply", payload: JSON.stringify(changed.map(({ id, metaTitle, metaDescription }) => ({ id, metaTitle, metaDescription }))) }, { method: "post" });
+  const error = fetcher.data && "error" in fetcher.data ? fetcher.data.error : "";
+  return <Page backAction={{ content: "Blogs", onAction: () => navigate("/app/blogs") }} title="Bulk SEO Fix" subtitle={`${items.length} selected articles`} primaryAction={{ content: `Preview ${changed.length} changes`, onAction: () => setPreview(true), disabled: !changed.length }}>
+    <Layout><Layout.Section><BlockStack gap="400">
+      {error && <Banner tone="critical"><p>{error}</p></Banner>}
+      <Banner tone="info" title="Review before publishing"><p>Suggestions are created from existing article content. Nothing is written to Shopify until you confirm the preview.</p></Banner>
+      <Card padding="0"><IndexTable resourceName={{ singular: "article", plural: "articles" }} itemCount={items.length} selectable={false} headings={[{ title: "Article" }, { title: "SEO title" }, { title: "Meta description" }]}>
+        {items.map((item, index) => <IndexTable.Row id={item.id} key={item.id} position={index}>
+          <IndexTable.Cell><div style={{ width: 220 }}><Text as="span" fontWeight="semibold">{item.title}</Text></div></IndexTable.Cell>
+          <IndexTable.Cell><div style={{ minWidth: 280 }}><TextField label="SEO title" labelHidden value={item.metaTitle} maxLength={70} showCharacterCount autoComplete="off" onChange={(value) => update(item.id, "metaTitle", value)} /></div></IndexTable.Cell>
+          <IndexTable.Cell><div style={{ minWidth: 380 }}><TextField label="Meta description" labelHidden value={item.metaDescription} maxLength={160} showCharacterCount autoComplete="off" onChange={(value) => update(item.id, "metaDescription", value)} /></div></IndexTable.Cell>
+        </IndexTable.Row>)}
+      </IndexTable></Card>
+      {history.length > 0 && <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">Recent changes</Text>{history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.articleTitle}</Text><Text as="span" tone="subdued" variant="bodySm">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied"} loading={fetcher.state !== "idle" && fetcher.formData?.get("changeId") === row.id} onClick={() => fetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo</Button></InlineStack>)}</BlockStack></Card>}
+    </BlockStack></Layout.Section></Layout>
+    <Modal open={preview} onClose={() => setPreview(false)} title="Confirm SEO changes" primaryAction={{ content: `Apply to ${changed.length} articles`, onAction: apply, loading: fetcher.state !== "idle", disabled: !changed.length }} secondaryActions={[{ content: "Continue editing", onAction: () => setPreview(false) }]}>
+      <Modal.Section><BlockStack gap="400">{changed.map((item) => { const before = articles.find((row) => row.id === item.id); return <BlockStack gap="150" key={item.id}><Text as="h3" fontWeight="semibold">{item.title}</Text><Text as="p" variant="bodySm" tone="subdued">Title: {before?.metaTitle || "(empty)"} → {item.metaTitle || "(empty)"}</Text><Text as="p" variant="bodySm" tone="subdued">Description: {before?.metaDescription || "(empty)"} → {item.metaDescription || "(empty)"}</Text></BlockStack>; })}</BlockStack></Modal.Section>
+    </Modal>
+  </Page>;
 }
+
+function parseIds(value: string) { return [...new Set(value.split(",").map((id) => id.trim()).filter(Boolean).map((id) => /^\d+$/.test(id) ? `gid://shopify/Article/${id}` : id).filter((id) => /^gid:\/\/shopify\/Article\/\d+$/.test(id)))].slice(0, 50); }
+function parsePayload(value: string): UpdateItem[] { let parsed: unknown; try { parsed = JSON.parse(value); } catch { throw new Response("Invalid update payload", { status: 400 }); } if (!Array.isArray(parsed) || !parsed.length || parsed.length > 50 || parsed.some((item) => !item || typeof item.id !== "string" || !/^gid:\/\/shopify\/Article\/\d+$/.test(item.id) || typeof item.metaTitle !== "string" || item.metaTitle.length > 70 || typeof item.metaDescription !== "string" || item.metaDescription.length > 160)) throw new Response("Invalid update payload", { status: 400 }); return parsed.map((item) => ({ id: item.id, metaTitle: clean(item.metaTitle), metaDescription: clean(item.metaDescription) })); }
+async function setSeo(admin: any, ownerId: string, metaTitle: string, metaDescription: string) {
+  const values = [{ key: "title_tag", value: metaTitle }, { key: "description_tag", value: metaDescription }];
+  const metafields = values.filter((item) => item.value).map((item) => ({ ownerId, namespace: "global", key: item.key, type: "single_line_text_field", value: item.value }));
+  const errors: string[] = [];
+  if (metafields.length) {
+    const response = await admin.graphql(`#graphql mutation BulkSetSeo($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { userErrors { field message } } }`, { variables: { metafields } });
+    const result = await response.json();
+    errors.push(...[...(result.errors || []), ...(result.data?.metafieldsSet?.userErrors || [])].map((error: any) => error.message));
+  }
+  const empty = values.filter((item) => !item.value).map((item) => ({ ownerId, namespace: "global", key: item.key }));
+  if (empty.length) {
+    const response = await admin.graphql(`#graphql mutation BulkDeleteSeo($metafields: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $metafields) { userErrors { field message } } }`, { variables: { metafields: empty } });
+    const result = await response.json();
+    errors.push(...[...(result.errors || []), ...(result.data?.metafieldsDelete?.userErrors || [])].map((error: any) => error.message));
+  }
+  return errors.join("; ");
+}
+function suggestTitle(value: unknown) { const title = clean(value); return title.length <= 60 ? title : `${title.slice(0, 57).replace(/[\s,:;-]+$/g, "")}…`; }
+function suggestDescription(summary: unknown, body: unknown, title: unknown) { const source = clean(summary) || clean(String(body || "").replace(/<[^>]*>/g, " ")) || clean(title); if (source.length <= 155) return source; const shortened = source.slice(0, 155); const boundary = shortened.lastIndexOf(" "); return `${shortened.slice(0, boundary > 110 ? boundary : 152).replace(/[\s,;:-]+$/g, "")}…`; }
+function clean(value: unknown) { return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""; }
+function nullable(value: string) { return value || null; }

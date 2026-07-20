@@ -470,6 +470,7 @@ export default function SEOOptimizer() {
 
   const selectedIssueCount = allResourcesSelected ? visibleIssues.length : selectedResources.length;
   const selectedIssues = visibleIssues.filter((issue) => allResourcesSelected || selectedResources.includes(issue.id));
+  const selectedArticleIds = [...new Set(selectedIssues.flatMap((issue) => issue.affectedPosts.map((post) => post.id.replace(/^gid:\/\/shopify\/Article\//, ""))))];
   const selectedPotential = selectedIssues.reduce((sum, issue) => sum + issue.affected * getImpactWeight(issue.impact), 0);
   const selectedTime = selectedIssues.reduce((sum, issue) => sum + issue.affected * getEffortMinutes(issue.effort), 0);
   const donutData = [
@@ -689,6 +690,9 @@ export default function SEOOptimizer() {
 
                   <InlineStack gap="200">
                     <Button onClick={() => navigate("/app/blogs")}>Review posts</Button>
+                    <Button disabled={!selectedArticleIds.length} onClick={() => navigate(`/app/blogs/bulk_edit?ids=${encodeURIComponent(selectedArticleIds.join(","))}`)}>
+                      Bulk fix SEO
+                    </Button>
                     <Button variant="primary" loading={isScanning} onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}>
                       Apply scan
                     </Button>
