@@ -1,6 +1,9 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
+import { createHash } from "node:crypto";
+import { Prisma } from "@prisma/client";
+import { verifyTrackingToken } from "../tracking-token.server";
 
 const TRACK_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -33,6 +36,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       eventType: body.eventType,
       sessionId: body.sessionId,
       referrer: body.referrer,
+      token: body.token,
     });
   } catch (error) {
     console.error("Track event error:", error);
@@ -48,6 +52,7 @@ async function recordWidgetEvent({
   eventType,
   sessionId,
   referrer,
+  token,
 }: {
   shop: string | null;
   articleId: string | null;
@@ -56,12 +61,27 @@ async function recordWidgetEvent({
   eventType: string | null;
   sessionId?: string | null;
   referrer?: string | null;
+  token?: string | null;
 }) {
+  const tokenPayload = verifyTrackingToken(token);
+  if (!tokenPayload) {
+    return json({ error: "Invalid or expired tracking token" }, { status: 401, headers: TRACK_HEADERS });
+  }
   const normalizedShop = cleanShopDomain(shop);
   const normalizedArticleId = normalizeArticleId(articleId);
 
   if (!normalizedShop || !normalizedArticleId || !productId || !eventType) {
     return json({ error: "Missing required fields" }, { status: 400, headers: TRACK_HEADERS });
+  }
+
+  const normalizedProductId = normalizeProductId(productId);
+  if (
+    tokenPayload.shop !== normalizedShop ||
+    tokenPayload.articleId !== normalizedArticleId ||
+    tokenPayload.productId !== normalizedProductId ||
+    tokenPayload.blockId !== cleanProductBlockId(blockId)
+  ) {
+    return json({ error: "Tracking token does not match event" }, { status: 403, headers: TRACK_HEADERS });
   }
 
   const validEventTypes = ["impression", "click", "add_to_cart", "purchase"];
@@ -74,25 +94,30 @@ async function recordWidgetEvent({
     return json({ success: true, skipped: true }, { headers: TRACK_HEADERS });
   }
 
-  // Normalize productId to ensure it has the gid://shopify/Product/ prefix
-  let normalizedProductId = productId;
-  if (productId && /^\d+$/.test(productId)) {
-    normalizedProductId = `gid://shopify/Product/${productId}`;
-  } else if (productId && !productId.startsWith("gid://")) {
-    normalizedProductId = `gid://shopify/Product/${productId}`;
-  }
+  const safeSessionId = cleanText(sessionId, 160);
+  const eventKey = createHash("sha256")
+    .update(`${normalizedShop}|${normalizedArticleId}|${normalizedProductId}|${cleanProductBlockId(blockId)}|${eventType}|${safeSessionId}`)
+    .digest("hex");
 
-  await prisma.widgetEvent.create({
-    data: {
-      shop: normalizedShop,
-      articleId: normalizedArticleId,
-      productId: normalizedProductId,
-      blockId: cleanProductBlockId(blockId),
-      eventType,
-      sessionId: sessionId || null,
-      referrer: referrer || null,
-    },
-  });
+  try {
+    await prisma.widgetEvent.create({
+      data: {
+        shop: normalizedShop,
+        articleId: normalizedArticleId,
+        productId: normalizedProductId,
+        blockId: cleanProductBlockId(blockId),
+        eventType,
+        sessionId: safeSessionId || null,
+        referrer: cleanText(referrer, 2048) || null,
+        eventKey,
+      },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return json({ success: true, deduplicated: true }, { headers: TRACK_HEADERS });
+    }
+    throw error;
+  }
 
   return json(
     { success: true },
@@ -117,6 +142,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         eventType,
         sessionId: url.searchParams.get("sessionId"),
         referrer: url.searchParams.get("referrer"),
+        token: url.searchParams.get("token"),
       });
     } catch (error) {
       console.error("Track event error:", error);
@@ -149,6 +175,17 @@ function normalizeArticleId(value?: string | null) {
   if (!articleId || articleId === "unknown") return "";
   if (/^\d+$/.test(articleId)) return `gid://shopify/Article/${articleId}`;
   return articleId;
+}
+
+function normalizeProductId(value?: string | null) {
+  const productId = cleanText(value, 128);
+  if (/^\d+$/.test(productId)) return `gid://shopify/Product/${productId}`;
+  if (!productId.startsWith("gid://shopify/Product/")) return "";
+  return productId;
+}
+
+function cleanText(value: unknown, maxLength: number) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
 async function shouldRecordTracking(shop: string) {

@@ -199,14 +199,19 @@ const CustomToggle = ({
   onChange: (val: boolean) => void;
 }) => (
   <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', opacity: disabled ? 0.6 : 1 }}>
-    <div 
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
       onClick={() => {
         if (!disabled) onChange(!checked);
       }}
-      style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: checked ? '#29845A' : '#C9CCCF', position: 'relative', flexShrink: 0, marginTop: '2px', cursor: disabled ? 'not-allowed' : 'pointer' }}
+      style={{ width: '36px', height: '20px', padding: 0, border: 0, borderRadius: '10px', backgroundColor: checked ? '#29845A' : '#C9CCCF', position: 'relative', flexShrink: 0, marginTop: '2px', cursor: disabled ? 'not-allowed' : 'pointer' }}
     >
        <div style={{ width: '16px', height: '16px', borderRadius: '8px', backgroundColor: '#fff', position: 'absolute', top: '2px', right: checked ? '2px' : 'auto', left: checked ? 'auto' : '2px', transition: 'all 0.2s' }} />
-    </div>
+    </button>
     <BlockStack gap="0">
       <Text as="span" variant="bodyMd" fontWeight="semibold">{label}</Text>
       {description && <Text as="p" variant="bodySm" tone="subdued">{description}</Text>}
@@ -220,6 +225,7 @@ export default function Settings() {
   const shopify = useAppBridge();
 
   const [formState, setFormState] = useState(config);
+  const [savedState, setSavedState] = useState(config);
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
@@ -227,14 +233,24 @@ export default function Settings() {
     let changed = false;
     for (const key in formState) {
       if (key !== 'id' && key !== 'shop' && key !== 'createdAt' && key !== 'updatedAt') {
-        if (formState[key as keyof typeof formState] !== config[key as keyof typeof config]) {
+        if (formState[key as keyof typeof formState] !== savedState[key as keyof typeof savedState]) {
           changed = true;
           break;
         }
       }
     }
     setHasChanges(changed);
-  }, [formState, config]);
+  }, [formState, savedState]);
+
+  useEffect(() => {
+    const result = fetcher.data;
+    if (fetcher.state !== "idle" || !result) return;
+    if (result.success) {
+      setSavedState((previous) => ({ ...previous, ...result.updates }));
+      setFormState((previous) => ({ ...previous, ...result.updates }));
+      shopify.toast.show("Settings saved");
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
 
   const handleChange = (key: string, value: any) => {
     setFormState(prev => ({ ...prev, [key]: value }));
@@ -250,11 +266,10 @@ export default function Settings() {
       }
     }
     fetcher.submit(data, { method: 'POST' });
-    shopify.toast.show('Settings saved');
   };
 
   const handleDiscard = () => {
-    setFormState(config);
+    setFormState(savedState);
   };
 
   const [selectedTab, setSelectedTab] = useState(initialTab);
@@ -312,7 +327,7 @@ export default function Settings() {
                 <Text as="span" tone="success">All changes saved</Text>
               </InlineStack>
             )}
-            <Button onClick={handleDiscard}>Reset to defaults</Button>
+            <Button onClick={handleDiscard}>Discard changes</Button>
           </InlineStack>
         </InlineStack>
 
@@ -689,7 +704,7 @@ export default function Settings() {
                         }
                       />
                     </InlineGrid>
-                    <BlockStack gap="250">
+                <BlockStack gap="300">
                       <CustomToggle disabled={breadcrumbsSettingsDisabled} checked={formState.breadcrumbsShowHome} label="Show home link" onChange={(value) => handleChange('breadcrumbsShowHome', value)} />
                       <CustomToggle disabled={breadcrumbsSettingsDisabled} checked={formState.breadcrumbsShowBlog} label="Show blog link" onChange={(value) => handleChange('breadcrumbsShowBlog', value)} />
                       <CustomToggle disabled={breadcrumbsSettingsDisabled} checked={formState.breadcrumbsCurrentClickable} label="Make current article clickable" onChange={(value) => handleChange('breadcrumbsCurrentClickable', value)} />
@@ -793,7 +808,7 @@ export default function Settings() {
                           onChange={(value) => handleChange('tocLevels', value)}
                         />
                       </InlineGrid>
-                      <BlockStack gap="250">
+                  <BlockStack gap="300">
                         <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocNumbering} label="Show numbering" onChange={(value) => handleChange('tocNumbering', value)} />
                         <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocSmoothScroll} label="Smooth scroll to headings" onChange={(value) => handleChange('tocSmoothScroll', value)} />
                         <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocMobileCollapsed} label="Collapse on mobile" onChange={(value) => handleChange('tocMobileCollapsed', value)} />

@@ -1,3 +1,52 @@
+# Shoppable Blog & SEO
+
+Shopify embedded app for linking products to blog articles, rendering storefront
+product widgets, auditing SEO, configuring breadcrumbs/table of contents, and
+reporting attributed widget engagement.
+
+## Local setup
+
+Requirements: Node.js 20.19+ (or 22.12+), PostgreSQL, Shopify CLI, a Partner
+account, and a development store.
+
+1. Copy the required Shopify and database values into `.env`.
+2. Run `npm install`.
+3. Run `npm run setup` to generate Prisma Client and deploy migrations.
+4. Run `npm run dev` and select the development store.
+
+The storefront extension calls the signed app proxy at
+`/apps/shoppable-blog-seo`. Do not expose unsigned alternatives for widget,
+content-navigation, or click/impression ingestion. Purchase and add-to-cart
+events carry a short-lived HMAC token issued with the widget response.
+
+## Quality checks
+
+```shell
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+Run `npm run setup` during every deployment before starting the server. Database
+records are scoped by `shop`; new models and unique keys must preserve that
+tenant boundary. Privacy and uninstall webhooks authenticate their HMAC before
+performing an idempotent transaction that removes shop-owned data.
+
+## Production operations
+
+- Use managed PostgreSQL with backups and point-in-time recovery.
+- Keep `SHOPIFY_API_SECRET` private; it signs tracking tokens.
+- Monitor non-2xx webhook and app-proxy responses and retryable database errors.
+- Review `npm audit` output during dependency upgrades; avoid automatic
+  force-upgrades without testing Shopify/Remix compatibility.
+- Apply an event-retention policy or scheduled aggregation for `WidgetEvent`.
+
+## Legacy template notes
+
+The original Shopify Remix template reference follows for framework-specific
+troubleshooting.
+
 # Shopify App Template - Remix
 
 > [!NOTE]

@@ -265,7 +265,7 @@ export function ShoppableDisplayPreview({
             <Badge tone="info">
               {isCarouselMode ? `${previewVisibleCount} visible carousel` : `${previewGridColumns}-column grid`}
             </Badge>
-            <Badge>{previewProductCount} products</Badge>
+            <Badge>{`${previewProductCount} products`}</Badge>
             <Badge>{previewLayout}</Badge>
           </InlineStack>
         </InlineStack>

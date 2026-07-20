@@ -1,6 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
+import { authenticate } from "../shopify.server";
+import { createTrackingToken } from "../tracking-token.server";
 
 const DEFAULT_WIDGET_CONFIG = {
   appStatus: true,
@@ -37,10 +39,14 @@ const WIDGET_HEADERS = {
 // Public API endpoint for the theme extension to fetch embedded products.
 // This route does not require authentication because it serves storefront data.
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { session } = await authenticate.public.appProxy(request);
+  if (!session?.shop) {
+    return json({ error: "Unauthorized app proxy request" }, { status: 401, headers: WIDGET_HEADERS });
+  }
   const url = new URL(request.url);
   const articleId = url.searchParams.get("articleId");
   const blockId = cleanProductBlockId(url.searchParams.get("blockId"));
-  const shop = url.searchParams.get("shop") || request.headers.get("x-shopify-shop-domain");
+  const shop = session.shop;
 
   if (!articleId || !shop) {
     return json({ error: "Missing articleId or shop parameter" }, { status: 400 });
@@ -82,7 +88,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const articleIds = getArticleIdCandidates(articleId);
-  let products = await prisma.articleProduct.findMany({
+  const products = await prisma.articleProduct.findMany({
     where: {
       shop,
       articleId: { in: articleIds },
@@ -102,33 +108,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
-  // App proxies can send a storefront host or custom domain in some contexts.
-  // The article ID is already globally scoped enough for the storefront widget,
-  // so fall back to it if the shop value does not match the admin session domain.
-  if (products.length === 0) {
-    products = await prisma.articleProduct.findMany({
-      where: {
-        articleId: { in: articleIds },
-        blockId,
-        isActive: true,
-      },
-      orderBy: { position: "asc" },
-      select: {
-        blockId: true,
-        productId: true,
-        productTitle: true,
-        productHandle: true,
-        productImage: true,
-        productPrice: true,
-        displayStyle: true,
-        position: true,
-      },
-    });
-  }
-
   return json(
     {
-      products: products.slice(0, config.maxProducts || DEFAULT_WIDGET_CONFIG.maxProducts),
+      products: products.slice(0, config.maxProducts || DEFAULT_WIDGET_CONFIG.maxProducts).map((product) => ({
+        ...product,
+        trackingToken: createTrackingToken({
+          shop,
+          articleId: articleIds.find((id) => id.startsWith("gid://shopify/Article/")) || articleIds[0],
+          productId: product.productId,
+          blockId,
+        }),
+      })),
       config,
     },
     { headers: WIDGET_HEADERS },

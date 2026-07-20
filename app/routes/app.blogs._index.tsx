@@ -33,6 +33,7 @@ import {
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
+import { formatLimit } from "../pricing-plans";
 
 function parseMoney(value: string) {
   const number = Number((value || "0").replace(/[^0-9.]/g, ""));
@@ -217,7 +218,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
     );
 
-    const responseJson = await response.json();
+    const responseJson: any = await response.json();
     if (responseJson.errors?.length) {
       throw new Error(responseJson.errors.map((error: any) => error.message).join("; "));
     }
@@ -341,8 +342,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
   const formData = await request.formData();
   
   const intent = formData.get("intent");
@@ -350,7 +352,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "bulk_draft" || intent === "bulk_publish") {
     const idsJson = formData.get("ids") as string;
     if (!idsJson) return json({ error: "No ids provided" }, { status: 400 });
-    const ids = JSON.parse(idsJson);
+    const ids = parseArticleIds(idsJson);
     
     for (const id of ids) {
       await admin.graphql(
@@ -374,7 +376,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "bulk_delete") {
     const idsJson = formData.get("ids") as string;
     if (!idsJson) return json({ error: "No ids provided" }, { status: 400 });
-    const ids = JSON.parse(idsJson);
+    const ids = parseArticleIds(idsJson);
     
     for (const id of ids) {
       await admin.graphql(
@@ -401,14 +403,52 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (!articleId || !productsJson) return json({ error: "Missing data" }, { status: 400 });
 
-    const products = JSON.parse(productsJson);
+    const submittedProducts = parseProductSelection(productsJson);
+    const articleResponse = await admin.graphql(
+      `#graphql
+      query ValidateArticleAndProducts($articleId: ID!, $productIds: [ID!]!) {
+        article: node(id: $articleId) { ... on Article { id title handle blog { id } } }
+        products: nodes(ids: $productIds) {
+          ... on Product { id title handle featuredImage { url } priceRangeV2 { minVariantPrice { amount } } }
+        }
+      }`,
+      { variables: { articleId, productIds: submittedProducts.map((product) => product.id) } },
+    );
+    const validationPayload: any = await articleResponse.json();
+    const verifiedArticle = validationPayload.data?.article;
+    const products = (validationPayload.data?.products || []).filter(Boolean);
+    if (!verifiedArticle || products.length !== submittedProducts.length) {
+      return json({ error: "One or more selected resources do not belong to this shop." }, { status: 400 });
+    }
 
-    // Save each linked product to Prisma
-    for (let i = 0; i < products.length; i++) {
-      const product = products[i];
-      await prisma.articleProduct.upsert({
+    const alreadyShoppable = await prisma.articleProduct.findFirst({
+      where: { shop, articleId, isActive: true },
+      select: { id: true },
+    });
+    if (!alreadyShoppable && Number.isFinite(limits.shoppableArticles)) {
+      const activeArticles = await prisma.articleProduct.groupBy({
+        by: ["articleId"],
+        where: { shop, isActive: true },
+      });
+      if (activeArticles.length >= limits.shoppableArticles) {
+        return json(
+          { error: `Your ${planKey} plan allows ${formatLimit(limits.shoppableArticles)} shoppable articles.` },
+          { status: 403 },
+        );
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.articleProduct.updateMany({
+        where: { shop, articleId, blockId: "default" },
+        data: { isActive: false },
+      });
+      for (let i = 0; i < products.length; i++) {
+        const product = products[i];
+        await tx.articleProduct.upsert({
         where: {
-          articleId_blockId_productId: {
+          shop_articleId_blockId_productId: {
+            shop,
             articleId,
             blockId: "default",
             productId: product.id,
@@ -417,34 +457,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         update: {
           position: i,
           isActive: true,
+          articleTitle: verifiedArticle.title,
+          articleHandle: verifiedArticle.handle,
+          blogId: verifiedArticle.blog?.id || blogId,
+          productTitle: product.title,
+          productHandle: product.handle,
+          productImage: product.featuredImage?.url || "",
+          productPrice: product.priceRangeV2?.minVariantPrice?.amount || "0",
         },
         create: {
           shop,
           articleId,
-          articleTitle,
-          articleHandle,
-          blogId,
+          articleTitle: verifiedArticle.title || articleTitle,
+          articleHandle: verifiedArticle.handle || articleHandle,
+          blogId: verifiedArticle.blog?.id || blogId,
           blockId: "default",
           productId: product.id,
           productTitle: product.title,
           productHandle: product.handle,
-          productImage: product.images?.[0]?.originalSrc || "",
-          productPrice: "0",
+          productImage: product.featuredImage?.url || "",
+          productPrice: product.priceRangeV2?.minVariantPrice?.amount || "0",
           position: i,
         },
-      });
-    }
+        });
+      }
+    });
 
     return json({ success: true, linkedCount: products.length });
   }
 
   if (intent === "bulk_optimize_batch") {
+    if (!limits.canBulkReview) {
+      return json({ error: "Bulk optimization requires the Growth plan.", planKey }, { status: 403 });
+    }
     const idsJson = formData.get("ids") as string;
     const optionsJson = formData.get("options") as string;
     if (!idsJson || !optionsJson) return json({ error: "Missing data" }, { status: 400 });
     
-    const ids = JSON.parse(idsJson);
-    const options = JSON.parse(optionsJson);
+    const ids = parseArticleIds(idsJson);
+    const options = parseOptimizeOptions(optionsJson);
 
     for (const id of ids) {
       const articleRes = await admin.graphql(`
@@ -538,6 +589,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   return json({ error: "Invalid intent" }, { status: 400 });
 };
+
+function parseArticleIds(value: string) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Response("Invalid article list", { status: 400 }); }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 50 || parsed.some((id) => typeof id !== "string" || !/^gid:\/\/shopify\/Article\/\d+$/.test(id))) {
+    throw new Response("Invalid article list", { status: 400 });
+  }
+  return [...new Set(parsed)] as string[];
+}
+
+function parseProductSelection(value: string) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Response("Invalid product selection", { status: 400 }); }
+  if (!Array.isArray(parsed) || parsed.length > 12 || parsed.some((product) => !product || typeof product.id !== "string" || !/^gid:\/\/shopify\/Product\/\d+$/.test(product.id))) {
+    throw new Response("Invalid product selection", { status: 400 });
+  }
+  const unique = new Map(parsed.map((product: { id: string }) => [product.id, product]));
+  return [...unique.values()] as Array<{ id: string }>;
+}
+
+function parseOptimizeOptions(value: string) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Response("Invalid optimization options", { status: 400 }); }
+  const input = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  return {
+    alt_text: input.alt_text === true,
+    url: input.url === true,
+    meta_description: input.meta_description === true,
+    title: input.title === true,
+  };
+}
 
 const TabBadge = ({ label, count, isActive, onClick }: { label: string, count?: number | string, isActive?: boolean, onClick?: () => void }) => (
   <div onClick={onClick} style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: isActive ? '#EBEBEB' : 'transparent', cursor: 'pointer', display: 'flex', gap: '8px', alignItems: 'center' }}>

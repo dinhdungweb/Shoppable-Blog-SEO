@@ -344,7 +344,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const metaDescription = textValue(stored?.metaDescription) || null;
 
       return prisma.articleSEO.upsert({
-        where: { articleId: article.id },
+        where: { shop_articleId: { shop, articleId: article.id } },
         update: {
           shop,
           articleTitle: article.title,

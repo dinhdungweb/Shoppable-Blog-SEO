@@ -190,7 +190,9 @@
       if (effectiveStyle !== style) rebuildWidgetShell(widget, effectiveStyle);
       renderProducts(widget, payload.products, config, effectiveStyle);
       setupCarousel(widget, effectiveStyle, config);
-      trackEvent(appUrl, shop, articleId, blockId, "all", "impression");
+      payload.products.forEach((product) => {
+        trackEvent(appUrl, shop, articleId, blockId, product.productId, "impression", product.trackingToken);
+      });
     } catch (error) {
       console.error("[SBS Widget] Failed to load products", error);
       showError(widget, "Unable to load products. Check that the app proxy is active.");
@@ -280,7 +282,7 @@
         return;
       }
 
-      publishAttribution(widget, product.productId);
+      publishAttribution(widget, product.productId, product.trackingToken);
       trackEvent(
         widget.dataset.appUrl,
         widget.dataset.shop,
@@ -288,6 +290,7 @@
         cleanBlockId(widget.dataset.blockId),
         product.productId,
         "click",
+        product.trackingToken,
       );
       
       event.preventDefault();
@@ -303,7 +306,7 @@
     return card;
   }
 
-  function publishAttribution(widget, productId) {
+  function publishAttribution(widget, productId, trackingToken) {
     try {
       const analytics = window.Shopify && window.Shopify.analytics;
       if (!analytics || typeof analytics.publish !== "function") return;
@@ -313,6 +316,7 @@
         articleId: widget.dataset.articleId || "",
         blockId: cleanBlockId(widget.dataset.blockId),
         productId: productId || "",
+        trackingToken: trackingToken || "",
       });
     } catch (error) {}
   }
@@ -490,7 +494,8 @@
       utm_medium: "shoppable_blog",
       utm_campaign: "shoppable_blog_products",
       utm_content: cleanBlockId(widget.dataset.blockId),
-      ...(rawArticleId ? { utm_term: rawArticleId } : {})
+      ...(rawArticleId ? { utm_term: rawArticleId } : {}),
+      ...(product.trackingToken ? { sbs_token: product.trackingToken } : {})
     });
 
     return `${baseUrl}?${params.toString()}`;
@@ -570,7 +575,7 @@
     style.textContent = customCss;
   }
 
-  function trackEvent(appUrl, shop, articleId, blockId, productId, eventType) {
+  function trackEvent(appUrl, shop, articleId, blockId, productId, eventType, trackingToken) {
     try {
       const sessionId = getSessionId();
       const params = new URLSearchParams({
@@ -581,6 +586,7 @@
         eventType,
         sessionId,
         referrer: document.referrer || "",
+        token: trackingToken || "",
       });
       const beacon = new Image();
       beacon.src = `${trackUrl(appUrl)}?${params.toString()}`;

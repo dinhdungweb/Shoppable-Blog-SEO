@@ -2,20 +2,15 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const shopFromHeader =
-    request.headers.get("x-shopify-shop-domain") ||
-    request.headers.get("X-Shopify-Shop-Domain");
-
   try {
     const { shop, topic } = await authenticate.webhook(request);
     console.log(`Received ${topic} webhook for ${shop}`);
 
-    // Payload contains customer data request details
+    // The app stores storefront interaction events without customer identifiers,
+    // so there is no customer-specific payload to export.
   } catch (error) {
-    console.error(
-      `[Webhook] Error in customers/data_request for ${shopFromHeader}:`,
-      error,
-    );
+    console.error("[Webhook] Rejected customers/data_request webhook:", error);
+    return new Response(null, { status: 401 });
   }
 
   // Shopify strictly requires privacy compliance webhooks to return 200 OK

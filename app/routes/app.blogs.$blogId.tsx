@@ -554,7 +554,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
 
       await prisma.articleSEO.upsert({
-        where: { articleId: article.id },
+        where: { shop_articleId: { shop, articleId: article.id } },
         update: {
           shop,
           articleTitle: title,
@@ -687,7 +687,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
 
     await prisma.articleSEO.upsert({
-      where: { articleId },
+      where: { shop_articleId: { shop, articleId } },
       update: {
         shop,
         articleTitle: title,
@@ -779,7 +779,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
       await prisma.articleProduct.upsert({
         where: {
-          articleId_blockId_productId: {
+          shop_articleId_blockId_productId: {
+            shop,
             articleId,
             blockId,
             productId: product.id,
@@ -882,7 +883,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     await prisma.articleSEO.upsert({
-      where: { articleId },
+      where: { shop_articleId: { shop, articleId } },
       update: {
         shop,
         articleTitle: cleanString(formData.get("articleTitle")),
@@ -957,7 +958,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     await prisma.articleSEO.upsert({
-      where: { articleId },
+      where: { shop_articleId: { shop, articleId } },
       update: {
         shop,
         articleTitle,

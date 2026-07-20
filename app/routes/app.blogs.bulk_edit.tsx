@@ -1,4 +1,5 @@
-import { ActionFunctionArgs, LoaderFunctionArgs, json, redirect } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigate, useNavigation } from "@remix-run/react";
 import { Page, Layout, Card, IndexTable, TextField } from "@shopify/polaris";
 import { useState, useCallback } from "react";
@@ -72,10 +73,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const payloadStr = formData.get("payload") as string;
   
   if (!payloadStr) return json({ error: "Missing payload" }, { status: 400 });
-  const items: ArticleData[] = JSON.parse(payloadStr);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payloadStr);
+  } catch {
+    return json({ error: "Invalid payload" }, { status: 400 });
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    parsed.length > 50 ||
+    parsed.some((item) =>
+      !item ||
+      typeof item.id !== "string" ||
+      !/^gid:\/\/shopify\/Article\/\d+$/.test(item.id) ||
+      typeof item.title !== "string" || item.title.trim().length === 0 || item.title.length > 255 ||
+      typeof item.author !== "string" || item.author.length > 255 ||
+      typeof item.handle !== "string" || !/^[a-z0-9][a-z0-9-]{0,254}$/.test(item.handle)
+    )
+  ) {
+    return json({ error: "Invalid article update payload" }, { status: 400 });
+  }
+  const items = parsed as ArticleData[];
 
   for (const item of items) {
-    await admin.graphql(
+    const response = await admin.graphql(
       `#graphql
       mutation UpdateArticle($id: ID!, $article: ArticleUpdateInput!) {
         articleUpdate(id: $id, article: $article) {
@@ -94,6 +116,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
     );
+    const result: any = await response.json();
+    const errors = [
+      ...(Array.isArray(result.errors) ? result.errors : []),
+      ...(result.data?.articleUpdate?.userErrors || []),
+    ];
+    if (errors.length) {
+      return json({ error: errors.map((error: any) => error.message).join("; ") }, { status: 400 });
+    }
   }
 
   return redirect("/app/blogs");

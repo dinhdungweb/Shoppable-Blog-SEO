@@ -135,7 +135,7 @@ model ArticleProduct {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@unique([articleId, blockId, productId])
+  @@unique([shop, articleId, blockId, productId])
   @@index([shop])
   @@index([articleId])
   @@index([articleId, blockId])
@@ -145,7 +145,7 @@ model ArticleProduct {
 model ArticleSEO {
   id              String    @id @default(cuid())
   shop            String
-  articleId       String    @unique
+  articleId       String
   articleTitle    String    @default("")
   seoScore        Int       @default(0)
   metaTitle       String?
@@ -158,6 +158,7 @@ model ArticleSEO {
   updatedAt       DateTime  @updatedAt
 
   @@index([shop])
+  @@unique([shop, articleId])
 }
 
 // Analytics: tracking widget events
@@ -170,6 +171,7 @@ model WidgetEvent {
   eventType String
   sessionId String?
   referrer  String?
+  eventKey  String?  @unique
   createdAt DateTime @default(now())
 
   @@index([shop, createdAt])

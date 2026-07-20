@@ -582,7 +582,7 @@ export default function Dashboard() {
               </InlineStack>
               <ProgressBar progress={setup.progress} tone={setup.progress === 100 ? "success" : "primary"} size="small" />
               <BlockStack gap="300">
-                {setup.items.map((item) => (
+                {setup.items.map((item: any) => (
                   <ProgressItem key={item.label} label={item.label} done={item.done} actionUrl={item.actionUrl} actionLabel={item.actionLabel} />
                 ))}
               </BlockStack>
@@ -670,7 +670,7 @@ export default function Dashboard() {
               </Text>
               {recommendedActions.length ? (
                 <BlockStack gap="400">
-                  {recommendedActions.map((action, index) => (
+                  {recommendedActions.map((action: any, index: number) => (
                     <RecommendedAction
                       key={action.title}
                       icon={RECOMMENDED_ICON_MAP[action.iconKey as RecommendedIconKey]}
@@ -720,7 +720,7 @@ export default function Dashboard() {
               </Box>
 
               <Box minHeight="250px">
-                {chartData.some((point) => point.impressions || point.clicks || point.addToCarts || point.purchases) ? (
+                {chartData.some((point: any) => point.impressions || point.clicks || point.addToCarts || point.purchases) ? (
                   <ResponsiveContainer width="100%" height={250}>
                     <LineChart data={chartData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -790,7 +790,7 @@ export default function Dashboard() {
               ]}
               selectable={false}
             >
-              {recentPosts.map((post, index) => (
+              {recentPosts.map((post: any, index: number) => (
                 <IndexTable.Row id={post.id} key={post.id} position={index}>
                   <IndexTable.Cell>
                     <InlineStack gap="300" blockAlign="center" wrap={false}>

@@ -203,7 +203,7 @@ export default function ContentNavigationSettings() {
   }, [formState, savedState]);
 
   useEffect(() => {
-    if (fetcher.data?.success && fetcher.data.config) {
+    if (fetcher.data?.success && "config" in fetcher.data && fetcher.data.config) {
       setSavedState(fetcher.data.config);
       setFormState(fetcher.data.config);
       shopify.toast.show("Content navigation settings saved");
@@ -353,7 +353,7 @@ export default function ContentNavigationSettings() {
                         }
                       />
                     </InlineGrid>
-                    <BlockStack gap="250">
+                <BlockStack gap="300">
                       <Toggle
                         disabled={breadcrumbsSettingsDisabled}
                         checked={formState.breadcrumbsShowHome}
@@ -390,7 +390,7 @@ export default function ContentNavigationSettings() {
                       description="Generated from H2/H3/H4 headings in the article body."
                       onChange={(value) => handleChange("tocEnabled", value)}
                     />
-                    <BlockStack gap="250">
+                <BlockStack gap="300">
                       <Toggle
                         disabled={tocSettingsDisabled}
                         checked={formState.tocAutoInsertEnabled}
@@ -472,7 +472,7 @@ export default function ContentNavigationSettings() {
                         onChange={(value) => handleChange("tocLevels", value)}
                       />
                     </InlineGrid>
-                    <BlockStack gap="250">
+                <BlockStack gap="300">
                       <Toggle
                         disabled={tocSettingsDisabled}
                         checked={formState.tocNumbering}

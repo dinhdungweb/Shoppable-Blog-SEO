@@ -3,7 +3,7 @@ import { json } from "@remix-run/node";
 import prisma from "../db.server";
 import { CONTENT_NAV_DEFAULTS, normalizeContentNavConfig } from "../content-navigation";
 import { getLimitsForPlan } from "../pricing-plans";
-import { getUnauthenticatedActivePlanName } from "../shopify.server";
+import { authenticate, getUnauthenticatedActivePlanName } from "../shopify.server";
 
 const CONTENT_NAV_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -11,8 +11,11 @@ const CONTENT_NAV_HEADERS = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const url = new URL(request.url);
-  const shop = url.searchParams.get("shop") || request.headers.get("x-shopify-shop-domain");
+  const { session } = await authenticate.public.appProxy(request);
+  if (!session?.shop) {
+    return json({ error: "Unauthorized app proxy request" }, { status: 401, headers: CONTENT_NAV_HEADERS });
+  }
+  const shop = session.shop;
 
   if (!shop) {
     return json({ error: "Missing shop parameter" }, { status: 400, headers: CONTENT_NAV_HEADERS });

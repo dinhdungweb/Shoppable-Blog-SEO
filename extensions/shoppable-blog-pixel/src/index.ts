@@ -27,13 +27,14 @@ register(({ analytics, browser, init, settings }) => {
         ...parsed,
         articleId,
         blockId: cleanBlockId(parsed.blockId),
+        trackingToken: String(parsed.trackingToken || ""),
       };
     } catch (e) {
       return null;
     }
   }
 
-  async function setAttribution(articleId: unknown, blockId: unknown) {
+  async function setAttribution(articleId: unknown, blockId: unknown, trackingToken?: unknown) {
     const normalizedArticleId = normalizeArticleId(articleId);
     if (!normalizedArticleId) return;
 
@@ -41,6 +42,7 @@ register(({ analytics, browser, init, settings }) => {
       await browser.localStorage.setItem(STORAGE_KEY, JSON.stringify({
         articleId: normalizedArticleId,
         blockId: cleanBlockId(blockId),
+        trackingToken: String(trackingToken || ""),
         timestamp: Date.now()
       }));
     } catch (e) {
@@ -48,10 +50,10 @@ register(({ analytics, browser, init, settings }) => {
     }
   }
 
-  function sendTrackEvent(eventType: string, productId: string, attribution: any) {
+  function sendTrackEvent(eventType: string, productId: string, attribution: any, eventId?: string) {
     const shop = getCanonicalShop();
     const articleId = normalizeArticleId(attribution.articleId);
-    if (!shop || !articleId || !productId) return;
+    if (!shop || !articleId || !productId || !attribution.trackingToken) return;
     
     // Using fetch POST
     fetch(TRACK_API_URL, {
@@ -65,7 +67,8 @@ register(({ analytics, browser, init, settings }) => {
         blockId: cleanBlockId(attribution.blockId),
         productId: productId,
         eventType: eventType,
-        sessionId: init.context.document.location.hostname + "-" + Date.now() // Unique enough for pixel
+        sessionId: String(eventId || ""),
+        token: attribution.trackingToken,
       })
     }).catch(() => {});
   }
@@ -118,7 +121,7 @@ register(({ analytics, browser, init, settings }) => {
         const blockId = cleanBlockId(url.searchParams.get("utm_content"));
         
         if (articleId) {
-          await setAttribution(articleId, blockId);
+          await setAttribution(articleId, blockId, url.searchParams.get("sbs_token"));
         }
       }
     } catch (e) {}
@@ -127,7 +130,7 @@ register(({ analytics, browser, init, settings }) => {
   // 1b. Capture direct widget interactions before the customer leaves the blog page.
   analytics.subscribe(ATTRIBUTION_EVENT, async (event) => {
     const data = (event as any).customData || {};
-    await setAttribution(data.articleId, data.blockId);
+    await setAttribution(data.articleId, data.blockId, data.trackingToken);
   });
 
   // 2. Listen to add to cart
@@ -139,7 +142,7 @@ register(({ analytics, browser, init, settings }) => {
     if (productId) {
       // The format is usually gid://shopify/Product/123456789
       const idStr = String(productId).split('/').pop() || "";
-      sendTrackEvent("add_to_cart", idStr, attribution);
+      sendTrackEvent("add_to_cart", idStr, attribution, String((event as any).id || ""));
     }
   });
 
@@ -159,7 +162,7 @@ register(({ analytics, browser, init, settings }) => {
         // Avoid sending duplicate events if the same product is in the cart multiple times
         if (!processedProductIds.has(idStr)) {
           processedProductIds.add(idStr);
-          sendTrackEvent("purchase", idStr, attribution);
+          sendTrackEvent("purchase", idStr, attribution, String((event as any).id || ""));
         }
       }
     }
