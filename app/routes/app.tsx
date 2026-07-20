@@ -41,6 +41,7 @@ export default function App() {
         <Link to="/app/blogs">Blog Manager</Link>
         <Link to="/app/seo">SEO Optimizer</Link>
         <Link to="/app/analytics">Analytics</Link>
+        <Link to="/app/changelog">What's new</Link>
         <Link to="/app/pricing">Pricing</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
