@@ -14,6 +14,25 @@ account, and a development store.
 3. Run `npm run setup` to generate Prisma Client and deploy migrations.
 4. Run `npm run dev` and select the development store.
 
+## Google Search Console setup
+
+1. In Google Cloud Console, enable **Google Search Console API**.
+2. Configure the OAuth consent screen and create an **OAuth client ID** with
+   application type **Web application**.
+3. Add this exact authorized redirect URI for production:
+   `https://shopable-blog.bluepeaks.top/app/seo/google/callback`.
+4. Copy `.env.example` to `.env` and set
+   `GOOGLE_SEARCH_CONSOLE_CLIENT_ID`, `GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET`,
+   and a stable random `GOOGLE_TOKEN_ENCRYPTION_KEY`.
+5. Add the same four Google variables to the production hosting environment,
+   deploy the database migration with `npm run setup`, then open **SEO
+   Optimizer → Connect Google**.
+
+The integration only requests the read-only
+`https://www.googleapis.com/auth/webmasters.readonly` scope. Do not rotate the
+token encryption key after stores connect unless existing connections are
+disconnected first.
+
 The storefront extension calls the signed app proxy at
 `/apps/shoppable-blog-seo`. Do not expose unsigned alternatives for widget,
 content-navigation, or click/impression ingestion. Purchase and add-to-cart
