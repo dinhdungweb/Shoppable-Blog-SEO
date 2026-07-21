@@ -20,4 +20,12 @@ describe("internal linking assistant", () => {
     expect(result.insertedInContext).toBe(true);
     expect(result.body).toContain('<a href="/blogs/news/shoe-sizing">Shoe Sizing Advice</a>');
   });
+
+  it("does not report external blog URLs as broken internal links", () => {
+    const report = analyzeInternalLinks([
+      { id: "1", title: "Source", handle: "source", blogHandle: "news", body: '<a href="https://external.example/blogs/news/missing">Reference</a>' },
+    ], [], ["shop.example"]);
+    expect(report.brokenLinks).toHaveLength(0);
+    expect(report.internalLinks).toBe(0);
+  });
 });

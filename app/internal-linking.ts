@@ -21,6 +21,7 @@ export type BrokenLink = { sourceId: string; sourceTitle: string; href: string; 
 export type RepeatedAnchor = { anchor: string; uses: number; destinations: number };
 export type TopicCluster = { pillar: Pick<LinkArticle, "id" | "title">; supporting: Array<Pick<LinkArticle, "id" | "title">> };
 export type InternalLinkReport = {
+  auditVersion: number;
   articles: number;
   internalLinks: number;
   orphanArticles: Array<Pick<LinkArticle, "id" | "title">>;
@@ -32,7 +33,7 @@ export type InternalLinkReport = {
 
 const STOP_WORDS = new Set("a an and are as at be by for from how in is it of on or that the this to with your you our what why guide tips best những các một và cho của là về cách với trong từ tại được khi sản phẩm bài viết".split(" "));
 
-export function analyzeInternalLinks(articles: LinkArticle[], productHandles: string[]): InternalLinkReport {
+export function analyzeInternalLinks(articles: LinkArticle[], productHandles: string[], shopDomains: string[] = []): InternalLinkReport {
   const articleByPath = new Map(articles.map((article) => [articlePath(article), article]));
   const products = new Set(productHandles.map((handle) => handle.toLowerCase()));
   const inbound = new Map(articles.map((article) => [article.id, 0]));
@@ -45,7 +46,7 @@ export function analyzeInternalLinks(articles: LinkArticle[], productHandles: st
   for (const article of articles) {
     const targets = new Set<string>();
     for (const link of extractLinks(article.body)) {
-      const path = normalizeInternalPath(link.href);
+      const path = normalizeInternalPath(link.href, shopDomains);
       if (!path) continue;
       internalLinks += 1;
       const anchor = cleanText(link.anchor).toLowerCase();
@@ -78,6 +79,7 @@ export function analyzeInternalLinks(articles: LinkArticle[], productHandles: st
     .slice(0, 20);
 
   return {
+    auditVersion: 2,
     articles: articles.length,
     internalLinks,
     orphanArticles,
@@ -169,13 +171,22 @@ function similarity(left: Set<string>, right: Set<string>) {
   return overlap / Math.sqrt(left.size * right.size);
 }
 function articlePath(article: Pick<LinkArticle, "blogHandle" | "handle">) { return `/blogs/${article.blogHandle}/${article.handle}`.toLowerCase(); }
-function normalizeInternalPath(href: string) {
+function normalizeInternalPath(href: string, shopDomains: string[]) {
   try {
     const url = new URL(href, "https://internal.invalid");
-    const path = url.pathname.replace(/\/$/, "").toLowerCase();
+    const isRelative = !/^(?:https?:)?\/\//i.test(href);
+    const allowedHosts = new Set(shopDomains.map(domainHost).filter(Boolean));
+    if (!isRelative && !allowedHosts.has(url.hostname.toLowerCase())) return null;
+    let path = url.pathname.replace(/\/$/, "").toLowerCase();
+    const contentStart = path.search(/\/(?:blogs|products)\//);
+    if (contentStart > 0) path = path.slice(contentStart);
     if (!path.startsWith("/blogs/") && !path.startsWith("/products/")) return null;
     return path;
   } catch { return null; }
+}
+function domainHost(value: string) {
+  try { return new URL(value.includes("://") ? value : `https://${value}`).hostname.toLowerCase(); }
+  catch { return ""; }
 }
 function extractLinks(body: string) {
   const links: Array<{ href: string; anchor: string }> = [];

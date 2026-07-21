@@ -9,14 +9,16 @@ import { analyzeInternalLinks, insertApprovedLink } from "../internal-linking";
 import type { InternalLinkReport, LinkArticle, LinkSuggestion } from "../internal-linking";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
+import { fetchShopDomains } from "../shopify-domains.server";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const saved = await prisma.internalLinkAnalysis.findUnique({ where: { shop: session.shop } });
+  const savedReport = saved?.report as unknown as InternalLinkReport | undefined;
   return json({
-    report: (saved?.report as unknown as InternalLinkReport | undefined) || null,
+    report: savedReport?.auditVersion === 2 ? savedReport : null,
     analyzedAt: saved?.analyzedAt.toISOString() || null,
   });
 };
@@ -28,8 +30,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (intent === "analyze") {
     try {
-      const [articles, productHandles] = await Promise.all([fetchArticles(admin), fetchProductHandles(admin)]);
-      const report = analyzeInternalLinks(articles, productHandles);
+      const [articles, productHandles, shopDomains] = await Promise.all([fetchArticles(admin), fetchProductHandles(admin), fetchShopDomains(admin, session.shop)]);
+      const report = analyzeInternalLinks(articles, productHandles, shopDomains);
       const analyzedAt = new Date();
       await prisma.internalLinkAnalysis.upsert({
         where: { shop: session.shop },
@@ -128,9 +130,6 @@ export default function InternalLinksPage() {
             </EmptyState>
           </Card>
         ) : <>
-          <Banner tone="info" title="Review first, then publish">
-            <p>1. Review the report · 2. Open the source and destination if needed · 3. Approve only relevant suggestions. Nothing is inserted automatically.</p>
-          </Banner>
           <InlineGrid columns={{ xs: 2, md: 4 }} gap="400">
             <SummaryCard label="Articles analyzed" value={report.articles} tone="info" />
             <SummaryCard label="Internal links" value={report.internalLinks} tone="success" />
@@ -188,18 +187,28 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
 }
 
 function Overview({ report, analyzedAt, onSelectTab }: { report: InternalLinkReport; analyzedAt: string | null; onSelectTab: (tab: number) => void }) {
-  const priority = report.brokenLinks.length ? `${report.brokenLinks.length} broken destinations should be fixed first.`
-    : report.orphanArticles.length ? `${report.orphanArticles.length} orphan articles need inbound links.`
-      : report.suggestions.length ? `${report.suggestions.length} related-link suggestions are ready for review.`
-        : "No urgent internal-linking work was found.";
   return <Layout>
     <Layout.Section>
-      <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">Recommended next step</Text><Text as="p">{priority}</Text><InlineStack gap="200"><Button variant="primary" onClick={() => onSelectTab(report.brokenLinks.length || report.orphanArticles.length ? 2 : 1)}>{report.brokenLinks.length || report.orphanArticles.length ? "Review issues" : "Review suggestions"}</Button><Button onClick={() => onSelectTab(3)}>View topic clusters</Button></InlineStack></BlockStack></Card>
+      <Card><BlockStack gap="400">
+        <BlockStack gap="100"><Text as="h2" variant="headingMd">Priority queue</Text><Text as="p" variant="bodySm" tone="subdued">Work from top to bottom. Suggestions are never published without confirmation.</Text></BlockStack>
+        <PriorityRow label="Broken destinations" detail="Links pointing to deleted Shopify articles or products" count={report.brokenLinks.length} tone={report.brokenLinks.length ? "critical" : "success"} action="Review issues" onAction={() => onSelectTab(2)} />
+        <Divider />
+        <PriorityRow label="Orphan articles" detail="Articles with no contextual inbound link from another post" count={report.orphanArticles.length} tone={report.orphanArticles.length ? "warning" : "success"} action="Review issues" onAction={() => onSelectTab(2)} />
+        <Divider />
+        <PriorityRow label="Link suggestions" detail="Related source and destination pairs waiting for review" count={report.suggestions.length} tone="info" action="Review suggestions" onAction={() => onSelectTab(1)} />
+      </BlockStack></Card>
     </Layout.Section>
     <Layout.Section variant="oneThird">
-      <Card><BlockStack gap="200"><Text as="h2" variant="headingMd">Analysis status</Text><Badge tone="success">Saved for this shop</Badge><Text as="p" variant="bodySm" tone="subdued">Last analyzed: {formatAnalyzedAt(analyzedAt)}</Text><Text as="p" variant="bodySm" tone="subdued">Results remain available after navigating away or reloading.</Text></BlockStack></Card>
+      <BlockStack gap="400">
+        <Card><BlockStack gap="200"><InlineStack align="space-between"><Text as="h2" variant="headingMd">Saved report</Text><Badge tone="success">Available</Badge></InlineStack><Text as="p" variant="bodySm" tone="subdued">Updated {formatAnalyzedAt(analyzedAt)}</Text><Text as="p" variant="bodySm" tone="subdued">This report stays available when you leave or reload the page.</Text></BlockStack></Card>
+        <Card><BlockStack gap="200"><Text as="h2" variant="headingMd">Safe workflow</Text><Text as="p" variant="bodySm">1. Review the source and destination</Text><Text as="p" variant="bodySm">2. Check the suggested anchor</Text><Text as="p" variant="bodySm">3. Confirm in the review dialog</Text></BlockStack></Card>
+      </BlockStack>
     </Layout.Section>
   </Layout>;
+}
+
+function PriorityRow({ label, detail, count, tone, action, onAction }: { label: string; detail: string; count: number; tone: "critical" | "warning" | "success" | "info"; action: string; onAction: () => void }) {
+  return <InlineStack align="space-between" blockAlign="center" wrap={false} gap="300"><InlineStack gap="300" blockAlign="center" wrap={false}><Box minWidth="48px"><Text as="p" variant="headingLg" fontWeight="bold">{count}</Text></Box><BlockStack gap="050"><Text as="p" fontWeight="semibold">{label}</Text><Text as="p" variant="bodySm" tone="subdued">{detail}</Text></BlockStack></InlineStack><InlineStack gap="200" blockAlign="center" wrap={false}><Badge tone={tone}>{count ? "Review" : "Clear"}</Badge><Button size="micro" disabled={!count} onClick={onAction}>{action}</Button></InlineStack></InlineStack>;
 }
 
 function SuggestionsTable({ report, onReview }: { report: InternalLinkReport; onReview: (suggestion: LinkSuggestion) => void }) {
