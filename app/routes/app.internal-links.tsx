@@ -189,14 +189,14 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
 function Overview({ report, analyzedAt, onSelectTab }: { report: InternalLinkReport; analyzedAt: string | null; onSelectTab: (tab: number) => void }) {
   return <Layout>
     <Layout.Section>
-      <Card><BlockStack gap="400">
-        <BlockStack gap="100"><Text as="h2" variant="headingMd">Priority queue</Text><Text as="p" variant="bodySm" tone="subdued">Work from top to bottom. Suggestions are never published without confirmation.</Text></BlockStack>
-        <PriorityRow label="Broken destinations" detail="Links pointing to deleted Shopify articles or products" count={report.brokenLinks.length} tone={report.brokenLinks.length ? "critical" : "success"} action="Review issues" onAction={() => onSelectTab(2)} />
-        <Divider />
-        <PriorityRow label="Orphan articles" detail="Articles with no contextual inbound link from another post" count={report.orphanArticles.length} tone={report.orphanArticles.length ? "warning" : "success"} action="Review issues" onAction={() => onSelectTab(2)} />
-        <Divider />
-        <PriorityRow label="Link suggestions" detail="Related source and destination pairs waiting for review" count={report.suggestions.length} tone="info" action="Review suggestions" onAction={() => onSelectTab(1)} />
-      </BlockStack></Card>
+      <TableSection title="Priority queue" description="Work from top to bottom. Suggestions are never published without confirmation.">
+        <table style={tableStyle}><thead><tr><Header>Category</Header><Header>What it means</Header><Header>Count</Header><Header>Status</Header><Header>Action</Header></tr></thead><tbody>
+          <OverviewRow label="Broken destinations" detail="Links to deleted Shopify articles or products" count={report.brokenLinks.length} tone={report.brokenLinks.length ? "critical" : "success"} action="Review issues" onAction={() => onSelectTab(2)} />
+          <OverviewRow label="Orphan articles" detail="Articles with no inbound contextual link" count={report.orphanArticles.length} tone={report.orphanArticles.length ? "warning" : "success"} action="Review issues" onAction={() => onSelectTab(2)} />
+          <OverviewRow label="Link suggestions" detail="Related source and destination pairs awaiting approval" count={report.suggestions.length} tone="info" action="Review suggestions" onAction={() => onSelectTab(1)} />
+          <OverviewRow label="Topic clusters" detail="Pillar and supporting article groups" count={report.clusters.length} tone="info" action="View clusters" onAction={() => onSelectTab(3)} />
+        </tbody></table>
+      </TableSection>
     </Layout.Section>
     <Layout.Section variant="oneThird">
       <BlockStack gap="400">
@@ -207,8 +207,8 @@ function Overview({ report, analyzedAt, onSelectTab }: { report: InternalLinkRep
   </Layout>;
 }
 
-function PriorityRow({ label, detail, count, tone, action, onAction }: { label: string; detail: string; count: number; tone: "critical" | "warning" | "success" | "info"; action: string; onAction: () => void }) {
-  return <InlineStack align="space-between" blockAlign="center" wrap={false} gap="300"><InlineStack gap="300" blockAlign="center" wrap={false}><Box minWidth="48px"><Text as="p" variant="headingLg" fontWeight="bold">{count}</Text></Box><BlockStack gap="050"><Text as="p" fontWeight="semibold">{label}</Text><Text as="p" variant="bodySm" tone="subdued">{detail}</Text></BlockStack></InlineStack><InlineStack gap="200" blockAlign="center" wrap={false}><Badge tone={tone}>{count ? "Review" : "Clear"}</Badge><Button size="micro" disabled={!count} onClick={onAction}>{action}</Button></InlineStack></InlineStack>;
+function OverviewRow({ label, detail, count, tone, action, onAction }: { label: string; detail: string; count: number; tone: "critical" | "warning" | "success" | "info"; action: string; onAction: () => void }) {
+  return <tr style={rowStyle}><Cell><strong>{label}</strong></Cell><Cell>{detail}</Cell><Cell><strong>{count}</strong></Cell><Cell><Badge tone={tone}>{count ? "Review" : "Clear"}</Badge></Cell><Cell><Button size="micro" disabled={!count} onClick={onAction}>{action}</Button></Cell></tr>;
 }
 
 function SuggestionsTable({ report, onReview }: { report: InternalLinkReport; onReview: (suggestion: LinkSuggestion) => void }) {
@@ -230,27 +230,34 @@ function SuggestionsTable({ report, onReview }: { report: InternalLinkReport; on
 
 function IssuesPanel({ report }: { report: InternalLinkReport }) {
   return <BlockStack gap="400">
-    <Banner tone={report.brokenLinks.length ? "critical" : "success"} title={report.brokenLinks.length ? "Fix broken destinations first" : "No broken destinations"}>
-      <p>Broken links send readers and crawlers to deleted article or product pages. Orphan articles need at least one useful inbound contextual link.</p>
-    </Banner>
-    <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
-      <IssueList title={`Orphan articles (${report.orphanArticles.length})`} empty="Every article has an inbound contextual link." items={report.orphanArticles.map((item) => item.title)} />
-      <IssueList title={`Broken destinations (${report.brokenLinks.length})`} empty="No deleted article or product links found." items={report.brokenLinks.map((item) => `${item.sourceTitle} → ${item.href} (${item.kind})`)} />
-    </InlineGrid>
-    <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">Repeated anchors ({report.repeatedAnchors.length})</Text><Text as="p" variant="bodySm" tone="subdued">Generic anchor text used for different destinations can make link context unclear.</Text>{report.repeatedAnchors.length ? report.repeatedAnchors.slice(0, 20).map((item) => <InlineStack key={item.anchor} align="space-between" wrap={false}><Text as="span" variant="bodySm">{item.anchor}</Text><Badge tone="warning">{`${item.uses} uses / ${item.destinations} URLs`}</Badge></InlineStack>) : <Text as="p" tone="subdued">No overused anchors found.</Text>}</BlockStack></Card>
+    <TableSection title={`Broken destinations (${report.brokenLinks.length})`} description="Links pointing to Shopify articles or products that no longer exist.">
+      {report.brokenLinks.length ? <table style={tableStyle}><thead><tr><Header>Source article</Header><Header>Broken URL</Header><Header>Destination type</Header><Header>Action</Header></tr></thead><tbody>{report.brokenLinks.slice(0, 50).map((item) => <tr key={`${item.sourceId}:${item.href}`} style={rowStyle}><Cell><strong>{item.sourceTitle}</strong></Cell><Cell><code style={{ wordBreak: "break-all" }}>{item.href}</code></Cell><Cell><Badge tone="critical">{item.kind === "article" ? "Article" : "Product"}</Badge></Cell><Cell><Button size="micro" url={articleEditorUrl(item.sourceId)} target="_blank">Open source</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="No broken article or product destinations found." />}
+      <TableLimit shown={Math.min(50, report.brokenLinks.length)} total={report.brokenLinks.length} />
+    </TableSection>
+    <TableSection title={`Orphan articles (${report.orphanArticles.length})`} description="Published articles with no contextual inbound link from another article.">
+      {report.orphanArticles.length ? <table style={tableStyle}><thead><tr><Header>Article</Header><Header>Problem</Header><Header>Recommended action</Header><Header>Action</Header></tr></thead><tbody>{report.orphanArticles.slice(0, 50).map((item) => <tr key={item.id} style={rowStyle}><Cell><strong>{item.title}</strong></Cell><Cell><Badge tone="warning">No inbound link</Badge></Cell><Cell>Add a relevant link from a related article</Cell><Cell><Button size="micro" url={articleEditorUrl(item.id)} target="_blank">Open article</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="Every article has at least one inbound contextual link." />}
+      <TableLimit shown={Math.min(50, report.orphanArticles.length)} total={report.orphanArticles.length} />
+    </TableSection>
+    <TableSection title={`Repeated anchors (${report.repeatedAnchors.length})`} description="Anchor text reused for different destinations can make link context unclear.">
+      {report.repeatedAnchors.length ? <table style={tableStyle}><thead><tr><Header>Anchor text</Header><Header>Total uses</Header><Header>Different destinations</Header><Header>Status</Header></tr></thead><tbody>{report.repeatedAnchors.map((item) => <tr key={item.anchor} style={rowStyle}><Cell><code>{item.anchor}</code></Cell><Cell>{item.uses}</Cell><Cell>{item.destinations}</Cell><Cell><Badge tone="warning">Diversify</Badge></Cell></tr>)}</tbody></table> : <EmptyTable text="No overused anchor text found." />}
+    </TableSection>
   </BlockStack>;
 }
 
 function ClustersPanel({ report }: { report: InternalLinkReport }) {
   return <BlockStack gap="400">
     <Banner tone="info" title="Pillar → supporting articles"><p>A pillar is a broad, substantial article. Supporting articles cover narrower related questions and should link naturally to the pillar where useful.</p></Banner>
-    {report.clusters.length ? <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">{report.clusters.map((cluster) => <Card key={cluster.pillar.id}><BlockStack gap="300"><BlockStack gap="100"><Badge tone="info">Pillar page</Badge><Text as="h2" variant="headingMd">{cluster.pillar.title}</Text></BlockStack><Divider />{cluster.supporting.map((item) => <Text key={item.id} as="p" variant="bodySm">↳ {item.title}</Text>)}</BlockStack></Card>)}</InlineGrid> : <Card><Text as="p" tone="subdued">Not enough related content to build a topic cluster.</Text></Card>}
+    <TableSection title={`Topic cluster map (${report.clusters.length})`} description="Use this map to review whether supporting articles link naturally to their pillar page.">
+      {report.clusters.length ? <table style={tableStyle}><thead><tr><Header>Pillar page</Header><Header>Supporting articles</Header><Header>Count</Header><Header>Action</Header></tr></thead><tbody>{report.clusters.map((cluster) => <tr key={cluster.pillar.id} style={rowStyle}><Cell><Badge tone="info">Pillar</Badge><br /><strong>{cluster.pillar.title}</strong></Cell><Cell><BlockStack gap="100">{cluster.supporting.map((item) => <Text key={item.id} as="p" variant="bodySm">• {item.title}</Text>)}</BlockStack></Cell><Cell><strong>{cluster.supporting.length}</strong></Cell><Cell><Button size="micro" url={articleEditorUrl(cluster.pillar.id)} target="_blank">Open pillar</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="Not enough related content to build a topic cluster." />}
+    </TableSection>
   </BlockStack>;
 }
 
-function IssueList({ title, items, empty }: { title: string; items: string[]; empty: string }) {
-  return <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{title}</Text>{items.length ? items.slice(0, 20).map((item, index) => <BlockStack key={`${item}:${index}`} gap="200">{index > 0 && <Divider />}<Text as="p" variant="bodySm">{item}</Text></BlockStack>) : <Text as="p" tone="subdued">{empty}</Text>}</BlockStack></Card>;
+function TableSection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return <Card padding="0"><Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">{title}</Text><Text as="p" variant="bodySm" tone="subdued">{description}</Text></BlockStack></Box><Divider /><div style={{ overflowX: "auto" }}>{children}</div></Card>;
 }
+function EmptyTable({ text }: { text: string }) { return <Box padding="500"><Text as="p" tone="subdued">{text}</Text></Box>; }
+function TableLimit({ shown, total }: { shown: number; total: number }) { return total > shown ? <Box padding="300" borderBlockStartWidth="025" borderColor="border-secondary"><Text as="p" variant="bodySm" tone="subdued">Showing {shown} of {total} rows.</Text></Box> : null; }
 function Header({ children }: { children: React.ReactNode }) { return <th style={{ padding: "12px 16px", textAlign: "left", whiteSpace: "nowrap", color: "var(--p-color-text-secondary)", fontSize: 12 }}>{children}</th>; }
 function Cell({ children }: { children: React.ReactNode }) { return <td style={{ padding: "12px 16px", minWidth: 130, verticalAlign: "middle" }}>{children}</td>; }
 const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 13 };
