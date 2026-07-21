@@ -567,7 +567,7 @@ export default function SEOOptimizer() {
     if (!data || handledActionData.current === data) return;
     handledActionData.current = data;
     if (data.googleAction === "connect" && data.authorizationUrl) {
-      window.top?.location.assign(data.authorizationUrl);
+      window.open(data.authorizationUrl, "_top");
       return;
     }
     if (data.success) {
