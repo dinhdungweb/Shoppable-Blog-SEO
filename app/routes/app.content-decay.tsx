@@ -107,7 +107,7 @@ export default function ContentDecayPage() {
         <Card padding="0">
           <Box padding="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">Priority queue</Text><Text as="p" variant="bodySm" tone="subdued">Updated {formatDate(analyzedAt)} · Review high-priority rows first. No changes are published automatically.</Text></BlockStack><div style={{ minWidth: 230 }}><Select label="Issue type" labelHidden value={filter} onChange={setFilter} options={filterOptions(report)} /></div></InlineStack></Box>
           <Divider />
-          {visibleIssues.length ? <div style={{ overflowX: "auto" }}><table style={tableStyle}><thead><tr><Header>Article</Header><Header>Issue</Header><Header>Previous</Header><Header>Current</Header><Header>Recommended action</Header><Header>Priority</Header><Header>Action</Header></tr></thead><tbody>{visibleIssues.slice(0, 100).map((issue) => <IssueRow key={issue.id} issue={issue} />)}</tbody></table></div> : <Box padding="500"><Text as="p" tone="subdued">No content decay issues match this filter.</Text></Box>}
+          {visibleIssues.length ? <div style={{ overflowX: "auto" }}><table style={tableStyle}><colgroup><col style={{ width: "17%" }} /><col style={{ width: "17%" }} /><col style={{ width: "20%" }} /><col style={{ width: "11%" }} /><col style={{ width: "21%" }} /><col style={{ width: "7%" }} /><col style={{ width: "7%" }} /></colgroup><thead><tr><Header>Article</Header><Header>Issue</Header><Header>Previous</Header><Header>Current</Header><Header>Recommended action</Header><Header>Priority</Header><Header>Action</Header></tr></thead><tbody>{visibleIssues.slice(0, 100).map((issue) => <IssueRow key={issue.id} issue={issue} />)}</tbody></table></div> : <Box padding="500"><Text as="p" tone="subdued">No content decay issues match this filter.</Text></Box>}
           {visibleIssues.length > 100 && <Box padding="300"><Text as="p" variant="bodySm" tone="subdued">Showing 100 of {visibleIssues.length} issues.</Text></Box>}
         </Card>
       </>}
@@ -247,7 +247,7 @@ function articleEditorUrl(articleId: string) { return `/app/blogs/${encodeURICom
 function compactUrl(value: string) { try { const url = new URL(value); const text = `${url.hostname}${url.pathname}`; return text.length > 58 ? `${text.slice(0, 55)}...` : text; } catch { return value.length > 58 ? `${value.slice(0, 55)}...` : value; } }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleString() : "not yet"; }
 function Header({ children }: { children: React.ReactNode }) { return <th style={{ padding: "12px 16px", textAlign: "left", whiteSpace: "nowrap", color: "var(--p-color-text-secondary)", fontSize: 12 }}>{children}</th>; }
-function Cell({ children }: { children: React.ReactNode }) { return <td style={{ padding: "12px 16px", minWidth: 130, maxWidth: 280, verticalAlign: "middle", overflowWrap: "anywhere" }}>{children}</td>; }
-const tableStyle: React.CSSProperties = { width: "100%", minWidth: 1080, tableLayout: "fixed", borderCollapse: "collapse" };
+function Cell({ children }: { children: React.ReactNode }) { return <td style={{ padding: "12px 16px", verticalAlign: "middle", overflowWrap: "anywhere" }}>{children}</td>; }
+const tableStyle: React.CSSProperties = { width: "100%", minWidth: 1180, tableLayout: "fixed", borderCollapse: "collapse" };
 const rowStyle: React.CSSProperties = { borderTop: "1px solid var(--p-color-border-secondary)" };
 const subduedStyle: React.CSSProperties = { color: "var(--p-color-text-secondary)", fontSize: 12, wordBreak: "break-all" };
