@@ -39,6 +39,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "The SEO worker uses the app's explicit localhost endpoint and reports invalid internal responses clearly." },
       { type: "Fixed", text: "Background scans call the Remix data action directly instead of receiving a rendered HTML document." },
       { type: "Fixed", text: "SEO scan failures show merchant-safe guidance while technical details remain in server logs." },
+      { type: "Improved", text: "SEO scan progress now advances per Shopify page, article-analysis batch and saved-result batch." },
     ],
   },
   {

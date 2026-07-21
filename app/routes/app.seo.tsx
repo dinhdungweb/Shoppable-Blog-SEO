@@ -350,7 +350,10 @@ async function runSeoScan({
   const scanStartedAt = Date.now();
   await report({ phase: "Loading Shopify articles", progress: 5 });
   const [articles, linkedProducts, config, seoRows, shopDomains] = await Promise.all([
-    fetchShopifyArticles(admin),
+    fetchShopifyArticles(admin, async (loadedPosts) => {
+      const progress = Math.min(25, 5 + Math.ceil(loadedPosts / 100) * 3);
+      await report({ phase: `Loading Shopify articles (${loadedPosts})`, progress, totalPosts: loadedPosts });
+    }),
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
       select: { articleId: true },
@@ -398,7 +401,9 @@ async function runSeoScan({
   let analyzedCount = 0;
   const baseScoreMap = new Map<string, number>();
   const contentHashMap = new Map<string, string>();
-  const audits: AuditedPost[] = articles.map((article) => {
+  const audits: AuditedPost[] = [];
+  for (let index = 0; index < articles.length; index += 1) {
+    const article = articles[index];
     const stored = storedSeoMap.get(article.id);
     const contentHash = getSeoContentHash(article, productCountMap.get(article.id) || 0, seoAuditConfig);
     contentHashMap.set(article.id, contentHash);
@@ -409,7 +414,7 @@ async function runSeoScan({
       : auditArticle(article, productCountMap.get(article.id) || 0, seoAuditConfig, stored, shop, shopDomains);
     if (!unchanged) analyzedCount += 1;
     baseScoreMap.set(article.id, audit.score);
-    return {
+    audits.push({
       ...article,
       productCount: productCountMap.get(article.id) || 0,
       score: audit.score,
@@ -418,8 +423,14 @@ async function runSeoScan({
       effectiveSeoTitle: getEffectiveSeoTitle(stored?.metaTitle, article),
       effectiveSeoDescription: getEffectiveSeoDescription(stored?.metaDescription, article),
       focusKeyword: textValue(stored?.focusKeyword),
-    };
-  });
+    });
+    const processedPosts = index + 1;
+    if (processedPosts % 20 === 0 || processedPosts === articles.length) {
+      const auditProgress = articles.length ? Math.round(30 + (processedPosts / articles.length) * 25) : 55;
+      await report({ phase: "Analyzing article SEO", progress: auditProgress, totalPosts: articles.length, processedPosts, analyzedPosts: analyzedCount });
+    }
+  }
+  await report({ phase: "Analyzing portfolio relationships", progress: 56, totalPosts: articles.length, processedPosts: articles.length, analyzedPosts: analyzedCount });
   applyPortfolioIssues(audits);
   await report({ phase: "Saving results", progress: 60, totalPosts: articles.length, analyzedPosts: analyzedCount });
   const auditDurationMs = Date.now() - scanStartedAt - fetchDurationMs;
@@ -674,7 +685,11 @@ export default function SEOOptimizer() {
                 {currentJob.status === "failed"
                   ? currentJob.error || "The worker could not complete this scan. You can run it again."
                   : currentJob.totalPosts > 0
-                    ? `${currentJob.processedPosts} of ${currentJob.totalPosts} posts saved. ${currentJob.analyzedPosts} changed posts analyzed.`
+                    ? currentJob.phase.startsWith("Saving")
+                      ? `${currentJob.processedPosts} of ${currentJob.totalPosts} posts saved. ${currentJob.analyzedPosts} changed posts analyzed.`
+                      : currentJob.phase.startsWith("Loading")
+                        ? `${currentJob.totalPosts} posts loaded from Shopify so far.`
+                        : `${currentJob.processedPosts} of ${currentJob.totalPosts} posts analyzed.`
                     : "The scan is waiting for the background worker."}
               </Text>
               {currentJob.status !== "failed" && <ProgressBar progress={currentJob.progress} size="small" />}
@@ -1062,7 +1077,7 @@ function MetricCard({
   );
 }
 
-async function fetchShopifyArticles(admin: any): Promise<ArticleInput[]> {
+async function fetchShopifyArticles(admin: any, onPage?: (loadedPosts: number) => Promise<void>): Promise<ArticleInput[]> {
   const articles: ArticleInput[] = [];
   let cursor: string | null = null;
   let hasNextPage = true;
@@ -1102,6 +1117,7 @@ async function fetchShopifyArticles(admin: any): Promise<ArticleInput[]> {
     }
     hasNextPage = Boolean(connection?.pageInfo?.hasNextPage);
     cursor = connection?.pageInfo?.endCursor || null;
+    if (onPage) await onPage(articles.length);
     if (hasNextPage && !cursor) throw new Error("Shopify article pagination did not return a cursor.");
   }
   return articles;
