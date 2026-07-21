@@ -104,6 +104,7 @@ const PRICING_PLANS: PricingPlan[] = [
       "Table of contents integration",
       "Advanced analytics and product performance views",
       "Bulk review workflows",
+      "Content Decay Monitor",
       "Custom widget CSS controls",
       "Priority support",
       "3-day free trial",
@@ -119,6 +120,7 @@ const UPGRADE_REASON_MESSAGES: Record<string, string> = {
   shoppable_articles_pro: `Your Pro plan allows up to ${PLAN_LIMITS.pro.shoppableArticles} shoppable posts. Upgrade to Growth for unlimited shoppable posts.`,
   content_navigation: "Table of contents and breadcrumbs are Pro plan features. Upgrade to enable TOC settings and storefront content navigation.",
   custom_css: "Custom widget CSS is a Growth plan feature. Upgrade to control your widget styling.",
+  content_decay: "Content Decay Monitor is a Growth plan feature. Upgrade to monitor declining traffic, stale content, unavailable products and broken links.",
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

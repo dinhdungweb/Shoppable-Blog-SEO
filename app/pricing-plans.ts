@@ -14,6 +14,7 @@ export type PlanKey = "free" | "pro" | "growth";
  * - canContentNavigation: access to breadcrumbs and table of contents settings (Pro+).
  * - canBulkReview: access to Bulk Review workflow (Growth only).
  * - canCustomCss: access to Custom CSS field in widget settings (Growth only).
+ * - canContentDecay: access to Content Decay Monitor (Growth only).
  */
 export const PLAN_LIMITS = {
   free: {
@@ -22,6 +23,7 @@ export const PLAN_LIMITS = {
     canContentNavigation: false,
     canBulkReview: false,
     canCustomCss: false,
+    canContentDecay: false,
   },
   pro: {
     shoppableArticles: 100,
@@ -29,6 +31,7 @@ export const PLAN_LIMITS = {
     canContentNavigation: true,
     canBulkReview: false,
     canCustomCss: false,
+    canContentDecay: false,
   },
   growth: {
     shoppableArticles: Infinity,
@@ -36,6 +39,7 @@ export const PLAN_LIMITS = {
     canContentNavigation: true,
     canBulkReview: true,
     canCustomCss: true,
+    canContentDecay: true,
   },
 } as const satisfies Record<PlanKey, {
   shoppableArticles: number;
@@ -43,6 +47,7 @@ export const PLAN_LIMITS = {
   canContentNavigation: boolean;
   canBulkReview: boolean;
   canCustomCss: boolean;
+  canContentDecay: boolean;
 }>;
 
 export type PlanLimits = typeof PLAN_LIMITS[PlanKey];

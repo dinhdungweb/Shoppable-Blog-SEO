@@ -8,7 +8,7 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { analyzeContentDecay } from "../content-decay";
 import type { ContentDecayReport, DecayArticle, DecayIssue, DecayProduct } from "../content-decay";
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
@@ -16,14 +16,18 @@ const MAX_EXTERNAL_LINKS = 30;
 const ISSUE_PAGE_SIZE = 20;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  if (!limits.canContentDecay) return json({ report: null, analyzedAt: null, canContentDecay: false, planKey });
   const saved = await prisma.contentDecayAnalysis.findUnique({ where: { shop: session.shop } });
   const report = saved?.report as unknown as ContentDecayReport | undefined;
-  return json({ report: report?.version === 1 ? report : null, analyzedAt: saved?.analyzedAt.toISOString() || null });
+  return json({ report: report?.version === 1 ? report : null, analyzedAt: saved?.analyzedAt.toISOString() || null, canContentDecay: true, planKey });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
+  const { limits } = await getActivePlanAndLimits(billing);
+  if (!limits.canContentDecay) return json({ error: "Content Decay Monitor is available on the Growth plan." }, { status: 403 });
   const formData = await request.formData();
   if (String(formData.get("intent") || "") !== "analyze") return json({ error: "Unsupported action." }, { status: 400 });
   try {
@@ -90,6 +94,8 @@ export default function ContentDecayPage() {
   const run = () => fetcher.submit({ intent: "analyze" }, { method: "post" });
 
   useEffect(() => { setPage(1); }, [filter, report]);
+
+  if (!initial.canContentDecay) return <Page><TitleBar title="Content Decay Monitor" /><Card><EmptyState heading="Content Decay is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></Card></Page>;
 
   return <Page fullWidth>
     <TitleBar title="Content Decay Monitor"><button variant="primary" disabled={analyzing} onClick={run}>{analyzing ? "Analyzing..." : "Analyze content"}</button></TitleBar>
