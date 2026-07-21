@@ -35,6 +35,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Analytics session comparison now groups date ranges correctly on PostgreSQL." },
       { type: "Fixed", text: "Web Pixel and bulk SEO mutations now send valid GraphQL documents to Shopify." },
       { type: "Fixed", text: "Deferred setup checks show a neutral checking state instead of flashing an error before completion." },
+      { type: "Fixed", text: "Weekly scan and scan-result notifications are shown only once per action or job." },
     ],
   },
   {

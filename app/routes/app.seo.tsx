@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import crypto from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
@@ -521,6 +521,9 @@ export default function SEOOptimizer() {
   const shopify = useAppBridge();
   const scanFetcher = useFetcher<typeof action>();
   const statusFetcher = useFetcher();
+  const handledActionData = useRef<unknown>(null);
+  const handledCompletedJobId = useRef<string | null>(null);
+  const handledFailedJobId = useRef<string | null>(null);
   const [selectedTab, setSelectedTab] = useState(0);
   const [activeIssue, setActiveIssue] = useState<IssueGroup | null>(null);
   const selectedCategory = CATEGORY_TABS[selectedTab]?.id || "all";
@@ -542,7 +545,8 @@ export default function SEOOptimizer() {
 
   useEffect(() => {
     const data = scanFetcher.data as { success?: boolean; queued?: boolean; cancelled?: boolean; error?: string; googleAction?: string; syncedCount?: number; autoScanEnabled?: boolean } | undefined;
-    if (!data) return;
+    if (!data || handledActionData.current === data) return;
+    handledActionData.current = data;
     if (data.success) {
       if (data.cancelled) {
         shopify.toast.show("SEO scan cancelled");
@@ -567,12 +571,15 @@ export default function SEOOptimizer() {
   const completedJobId = statusData?.job?.status === "completed" ? statusData.job.id : null;
   const failedJobId = statusData?.job?.status === "failed" ? statusData.job.id : null;
   useEffect(() => {
-    if (!completedJobId) return;
+    if (!completedJobId || handledCompletedJobId.current === completedJobId) return;
+    handledCompletedJobId.current = completedJobId;
     shopify.toast.show(`SEO scan complete: ${currentJob?.totalPosts || 0} posts, average ${currentJob?.averageScore || 0}/100`);
     revalidator.revalidate();
   }, [completedJobId, currentJob?.averageScore, currentJob?.totalPosts, revalidator, shopify]);
   useEffect(() => {
-    if (failedJobId) shopify.toast.show(currentJob?.error || "SEO scan failed", { isError: true });
+    if (!failedJobId || handledFailedJobId.current === failedJobId) return;
+    handledFailedJobId.current = failedJobId;
+    shopify.toast.show(currentJob?.error || "SEO scan failed", { isError: true });
   }, [failedJobId, currentJob?.error, shopify]);
 
   const selectedIssueCount = allResourcesSelected ? visibleIssues.length : selectedResources.length;
