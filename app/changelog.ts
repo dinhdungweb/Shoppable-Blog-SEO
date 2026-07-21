@@ -51,6 +51,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Image guidance is Shopify-aware: it recommends Shopify-hosted CDN images without forcing formats or theme-level LCP changes that the article editor cannot safely fix." },
       { type: "Fixed", text: "Choosing an image size in the article editor now saves matching width and height attributes from the image aspect ratio, resolving missing-dimension SEO warnings." },
       { type: "Improved", text: "Resolved article checks remain visible as green passed items, with image checks grouped in a dedicated Image SEO section instead of disappearing after a fix." },
+      { type: "Fixed", text: "SEO scores now reflect resolved image and content issues even before a focus keyword is configured, while still reserving points for keyword analysis." },
+      { type: "Fixed", text: "Images reset to Original size no longer reopen as a 600px preset when their intrinsic width happens to be 600 pixels." },
     ],
   },
   {

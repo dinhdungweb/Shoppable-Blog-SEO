@@ -611,7 +611,9 @@ export function auditSeo({
       impact: "Medium",
       effort: "Low",
     });
-    score = Math.min(score, 79);
+    // Keep an unset focus keyword meaningful without hiding improvements from
+    // other checks behind a hard 79-point ceiling.
+    score -= 21;
   }
 
   const qualityIssues = auditContentQuality({

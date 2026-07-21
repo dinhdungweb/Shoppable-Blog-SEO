@@ -25,6 +25,19 @@ describe("people-first SEO scoring", () => {
     expect(issue?.severity).toBe("warning");
     expect(withoutKeyword.score).toBeLessThanOrEqual(79);
   });
+
+  it("still reflects resolved issues when no focus keyword is configured", () => {
+    const missingDimensions = auditSeo({
+      ...base,
+      body: '<img src="https://cdn.shopify.com/silver-ring.jpg" alt="Silver ring">',
+    });
+    const fixedDimensions = auditSeo({
+      ...base,
+      body: '<img src="https://cdn.shopify.com/silver-ring.jpg" alt="Silver ring" width="800" height="600">',
+    });
+    expect(fixedDimensions.score).toBeGreaterThan(missingDimensions.score);
+    expect(fixedDimensions.score).toBeLessThanOrEqual(79);
+  });
 });
 
 describe("Shopify image SEO", () => {

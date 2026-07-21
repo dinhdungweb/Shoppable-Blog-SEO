@@ -4940,7 +4940,10 @@ function readEditorImageSize(image: HTMLImageElement): EditorImageSize {
   const savedSize = image.dataset.editorImageSize as EditorImageSize | undefined;
   if (savedSize && EDITOR_IMAGE_SIZE_OPTIONS.some((option) => option.value === savedSize)) return savedSize;
 
-  const width = Number.parseInt(image.style.width || image.getAttribute("width") || "", 10);
+  // The width attribute stores the intrinsic aspect ratio for layout stability,
+  // not the selected display preset. Only an explicit CSS width represents a preset.
+  const width = Number.parseInt(image.style.width || "", 10);
+  if (!Number.isFinite(width)) return "original";
   const matchedSize = EDITOR_IMAGE_SIZE_OPTIONS.find((option) => option.width === width);
   return matchedSize?.value || "original";
 }
