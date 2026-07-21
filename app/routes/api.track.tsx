@@ -98,19 +98,35 @@ async function recordWidgetEvent({
   const eventKey = createHash("sha256")
     .update(`${normalizedShop}|${normalizedArticleId}|${normalizedProductId}|${cleanProductBlockId(blockId)}|${eventType}|${safeSessionId}`)
     .digest("hex");
+  const eventDate = startOfUtcDay(new Date());
+  const source = getReferrerSource(cleanText(referrer, 2048));
 
   try {
-    await prisma.widgetEvent.create({
-      data: {
-        shop: normalizedShop,
-        articleId: normalizedArticleId,
-        productId: normalizedProductId,
-        blockId: cleanProductBlockId(blockId),
-        eventType,
-        sessionId: safeSessionId || null,
-        referrer: cleanText(referrer, 2048) || null,
-        eventKey,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.widgetEvent.create({ data: {
+          shop: normalizedShop, articleId: normalizedArticleId, productId: normalizedProductId,
+          blockId: cleanProductBlockId(blockId), eventType, sessionId: safeSessionId || null,
+          referrer: cleanText(referrer, 2048) || null, eventKey,
+      } });
+      const sessionInsert = await tx.analyticsDailySession.createMany({
+        data: [{ shop: normalizedShop, date: eventDate, articleId: normalizedArticleId, productId: normalizedProductId, source, sessionKey: safeSessionId || eventKey }],
+        skipDuplicates: true,
+      });
+      const increments = {
+        impressions: eventType === "impression" ? 1 : 0,
+        clicks: eventType === "click" ? 1 : 0,
+        addToCarts: eventType === "add_to_cart" ? 1 : 0,
+        purchases: eventType === "purchase" ? 1 : 0,
+        sessions: sessionInsert.count,
+      };
+      await tx.analyticsDaily.upsert({
+        where: { shop_date_articleId_productId_source: { shop: normalizedShop, date: eventDate, articleId: normalizedArticleId, productId: normalizedProductId, source } },
+        update: {
+          impressions: { increment: increments.impressions }, clicks: { increment: increments.clicks },
+          addToCarts: { increment: increments.addToCarts }, purchases: { increment: increments.purchases }, sessions: { increment: increments.sessions },
+        },
+        create: { shop: normalizedShop, date: eventDate, articleId: normalizedArticleId, productId: normalizedProductId, source, ...increments },
+      });
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -206,4 +222,17 @@ function cleanProductBlockId(value?: string | null) {
 
   const cleaned = trimmed.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
   return cleaned || "default";
+}
+
+function startOfUtcDay(value: Date) {
+  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
+}
+
+function getReferrerSource(referrer: string) {
+  if (!referrer) return "Direct";
+  try {
+    return new URL(referrer).hostname.toLowerCase().replace(/^www\./, "") || "Direct";
+  } catch {
+    return referrer.toLowerCase().replace(/^https?:\/\//, "").split("/")[0].replace(/^www\./, "") || "Direct";
+  }
 }

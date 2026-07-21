@@ -11,5 +11,6 @@ declare namespace NodeJS {
     GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET?: string;
     GOOGLE_SEARCH_CONSOLE_REDIRECT_URI?: string;
     GOOGLE_TOKEN_ENCRYPTION_KEY?: string;
+    RAW_EVENT_RETENTION_DAYS?: string;
   }
 }

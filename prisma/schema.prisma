@@ -191,6 +191,40 @@ model WidgetEvent {
   @@index([productId])
 }
 
+model AnalyticsDaily {
+  id         String   @id @default(cuid())
+  shop       String
+  date       DateTime
+  articleId  String
+  productId  String
+  source     String   @default("Direct")
+  impressions Int    @default(0)
+  clicks      Int    @default(0)
+  addToCarts  Int    @default(0)
+  purchases   Int    @default(0)
+  sessions    Int    @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, date, articleId, productId, source])
+  @@index([shop, date])
+  @@index([shop, articleId, date])
+  @@index([shop, productId, date])
+}
+
+model AnalyticsDailySession {
+  id         String   @id @default(cuid())
+  shop       String
+  date       DateTime
+  articleId  String
+  productId  String
+  source     String
+  sessionKey String
+  createdAt  DateTime @default(now())
+
+  @@unique([shop, date, articleId, productId, source, sessionKey])
+  @@index([shop, date])
+}
+
 model SearchConsoleConnection {
   id                       String   @id @default(cuid())
   shop                     String   @unique

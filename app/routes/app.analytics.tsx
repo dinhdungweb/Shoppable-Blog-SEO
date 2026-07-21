@@ -111,7 +111,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shopifyError = "";
   let articleSources: ArticleSource[] = [];
 
-  const [linkedProducts, seoRows, events] = await Promise.all([
+  const [linkedProducts, seoRows, dailyRows, sessionTotals, dailySessions, sourceSessions] = await Promise.all([
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
       select: {
@@ -138,19 +138,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         blogHandle: true,
       },
     }),
-    prisma.widgetEvent.findMany({
-      where: { shop, createdAt: { gte: previousStart } },
-      select: {
-        articleId: true,
-        productId: true,
-        eventType: true,
-        sessionId: true,
-        referrer: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: "asc" },
-    }),
+    prisma.analyticsDaily.findMany({ where: { shop, date: { gte: previousStart } }, orderBy: { date: "asc" } }),
+    prisma.$queryRaw<Array<{ period: string; sessions: number }>>`
+      SELECT CASE WHEN "date" >= ${currentStart} THEN 'current' ELSE 'previous' END AS "period", COUNT(DISTINCT "sessionKey")::int AS "sessions"
+      FROM "AnalyticsDailySession" WHERE "shop" = ${shop} AND "date" >= ${previousStart}
+      GROUP BY CASE WHEN "date" >= ${currentStart} THEN 'current' ELSE 'previous' END
+    `,
+    prisma.$queryRaw<Array<{ date: Date; sessions: number }>>`
+      SELECT "date", COUNT(DISTINCT "sessionKey")::int AS "sessions" FROM "AnalyticsDailySession"
+      WHERE "shop" = ${shop} AND "date" >= ${currentStart} GROUP BY "date" ORDER BY "date"
+    `,
+    prisma.$queryRaw<Array<{ source: string; sessions: number }>>`
+      SELECT "source", COUNT(DISTINCT "sessionKey")::int AS "sessions" FROM "AnalyticsDailySession"
+      WHERE "shop" = ${shop} AND "date" >= ${currentStart} GROUP BY "source" ORDER BY "sessions" DESC
+    `,
   ]);
+
+  const events: TrackedEvent[] = dailyRows.flatMap((row) => ([
+    ["impression", row.impressions], ["click", row.clicks], ["add_to_cart", row.addToCarts], ["purchase", row.purchases],
+  ] as const).filter(([, count]) => count > 0).map(([eventType, count]) => ({
+    articleId: row.articleId, productId: row.productId, eventType, sessionId: null, referrer: row.source, createdAt: row.date, count,
+  })));
 
   articleSources = seoRows.map((row) => ({ id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle,
     image: row.imageUrl, imageAlt: row.imageAlt, blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle }));
@@ -210,13 +218,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const seoScoreMap = new Map(seoRows.map((row) => [row.articleId, row.seoScore]));
   const currentEvents = events.filter((event) => event.createdAt >= currentStart);
   const previousEvents = events.filter((event) => event.createdAt < currentStart);
-  const currentMetrics = getMetrics(currentEvents, priceMap);
-  const previousMetrics = getMetrics(previousEvents, priceMap);
-  const chartData = buildChartData(currentEvents, priceMap, currentStart, now);
+  const currentMetrics = getMetrics(currentEvents, priceMap, sessionTotals.find((row) => row.period === "current")?.sessions || 0);
+  const previousMetrics = getMetrics(previousEvents, priceMap, sessionTotals.find((row) => row.period === "previous")?.sessions || 0);
+  const chartData = buildChartData(currentEvents, priceMap, currentStart, now, new Map(dailySessions.map((row) => [startOfDay(row.date).getTime(), row.sessions])));
   const postRows = buildPostRows(Array.from(articleSourceMap.values()), currentEvents, priceMap, productCountMap, seoScoreMap);
   const productRows = buildProductRows(currentEvents, priceMap, productInfoMap);
   const topClickedProducts = sortProductRows(productRows, "clicks").slice(0, 5);
-  const sourceData = buildSourceData(currentEvents);
+  const sourceData = buildSourceDataFromAggregates(sourceSessions);
   const insights = buildInsights({
     currentMetrics,
     previousMetrics,
@@ -241,7 +249,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     topClickedProducts,
     insights,
   });
-  console.info("Analytics loader timing", { shop, articles: articleSourceMap.size, events: events.length, durationMs: Date.now() - startedAt });
+  console.info("Analytics loader timing", { shop, articles: articleSourceMap.size, aggregateRows: dailyRows.length, durationMs: Date.now() - startedAt });
 };
 
 export default function Analytics() {
@@ -844,39 +852,43 @@ type TrackedEvent = {
   sessionId: string | null;
   referrer: string | null;
   createdAt: Date;
+  count?: number;
 };
 
-function getMetrics(events: TrackedEvent[], priceMap: Map<string, number>): Metrics {
+function getMetrics(events: TrackedEvent[], priceMap: Map<string, number>, sessionCount?: number): Metrics {
   const metrics = emptyMetrics();
   const sessions = new Set<string>();
 
   events.forEach((event, index) => {
-    if (event.sessionId) sessions.add(event.sessionId);
-    else sessions.add(`event-${index}`);
+    if (sessionCount === undefined) {
+      if (event.sessionId) sessions.add(event.sessionId);
+      else sessions.add(`event-${index}`);
+    }
     addEventToMetrics(metrics, event, priceMap);
   });
 
-  metrics.sessions = sessions.size;
+  metrics.sessions = sessionCount ?? sessions.size;
   return metrics;
 }
 
 function addEventToMetrics(metrics: Metrics, event: TrackedEvent, priceMap: Map<string, number>) {
-  if (event.eventType === "impression") metrics.impressions += 1;
-  if (event.eventType === "click") metrics.clicks += 1;
-  if (event.eventType === "add_to_cart") metrics.addToCarts += 1;
+  const count = event.count || 1;
+  if (event.eventType === "impression") metrics.impressions += count;
+  if (event.eventType === "click") metrics.clicks += count;
+  if (event.eventType === "add_to_cart") metrics.addToCarts += count;
   if (event.eventType === "purchase" || event.eventType === "order") {
-    metrics.purchases += 1;
+    metrics.purchases += count;
     let normalizedProductId = event.productId;
     if (normalizedProductId && /^\d+$/.test(normalizedProductId)) {
       normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
     } else if (normalizedProductId && !normalizedProductId.startsWith("gid://")) {
       normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
     }
-    metrics.revenue += priceMap.get(`${event.articleId}:${normalizedProductId}`) || 0;
+    metrics.revenue += (priceMap.get(`${event.articleId}:${normalizedProductId}`) || 0) * count;
   }
 }
 
-function buildChartData(events: TrackedEvent[], priceMap: Map<string, number>, start: Date, end: Date): ChartPoint[] {
+function buildChartData(events: TrackedEvent[], priceMap: Map<string, number>, start: Date, end: Date, sessionCounts?: Map<number, number>): ChartPoint[] {
   const days: ChartPoint[] = [];
 
   for (let time = start.getTime(); time <= end.getTime(); time += DAY_MS) {
@@ -892,42 +904,33 @@ function buildChartData(events: TrackedEvent[], priceMap: Map<string, number>, s
     addEventToMetrics(days[index], event, priceMap);
   });
 
-  const sessionsByDay = new Map<number, Set<string>>();
-  events.forEach((event, eventIndex) => {
-    const index = Math.floor((startOfDay(event.createdAt).getTime() - start.getTime()) / DAY_MS);
-    if (index < 0 || index >= days.length) return;
-    const set = sessionsByDay.get(index) || new Set<string>();
-    set.add(event.sessionId || `event-${eventIndex}`);
-    sessionsByDay.set(index, set);
-  });
-  sessionsByDay.forEach((sessions, index) => {
-    days[index].sessions = sessions.size;
-  });
+  if (sessionCounts) {
+    days.forEach((day, index) => { day.sessions = sessionCounts.get(start.getTime() + index * DAY_MS) || 0; });
+  } else {
+    const sessionsByDay = new Map<number, Set<string>>();
+    events.forEach((event, eventIndex) => {
+      const index = Math.floor((startOfDay(event.createdAt).getTime() - start.getTime()) / DAY_MS);
+      if (index < 0 || index >= days.length) return;
+      const set = sessionsByDay.get(index) || new Set<string>();
+      set.add(event.sessionId || `event-${eventIndex}`);
+      sessionsByDay.set(index, set);
+    });
+    sessionsByDay.forEach((sessions, index) => { days[index].sessions = sessions.size; });
+  }
 
   return days;
 }
 
-function buildSourceData(events: TrackedEvent[]) {
-  const sourceSessions = new Map<string, Set<string>>();
-
-  events.forEach((event, index) => {
-    const source = getReferrerSource(event.referrer);
-    const set = sourceSessions.get(source) || new Set<string>();
-    set.add(event.sessionId || `event-${index}`);
-    sourceSessions.set(source, set);
+function buildSourceDataFromAggregates(rows: Array<{ source: string; sessions: number }>) {
+  const grouped = new Map<string, number>();
+  rows.forEach((row) => {
+    const name = row.source === "Direct" ? "Direct" : getReferrerSource(row.source);
+    grouped.set(name, (grouped.get(name) || 0) + row.sessions);
   });
-
-  const total = Array.from(sourceSessions.values()).reduce((sum, sessions) => sum + sessions.size, 0);
+  const total = Array.from(grouped.values()).reduce((sum, sessions) => sum + sessions, 0);
   if (!total) return [];
-
-  return Array.from(sourceSessions.entries())
-    .map(([name, sessions], index) => ({
-      name,
-      value: sessions.size,
-      percent: (sessions.size / total) * 100,
-      color: PIE_COLORS[index % PIE_COLORS.length],
-    }))
-    .sort((a, b) => b.value - a.value);
+  return Array.from(grouped.entries()).map(([name, sessions], index) => ({ name, value: sessions, percent: (sessions / total) * 100, color: PIE_COLORS[index % PIE_COLORS.length] }))
+    .sort((left, right) => right.value - left.value);
 }
 
 function buildInsights({

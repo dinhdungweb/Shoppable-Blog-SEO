@@ -25,6 +25,9 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Dashboard and Analytics now reuse the saved article snapshot instead of downloading the same Shopify article list again." },
       { type: "Improved", text: "Dashboard event metrics are aggregated by day in PostgreSQL before they reach the application." },
       { type: "Improved", text: "Theme and Web Pixel status checks load after the Dashboard renders and no longer create resources during a page view." },
+      { type: "Improved", text: "Analytics now reads daily aggregates and unique-session counters instead of loading every raw tracking event." },
+      { type: "Improved", text: "Existing tracking history is backfilled automatically, while new events update raw and aggregate data in one idempotent transaction." },
+      { type: "New", text: "A configurable raw-event retention command keeps long-term daily reports while controlling database growth." },
     ],
   },
   {
