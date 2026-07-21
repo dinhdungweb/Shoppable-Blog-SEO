@@ -329,6 +329,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function Dashboard() {
   const data = useLoaderData<any>();
   const setupFetcher = useFetcher<any>();
+  const pixelFetcher = useFetcher<any>();
   const navigate = useNavigate();
   const revalidator = useRevalidator();
 
@@ -341,6 +342,10 @@ export default function Dashboard() {
   useEffect(() => {
     if (setupFetcher.state === "idle" && !setupFetcher.data) setupFetcher.load("/app/dashboard-status");
   }, [setupFetcher]);
+
+  useEffect(() => {
+    if (pixelFetcher.data?.success) setupFetcher.load("/app/dashboard-status");
+  }, [pixelFetcher.data, setupFetcher]);
 
   if (data?.needsRevalidation) {
     return (
@@ -373,7 +378,7 @@ export default function Dashboard() {
     recentPosts,
     recommendedActions,
   } = data;
-  const setup = mergeSetupStatus(initialSetup, setupFetcher.data);
+  const setup = mergeSetupStatus(initialSetup, setupFetcher.data, pixelFetcher.data?.error);
 
   const productCtr = getCtr(metrics.clicks, metrics.impressions);
 
@@ -418,7 +423,13 @@ export default function Dashboard() {
               <ProgressBar progress={setup.progress} tone={setup.progress === 100 ? "success" : "primary"} size="small" />
               <BlockStack gap="300">
                 {setup.items.map((item: any) => (
-                  <ProgressItem key={item.label} label={item.label} done={item.done} actionUrl={item.actionUrl} actionLabel={item.actionLabel} />
+                  <ProgressItem
+                    key={item.label} label={item.label} done={item.done} actionUrl={item.actionUrl} actionLabel={item.actionLabel}
+                    loading={item.label === "Conversion tracking (Web Pixel) active" && pixelFetcher.state !== "idle"}
+                    onAction={item.label === "Conversion tracking (Web Pixel) active"
+                      ? () => pixelFetcher.submit({ intent: "activate_pixel" }, { method: "post", action: "/app/dashboard-status" })
+                      : undefined}
+                  />
                 ))}
               </BlockStack>
             </BlockStack>
@@ -693,7 +704,7 @@ export default function Dashboard() {
   );
 }
 
-function ProgressItem({ label, done, actionUrl, actionLabel }: { label: string; done: boolean; actionUrl?: string; actionLabel?: string }) {
+function ProgressItem({ label, done, actionUrl, actionLabel, onAction, loading }: { label: string; done: boolean; actionUrl?: string; actionLabel?: string; onAction?: () => void; loading?: boolean }) {
   return (
     <InlineStack align="space-between" blockAlign="center">
       <InlineStack gap="200" blockAlign="center">
@@ -707,7 +718,7 @@ function ProgressItem({ label, done, actionUrl, actionLabel }: { label: string; 
       ) : actionLabel?.startsWith("Error:") ? (
         <Badge tone="critical">{actionLabel}</Badge>
       ) : actionUrl ? (
-        <Button size="micro" url={actionUrl} target="_blank">{actionLabel || "Enable"}</Button>
+        <Button size="micro" url={actionUrl} target={actionUrl ? "_blank" : undefined} onClick={onAction} loading={loading}>{actionLabel || "Enable"}</Button>
       ) : (
         <Badge tone="new">Pending</Badge>
       )}
@@ -1049,11 +1060,11 @@ function buildRecommendedActions({
   return actions;
 }
 
-function mergeSetupStatus(setup: any, status: any) {
+function mergeSetupStatus(setup: any, status: any, pixelActionError?: string) {
   if (!status || status.error) return setup;
   const items = setup.items.map((item: any) => {
     if (item.label === "App enabled in theme") return { ...item, done: Boolean(status.appEmbedEnabled), actionLabel: status.appEmbedError || (status.appEmbedEnabled ? undefined : "Enable") };
-    if (item.label === "Conversion tracking (Web Pixel) active") return { ...item, done: Boolean(status.webPixelEnabled), actionLabel: status.webPixelError || undefined };
+    if (item.label === "Conversion tracking (Web Pixel) active") return { ...item, done: Boolean(status.webPixelEnabled), actionLabel: pixelActionError ? `Error: ${pixelActionError}` : status.webPixelError ? `Error: ${status.webPixelError}` : status.webPixelEnabled ? undefined : "Activate" };
     return item;
   });
   const done = items.filter((item: any) => item.done).length;

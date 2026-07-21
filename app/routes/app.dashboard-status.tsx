@@ -1,6 +1,32 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  if (formData.get("intent") !== "activate_pixel") return json({ error: "Unsupported action" }, { status: 400 });
+
+  const checkResponse = await admin.graphql(`#graphql query DashboardPixelStatus { webPixel { id } }`);
+  const checkResult: any = await checkResponse.json();
+  if (checkResult.data?.webPixel?.id) return json({ success: true, webPixelEnabled: true });
+
+  const createResponse = await admin.graphql(
+    `#graphql mutation DashboardWebPixelCreate($webPixel: WebPixelInput!) {
+      webPixelCreate(webPixel: $webPixel) { webPixel { id } userErrors { field message } }
+    }`,
+    { variables: { webPixel: { settings: JSON.stringify({ accountID: session.shop }) } } },
+  );
+  const createResult: any = await createResponse.json();
+  const errors = [
+    ...(createResult.errors || []).map((error: any) => error.message),
+    ...(createResult.data?.webPixelCreate?.userErrors || []).map((error: any) => error.message),
+  ].filter(Boolean);
+  if (errors.length || !createResult.data?.webPixelCreate?.webPixel?.id) {
+    return json({ error: errors.join(", ") || "Shopify did not activate the Web Pixel." }, { status: 400 });
+  }
+  return json({ success: true, webPixelEnabled: true });
+};
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
@@ -29,7 +55,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const response = await admin.graphql(`#graphql query DashboardPixelStatus { webPixel { id } }`);
     const result: any = await response.json();
     webPixelEnabled = Boolean(result.data?.webPixel?.id);
-    if (result.errors?.length && !webPixelEnabled) webPixelError = "Web Pixel is not active";
+    if (result.errors?.length && !webPixelEnabled) console.info("Web Pixel is not active yet", { shop: session.shop });
   } catch (error) {
     console.error("Deferred web pixel check failed:", error);
     webPixelError = "Could not check Web Pixel status";
