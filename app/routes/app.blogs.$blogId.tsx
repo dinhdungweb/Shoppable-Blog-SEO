@@ -3856,7 +3856,7 @@ function SeoSidebar({
     additional: false,
     title_readability: false,
     content_readability: false,
-    content_quality: true
+    content_quality: false
   });
 
   const toggleCategory = (cat: string) => {
@@ -3930,7 +3930,9 @@ function SeoSidebar({
           {Object.entries(categories).map(([cat, title]) => {
             const catIssues = issues.filter(i => i.category === cat);
             if (catIssues.length === 0) return null;
-            const errorCount = catIssues.filter(i => i.severity !== 'good').length;
+            const criticalCount = catIssues.filter(i => i.severity === 'critical').length;
+            const warningCount = catIssues.filter(i => i.severity === 'warning').length;
+            const actionCount = criticalCount + warningCount;
             
             return (
               <BlockStack key={cat} gap="200" inlineAlign="stretch">
@@ -3940,8 +3942,8 @@ function SeoSidebar({
                 >
                   <InlineStack gap="200" blockAlign="center">
                     <Text as="span" variant="bodyMd" fontWeight="semibold">{title}</Text>
-                    {errorCount > 0 ? (
-                      <Badge tone="critical">{`${errorCount} ${errorCount === 1 ? 'Error' : 'Errors'}`}</Badge>
+                    {actionCount > 0 ? (
+                      <Badge tone={criticalCount > 0 ? "critical" : "warning"}>{`${actionCount} ${actionCount === 1 ? 'issue' : 'issues'}`}</Badge>
                     ) : (
                       <Badge tone="success">✓ All Good</Badge>
                     )}
