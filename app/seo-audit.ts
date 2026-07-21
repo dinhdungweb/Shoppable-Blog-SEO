@@ -1,4 +1,4 @@
-export type SeoAuditCategory = "basic" | "additional" | "title_readability" | "content_readability";
+export type SeoAuditCategory = "basic" | "additional" | "title_readability" | "content_readability" | "content_quality";
 export type SeoAuditSeverity = "good" | "info" | "warning" | "critical";
 export type SeoAuditWeight = "Low" | "Medium" | "High";
 
@@ -10,6 +10,7 @@ export type SeoAuditIssue = {
   severity: SeoAuditSeverity;
   impact?: SeoAuditWeight;
   effort?: SeoAuditWeight;
+  fix?: string;
 };
 
 type SeoAuditInput = {
@@ -26,6 +27,14 @@ type SeoAuditInput = {
   canUseTableOfContents?: boolean;
   tocEnabled?: boolean;
   tocAutoInsertEnabled?: boolean;
+  authorName?: string;
+  publishedAt?: string | Date | null;
+  updatedAt?: string | Date | null;
+};
+
+export type ContentQualityInput = Pick<SeoAuditInput, "body" | "summary" | "authorName" | "publishedAt" | "updatedAt" | "productCount"> & {
+  shopDomain?: string;
+  shopDomains?: string[];
 };
 
 export function auditSeo({
@@ -42,6 +51,9 @@ export function auditSeo({
   canUseTableOfContents = true,
   tocEnabled = true,
   tocAutoInsertEnabled = false,
+  authorName,
+  publishedAt,
+  updatedAt,
 }: SeoAuditInput): { score: number; issues: SeoAuditIssue[]; keywordScores: Record<string, "success" | "warning" | "critical"> } {
   const issues: SeoAuditIssue[] = [];
   let score = 100;
@@ -545,11 +557,102 @@ export function auditSeo({
     score = Math.min(score, 79);
   }
 
+  const qualityIssues = auditContentQuality({
+    body,
+    summary,
+    authorName,
+    publishedAt,
+    updatedAt,
+    productCount,
+    shopDomain,
+    shopDomains,
+  });
+  issues.push(...qualityIssues);
+  score -= qualityIssues.reduce((penalty, issue) => {
+    if (issue.type === "eeat_author" && issue.severity === "warning") return penalty + 4;
+    if (issue.type === "eeat_direct_answer" && issue.severity === "warning") return penalty + 3;
+    return penalty;
+  }, 0);
+
   return {
     score: Math.max(0, Math.min(100, score)),
     issues,
     keywordScores,
   };
+}
+
+export function auditContentQuality({
+  body,
+  summary,
+  authorName,
+  publishedAt,
+  updatedAt,
+  productCount,
+  shopDomain,
+  shopDomains,
+}: ContentQualityInput): SeoAuditIssue[] {
+  const text = stripHtml(body);
+  const linkStats = analyzeLinks(body, shopDomain, shopDomains);
+  const firstParagraph = getFirstParagraph(body) || text.slice(0, 500);
+  const published = toValidDate(publishedAt);
+  const updated = toValidDate(updatedAt);
+  const hasExperienceEvidence = /\b(i|we|our|tested|reviewed|compared|measured|results?|case study|before and after|in our experience)\b/i.test(text)
+    || /(?:tôi|chúng tôi|kinh nghiệm|trải nghiệm|đã dùng|đã thử|thử nghiệm|đo lường|kết quả thực tế|đánh giá thực tế|trước và sau)/i.test(text)
+    || (body.match(/<img\b/gi)?.length || 0) >= 2;
+  const hasAiDisclosure = /(?:ai[- ]assisted|generated (?:with|by) ai|artificial intelligence|hỗ trợ bởi ai|tạo bởi ai|trí tuệ nhân tạo)/i.test(text);
+  const hasAuthorProfileLink = /(?:rel=["']author["']|\/(?:pages\/authors?|blogs\/authors?)\/)/i.test(body);
+  const directlyAnswersIntent = stripHtml(firstParagraph).split(/\s+/).filter(Boolean).length >= 35 || stripHtml(summary).length >= 90;
+
+  return [
+    authorName?.trim()
+      ? qualityIssue("eeat_author", "Author attribution", `The article identifies ${authorName.trim()} as its author.`, "good")
+      : qualityIssue("eeat_author", "Author attribution", "No author is assigned to this article.", "warning", "Medium", "Assign a real author and show the byline on the storefront."),
+    hasAuthorProfileLink
+      ? qualityIssue("eeat_author_profile", "Author profile", "A link to author information was found in the article.", "good")
+      : qualityIssue("eeat_author_profile", "Author profile", "Manual review: confirm the storefront byline links to a useful author profile.", "info"),
+    published && updated
+      ? qualityIssue("eeat_dates", "Published and updated dates", updated.getTime() > published.getTime() + 86_400_000
+        ? "Published and meaningfully updated dates are available."
+        : "A published date is available. Add an updated date only after a meaningful revision.", updated.getTime() > published.getTime() + 86_400_000 ? "good" : "info")
+      : qualityIssue("eeat_dates", "Published and updated dates", "Manual review: make publication and meaningful update dates visible to readers.", "info"),
+    linkStats.external > 0
+      ? qualityIssue("eeat_sources", "Sources and citations", "The article links to at least one external source readers can inspect.", "good")
+      : qualityIssue("eeat_sources", "Sources and citations", "No external citation was found. Add trustworthy sources for factual or high-stakes claims.", "info"),
+    hasExperienceEvidence
+      ? qualityIssue("eeat_experience", "First-hand experience", "The content includes signals of original experience, testing, results, or original imagery.", "good")
+      : qualityIssue("eeat_experience", "First-hand experience", "Manual review: add first-hand experience, original photos, comparisons, or test results when relevant.", "info"),
+    directlyAnswersIntent
+      ? qualityIssue("eeat_direct_answer", "Direct answer to reader intent", "The introduction or summary gives readers a substantive answer quickly.", "good")
+      : qualityIssue("eeat_direct_answer", "Direct answer to reader intent", "The opening does not clearly answer the main reader need.", "warning", "Medium", "Add a concise, direct answer or outcome near the beginning."),
+    qualityIssue("eeat_originality", "Originality across the store", "Site-wide SEO scans check this article for near-duplicate content and competing topics.", "info"),
+    productCount > 0
+      ? qualityIssue("eeat_product_freshness", "Product information freshness", "Manual review: confirm linked product claims, availability, specifications, and prices remain accurate.", "info")
+      : qualityIssue("eeat_product_freshness", "Product information freshness", "No linked products require a freshness review.", "good"),
+    hasAiDisclosure
+      ? qualityIssue("eeat_ai_disclosure", "Content creation transparency", "The article includes an AI-assistance disclosure.", "good")
+      : qualityIssue("eeat_ai_disclosure", "Content creation transparency", "Manual review: if AI materially helped create the content, consider explaining how it was used.", "info"),
+  ];
+}
+
+function qualityIssue(
+  type: string,
+  label: string,
+  message: string,
+  severity: SeoAuditSeverity,
+  impact: SeoAuditWeight = "Low",
+  fix?: string,
+): SeoAuditIssue {
+  return { type, category: "content_quality", label, message, severity, impact, effort: "Low", ...(fix ? { fix } : {}) };
+}
+
+function getFirstParagraph(body: string) {
+  return body.match(/<p\b[^>]*>([\s\S]*?)<\/p>/i)?.[1] || "";
+}
+
+function toValidDate(value?: string | Date | null) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function analyzeLinks(body: string, shopDomain?: string, shopDomains: string[] = []) {

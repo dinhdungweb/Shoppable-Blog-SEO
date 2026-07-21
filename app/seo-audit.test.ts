@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auditSeo } from "./seo-audit";
+import { auditContentQuality, auditSeo } from "./seo-audit";
 
 const base = {
   title: "A useful guide",
@@ -24,5 +24,32 @@ describe("people-first SEO scoring", () => {
     const issue = withoutKeyword.issues.find((item) => item.type === "kw_missing");
     expect(issue?.severity).toBe("warning");
     expect(withoutKeyword.score).toBeLessThanOrEqual(79);
+  });
+});
+
+describe("content quality and E-E-A-T checklist", () => {
+  it("recognizes author, freshness, citations and first-hand evidence", () => {
+    const issues = auditContentQuality({
+      body: '<p>We tested this product and measured the results.</p><a href="https://example.org/research">Research</a>',
+      summary: "A detailed answer that explains what readers should choose, why it matters, and what the test results mean in practice.",
+      authorName: "Jane Doe",
+      publishedAt: "2026-01-01",
+      updatedAt: "2026-02-01",
+      productCount: 1,
+      shopDomain: "shop.myshopify.com",
+    });
+
+    expect(issues.find((issue) => issue.type === "eeat_author")?.severity).toBe("good");
+    expect(issues.find((issue) => issue.type === "eeat_dates")?.severity).toBe("good");
+    expect(issues.find((issue) => issue.type === "eeat_sources")?.severity).toBe("good");
+    expect(issues.find((issue) => issue.type === "eeat_experience")?.severity).toBe("good");
+  });
+
+  it("flags missing authors and unclear introductions without guessing manual checks", () => {
+    const issues = auditContentQuality({ body: "<p>Welcome.</p>", summary: "", authorName: "", productCount: 0 });
+
+    expect(issues.find((issue) => issue.type === "eeat_author")?.severity).toBe("warning");
+    expect(issues.find((issue) => issue.type === "eeat_direct_answer")?.severity).toBe("warning");
+    expect(issues.find((issue) => issue.type === "eeat_ai_disclosure")?.severity).toBe("info");
   });
 });

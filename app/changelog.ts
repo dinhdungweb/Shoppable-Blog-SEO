@@ -42,6 +42,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Background scans call the Remix data action directly instead of receiving a rendered HTML document." },
       { type: "Fixed", text: "SEO scan failures show merchant-safe guidance while technical details remain in server logs." },
       { type: "Improved", text: "SEO scan progress now advances per Shopify page, article-analysis batch and saved-result batch." },
+      { type: "New", text: "Content quality and E-E-A-T checks now review authorship, freshness, citations, first-hand experience, direct answers and content transparency." },
+      { type: "Improved", text: "Checks that require human judgment are clearly marked for manual review and do not reduce SEO scores automatically." },
     ],
   },
   {

@@ -245,6 +245,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       hasImage: false,
       imageAlt: "",
       productCount: 0,
+      authorName: article.author?.name || defaultAuthorName,
+      publishedAt: article.publishedAt,
+      updatedAt: article.updatedAt,
       shopDomain: shop,
       shopDomains,
       ...tocAuditOptions,
@@ -375,6 +378,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     hasImage: Boolean(article.image?.url),
     imageAlt: article.image?.altText || "",
     productCount: embeddedProducts.length,
+    authorName: article.author?.name || defaultAuthorName,
+    publishedAt: article.publishedAt,
+    updatedAt: article.updatedAt,
     shopDomain: shop,
     shopDomains,
     ...tocAuditOptions,
@@ -573,6 +579,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         imageAlt,
         productCount,
         focusKeyword,
+        authorName,
+        publishedAt: article.publishedAt,
+        updatedAt: article.updatedAt,
         shopDomain: shop,
         shopDomains,
         ...tocAuditOptions,
@@ -709,6 +718,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       imageAlt,
       productCount,
       focusKeyword,
+      authorName,
       shopDomain: shop,
       shopDomains,
       ...(tocAuditOptions || {}),
@@ -896,6 +906,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       imageAlt: cleanString(formData.get("imageAlt")),
       productCount: Number(formData.get("productCount") || "0"),
       focusKeyword,
+      authorName: cleanString(formData.get("author")) || defaultAuthorName,
       shopDomain: shop,
       shopDomains,
       ...(tocAuditOptions || {}),
@@ -966,6 +977,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       imageAlt: suggestedImageAlt,
       productCount,
       focusKeyword,
+      authorName: cleanString(formData.get("author")) || defaultAuthorName,
       shopDomain: shop,
       shopDomains,
       ...tocAuditOptions,
@@ -1153,11 +1165,14 @@ export default function ArticleDetail() {
       imageAlt: featuredImageAlt || article.image?.altText || "",
       productCount: embeddedProducts.length,
       focusKeyword,
+      authorName,
+      publishedAt: article.publishedAt,
+      updatedAt: article.updatedAt,
       shopDomain: shop,
       shopDomains,
       ...tocAuditOptions,
     });
-  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword, shop, shopDomains, tocAuditOptions]);
+  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword, authorName, shop, shopDomains, tocAuditOptions]);
 
   const productBlockOptions = useMemo(
     () => buildProductBlockOptions(body, embeddedProducts),
@@ -3832,14 +3847,16 @@ function SeoSidebar({
     basic: "Basic SEO",
     additional: "Additional",
     title_readability: "Title Readability",
-    content_readability: "Content Readability"
+    content_readability: "Content Readability",
+    content_quality: "Content quality & E-E-A-T"
   };
 
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({
     basic: false,
     additional: false,
     title_readability: false,
-    content_readability: false
+    content_readability: false,
+    content_quality: true
   });
 
   const toggleCategory = (cat: string) => {

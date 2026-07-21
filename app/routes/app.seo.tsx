@@ -38,7 +38,7 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
 import { getLimitsForPlan } from "../pricing-plans";
 import prisma from "../db.server";
-import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
+import { auditContentQuality, auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
 import { auditSeoPortfolio } from "../seo-portfolio-audit";
@@ -133,7 +133,7 @@ const DONUT_COLORS = {
   Medium: "#FFC453",
   Low: "#29845A",
 };
-const SEO_AUDIT_VERSION = 4;
+const SEO_AUDIT_VERSION = 5;
 const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "orphan_article", "near_duplicate_content"]);
 
 function safeTokenEqual(supplied: string, expected: string) {
@@ -1408,6 +1408,28 @@ function auditArticle(
     }, 4);
   }
 
+  auditContentQuality({
+    body,
+    summary: seoDescription,
+    authorName: article.authorName,
+    publishedAt: article.publishedAt,
+    updatedAt: article.updatedAt,
+    productCount,
+    shopDomain,
+    shopDomains,
+  })
+    .filter((issue) => issue.severity === "warning" && issue.type !== "eeat_author")
+    .forEach((issue) => addIssue({
+      type: issue.type,
+      category: "content",
+      label: issue.label,
+      message: issue.message,
+      severity: issue.severity,
+      impact: issue.impact || "Low",
+      effort: issue.effort || "Low",
+      fix: issue.fix || "Review this item and improve it only when it helps readers.",
+    }, 0));
+
   if (markupStats.unsafeLinks > 0) {
     addIssue({
       type: "unsafe_or_uncrawlable_links",
@@ -1880,6 +1902,9 @@ function calculateBlogDetailSeoScore(
     imageAlt: article.imageAlt || "",
     productCount,
     focusKeyword: textValue(storedSeo?.focusKeyword),
+    authorName: article.authorName,
+    publishedAt: article.publishedAt,
+    updatedAt: article.updatedAt,
     shopDomain,
     shopDomains,
     canUseTableOfContents: Boolean(config.canContentNavigation),
