@@ -1022,7 +1022,10 @@ function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; bu
   return (
     <Card padding="400">
       <BlockStack gap="400">
-        <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">{data.lastSyncedAt ? `Last synced ${formatDate(data.lastSyncedAt)}` : "Connected — select a property and sync."}</Text></BlockStack>
+        <InlineStack align="space-between" blockAlign="start" wrap={false} gap="200">
+          <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">{data.lastSyncedAt ? `Last synced ${formatDate(data.lastSyncedAt)}` : "Connected — select a property and sync."}</Text></BlockStack>
+          <InlineStack gap="100" wrap={false}><Button size="micro" loading={busy} disabled={!data.selectedSiteUrl} onClick={() => submit({ intent: "google_sync" })}>Sync</Button><Button size="micro" tone="critical" variant="plain" onClick={() => submit({ intent: "google_disconnect" })}>Disconnect</Button></InlineStack>
+        </InlineStack>
         {data.error && <Banner tone="critical"><p>{data.error}</p></Banner>}
         <Select label="Search Console property" options={options} value={data.selectedSiteUrl} onChange={(siteUrl) => siteUrl && submit({ intent: "google_select", siteUrl })} />
         <InlineGrid columns={2} gap="300">
@@ -1035,10 +1038,9 @@ function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; bu
           <Text as="h3" variant="headingSm">Top opportunity</Text>
           {data.opportunities.slice(0, 1).map((item) => <BlockStack key={item.id} gap="100">
             <BlockStack gap="050"><Text as="span" fontWeight="semibold">{item.title}</Text><Text as="span" variant="bodySm" tone="subdued">{item.query || "Page total"} · {item.detail}</Text></BlockStack>
-            <Button size="micro" url={item.pageUrl} target="_blank">Open page</Button>
+            <InlineStack align="end"><Button size="micro" variant="plain" url={item.pageUrl} target="_blank">Open page</Button></InlineStack>
           </BlockStack>)}
         </BlockStack>}
-        <InlineStack gap="200"><Button loading={busy} disabled={!data.selectedSiteUrl} onClick={() => submit({ intent: "google_sync" })}>Sync data</Button><Button tone="critical" variant="plain" onClick={() => submit({ intent: "google_disconnect" })}>Disconnect</Button></InlineStack>
       </BlockStack>
     </Card>
   );
