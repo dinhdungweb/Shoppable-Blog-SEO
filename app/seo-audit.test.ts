@@ -42,6 +42,19 @@ describe("Shopify image SEO", () => {
     expect(stats.tooSmall).toBe(1);
     expect(stats.uncrawlableSources).toBe(1);
   });
+
+  it("keeps resolved image checks visible as passed items", () => {
+    const result = auditSeo({
+      ...base,
+      body: '<p>Useful content</p><img src="https://cdn.shopify.com/silver-ring.jpg" alt="Silver ring" width="800" height="600">',
+      imageWidth: 1200,
+      imageHeight: 800,
+    });
+    const dimensions = result.issues.find((issue) => issue.type === "images_missing_dimensions");
+    const crawlable = result.issues.find((issue) => issue.type === "uncrawlable_image_urls");
+    expect(dimensions).toMatchObject({ category: "image_seo", severity: "good" });
+    expect(crawlable).toMatchObject({ category: "image_seo", severity: "good" });
+  });
 });
 
 describe("content quality and E-E-A-T checklist", () => {

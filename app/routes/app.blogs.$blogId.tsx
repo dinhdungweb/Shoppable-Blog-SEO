@@ -3859,6 +3859,7 @@ function SeoSidebar({
   const categories = {
     basic: "Basic SEO",
     additional: "Additional",
+    image_seo: "Image SEO",
     title_readability: "Title Readability",
     content_readability: "Content Readability",
     content_quality: "Content quality & E-E-A-T"
@@ -3867,6 +3868,7 @@ function SeoSidebar({
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({
     basic: false,
     additional: false,
+    image_seo: false,
     title_readability: false,
     content_readability: false,
     content_quality: false
@@ -3972,8 +3974,8 @@ function SeoSidebar({
                 >
                   <BlockStack gap="200">
                     {catIssues.map((issue, idx) => (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                        <div style={{ flexShrink: 0, width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0, transform: 'translateY(-1px)' }}>
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ flexShrink: 0, width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0 }}>
                           <Icon source={issue.severity === 'good' ? CheckIcon : issue.severity === 'critical' ? AlertCircleIcon : InfoIcon} 
                                 tone={issue.severity === 'good' ? 'success' : issue.severity === 'critical' ? 'critical' : 'warning'} />
                         </div>

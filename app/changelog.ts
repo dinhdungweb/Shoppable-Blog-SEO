@@ -50,6 +50,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "New", text: "Advanced Image SEO detects missing dimensions, over-optimized alt text, decorative-image alt misuse, small images and image sources that search engines cannot crawl." },
       { type: "Improved", text: "Image guidance is Shopify-aware: it recommends Shopify-hosted CDN images without forcing formats or theme-level LCP changes that the article editor cannot safely fix." },
       { type: "Fixed", text: "Choosing an image size in the article editor now saves matching width and height attributes from the image aspect ratio, resolving missing-dimension SEO warnings." },
+      { type: "Improved", text: "Resolved article checks remain visible as green passed items, with image checks grouped in a dedicated Image SEO section instead of disappearing after a fix." },
     ],
   },
   {
