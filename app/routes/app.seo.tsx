@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import crypto from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import {
   Badge,
   BlockStack,
@@ -35,7 +35,8 @@ import {
   ShieldCheckMarkIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate, getActivePlanAndLimits } from "../shopify.server";
+import { authenticate, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
+import { getLimitsForPlan } from "../pricing-plans";
 import prisma from "../db.server";
 import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
@@ -133,6 +134,12 @@ const DONUT_COLORS = {
 const SEO_AUDIT_VERSION = 2;
 const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "orphan_article", "near_duplicate_content"]);
 
+function safeTokenEqual(supplied: string, expected: string) {
+  const suppliedHash = crypto.createHash("sha256").update(supplied).digest();
+  const expectedHash = crypto.createHash("sha256").update(expected).digest();
+  return crypto.timingSafeEqual(suppliedHash, expectedHash);
+}
+
 const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
   { id: "all", content: "All issues" },
   { id: "on_page", content: "On-page SEO" },
@@ -177,7 +184,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const [seoRows, searchConnection] = await Promise.all([
+  const [seoRows, searchConnection, scanJob, shopConfig] = await Promise.all([
     prisma.articleSEO.findMany({
       where: { shop },
       select: {
@@ -200,6 +207,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       console.error("Search Console connection table unavailable:", error);
       return null;
     }),
+    prisma.seoScanJob.findFirst({ where: { shop }, orderBy: { requestedAt: "desc" } }),
+    prisma.shopConfig.findUnique({ where: { shop }, select: { seoAutoScanEnabled: true } }),
   ]);
   const searchData = await loadSearchConsoleMetrics(shop, Boolean(searchConnection));
   const searchMetrics = searchData.metrics;
@@ -236,6 +245,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     scannedPosts: seoRows.filter((row) => row.lastAnalyzedAt).length,
     totalPosts: auditedPosts.length,
     lastScanAt: lastScanAt ? lastScanAt.toISOString() : null,
+    autoScanEnabled: shopConfig?.seoAutoScanEnabled || false,
+    scanJob: scanJob ? {
+      id: scanJob.id, status: scanJob.status, phase: scanJob.phase, progress: scanJob.progress,
+      totalPosts: scanJob.totalPosts, processedPosts: scanJob.processedPosts, analyzedPosts: scanJob.analyzedPosts,
+      averageScore: scanJob.averageScore, error: scanJob.error,
+      requestedAt: scanJob.requestedAt.toISOString(), completedAt: scanJob.completedAt?.toISOString() || null,
+    } : null,
     postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6).map((post) => ({ id: post.id, title: post.title, imageUrl: post.imageUrl, imageAlt: post.imageAlt, score: post.score })),
     searchConsole: {
       configured: isSearchConsoleConfigured(), connected: Boolean(searchConnection), selectedSiteUrl: searchConnection?.selectedSiteUrl || "",
@@ -246,9 +262,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session, billing } = await authenticate.admin(request);
+  if (request.headers.get("content-type")?.includes("application/json")) {
+    const suppliedToken = request.headers.get("x-seo-worker-token") || "";
+    const expectedToken = process.env.SEO_WORKER_SECRET || process.env.SHOPIFY_API_SECRET || "";
+    if (!expectedToken || !safeTokenEqual(suppliedToken, expectedToken)) return json({ error: "Unauthorized worker request" }, { status: 401 });
+    const payload = await request.json() as { jobId?: string; shop?: string };
+    const job = payload.jobId && payload.shop
+      ? await prisma.seoScanJob.findFirst({ where: { id: payload.jobId, shop: payload.shop, status: "running" } })
+      : null;
+    if (!job) return json({ error: "Active SEO scan job not found" }, { status: 404 });
+    const [{ admin }, planName] = await Promise.all([
+      unauthenticated.admin(job.shop),
+      getUnauthenticatedActivePlanName(job.shop),
+    ]);
+    const result = await runSeoScan({
+      admin, shop: job.shop, limits: getLimitsForPlan(planName),
+      onProgress: async (update) => {
+        const updated = await prisma.seoScanJob.updateMany({ where: { id: job.id, status: "running" }, data: { ...update, heartbeatAt: new Date() } });
+        if (!updated.count) throw new Error("SEO_SCAN_CANCELLED");
+      },
+    });
+    return json(result);
+  }
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const { limits } = await getActivePlanAndLimits(billing);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
@@ -264,12 +301,53 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await disconnectSearchConsole(shop);
     return json({ success: true, googleAction: "disconnected" });
   }
+  if (intent === "set_auto_scan") {
+    const enabled = formData.get("enabled") === "true";
+    await prisma.shopConfig.upsert({ where: { shop }, update: { seoAutoScanEnabled: enabled }, create: { shop, seoAutoScanEnabled: enabled } });
+    return json({ success: true, autoScanEnabled: enabled });
+  }
+  if (intent === "cancel_scan") {
+    const cancelled = await prisma.seoScanJob.updateMany({
+      where: { shop, status: { in: ["queued", "running"] } },
+      data: { status: "cancelled", phase: "Scan cancelled", completedAt: new Date(), heartbeatAt: new Date() },
+    });
+    return json({ success: true, cancelled: cancelled.count > 0 });
+  }
 
   if (intent !== "scan_all") {
     return json({ error: "Unsupported action" }, { status: 400 });
   }
 
+  const job = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${shop}))`;
+    const active = await tx.seoScanJob.findFirst({
+      where: { shop, status: { in: ["queued", "running"] } },
+      orderBy: { requestedAt: "desc" },
+    });
+    if (active) return active;
+    return tx.seoScanJob.create({ data: { shop, status: "queued", trigger: "manual", phase: "Waiting for worker" } });
+  });
+
+  return json({ success: true, queued: true, jobId: job.id, status: job.status }, { status: 202 });
+};
+
+async function runSeoScan({
+  admin,
+  shop,
+  limits,
+  onProgress,
+}: {
+  admin: any;
+  shop: string;
+  limits: { canContentNavigation: boolean };
+  onProgress?: (update: { phase: string; progress: number; totalPosts?: number; processedPosts?: number; analyzedPosts?: number }) => Promise<void>;
+}) {
+  const report = async (update: { phase: string; progress: number; totalPosts?: number; processedPosts?: number; analyzedPosts?: number }) => {
+    if (onProgress) await onProgress(update);
+  };
+
   const scanStartedAt = Date.now();
+  await report({ phase: "Loading Shopify articles", progress: 5 });
   const [articles, linkedProducts, config, seoRows, shopDomains] = await Promise.all([
     fetchShopifyArticles(admin),
     prisma.articleProduct.findMany({
@@ -300,6 +378,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }),
     fetchShopDomains(admin, shop),
   ]);
+  await report({ phase: "Analyzing SEO", progress: 30, totalPosts: articles.length });
   const fetchDurationMs = Date.now() - scanStartedAt;
 
   const productCountMap = new Map<string, number>();
@@ -341,6 +420,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     };
   });
   applyPortfolioIssues(audits);
+  await report({ phase: "Saving results", progress: 60, totalPosts: articles.length, analyzedPosts: analyzedCount });
   const auditDurationMs = Date.now() - scanStartedAt - fetchDurationMs;
 
   const articleIds = articles.map((a) => a.id);
@@ -353,8 +433,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     where: { shop, articleId: { notIn: articleIds } },
   });
 
-  await Promise.all(
-    audits.map((audit) => {
+  const saveAudit = (audit: AuditedPost) => {
       const article = audit;
       const stored = storedSeoMap.get(audit.id);
       const metaTitle = textValue(stored?.metaTitle) || null;
@@ -402,18 +481,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           auditVersion: SEO_AUDIT_VERSION,
         },
       });
-    }),
-  );
+  };
+  const batchSize = 25;
+  for (let index = 0; index < audits.length; index += batchSize) {
+    const batch = audits.slice(index, index + batchSize);
+    await Promise.all(batch.map(saveAudit));
+    const processedPosts = Math.min(index + batch.length, audits.length);
+    const saveProgress = audits.length ? Math.round(60 + (processedPosts / audits.length) * 35) : 95;
+    await report({ phase: "Saving results", progress: saveProgress, totalPosts: audits.length, processedPosts, analyzedPosts: analyzedCount });
+  }
 
   const durationMs = Date.now() - scanStartedAt;
   console.info("SEO incremental scan timing", { shop, articles: articles.length, analyzedCount, fetchDurationMs, auditDurationMs, durationMs });
-  return json({
-    success: true,
+  return {
     scannedCount: audits.length,
     analyzedCount,
     averageScore: getAverageScore(audits),
-  });
-};
+  };
+}
 
 export default function SEOOptimizer() {
   const {
@@ -426,12 +511,16 @@ export default function SEOOptimizer() {
     scannedPosts,
     totalPosts,
     lastScanAt,
+    autoScanEnabled,
+    scanJob,
     postsNeedingAttention,
     searchConsole,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const revalidator = useRevalidator();
   const shopify = useAppBridge();
   const scanFetcher = useFetcher<typeof action>();
+  const statusFetcher = useFetcher();
   const [selectedTab, setSelectedTab] = useState(0);
   const [activeIssue, setActiveIssue] = useState<IssueGroup | null>(null);
   const selectedCategory = CATEGORY_TABS[selectedTab]?.id || "all";
@@ -440,18 +529,51 @@ export default function SEOOptimizer() {
     [issueGroups, selectedCategory],
   );
   const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(visibleIssues as any);
-  const isScanning = scanFetcher.state !== "idle";
-  const isGoogleBusy = isScanning && String(scanFetcher.formData?.get("intent") || "").startsWith("google_");
+  const statusData = statusFetcher.data as { job?: typeof scanJob } | undefined;
+  const scanActionData = scanFetcher.data as { queued?: boolean; jobId?: string } | undefined;
+  const currentJob = statusData?.job === undefined ? scanJob : statusData.job;
+  const scanIntentSubmitting = scanFetcher.state !== "idle" && scanFetcher.formData?.get("intent") === "scan_all";
+  const queuedJobStillActive = Boolean(
+    scanActionData?.queued
+      && (!statusData?.job || statusData.job.id !== scanActionData.jobId || ["queued", "running"].includes(statusData.job.status)),
+  );
+  const isScanning = scanIntentSubmitting || queuedJobStillActive || currentJob?.status === "queued" || currentJob?.status === "running";
+  const isGoogleBusy = scanFetcher.state !== "idle" && String(scanFetcher.formData?.get("intent") || "").startsWith("google_");
 
   useEffect(() => {
-    const data = scanFetcher.data as { success?: boolean; scannedCount?: number; analyzedCount?: number; averageScore?: number; error?: string; googleAction?: string; syncedCount?: number } | undefined;
+    const data = scanFetcher.data as { success?: boolean; queued?: boolean; cancelled?: boolean; error?: string; googleAction?: string; syncedCount?: number; autoScanEnabled?: boolean } | undefined;
     if (!data) return;
     if (data.success) {
-      shopify.toast.show(data.googleAction ? (data.googleAction === "synced" ? `Search Console synced: ${data.syncedCount || 0} rows` : `Search Console ${data.googleAction}`) : `SEO scan complete: ${data.scannedCount || 0} posts (${data.analyzedCount || 0} changed), avg ${data.averageScore || 0}/100`);
+      if (data.cancelled) {
+        shopify.toast.show("SEO scan cancelled");
+      } else if (typeof data.autoScanEnabled === "boolean") {
+        shopify.toast.show(data.autoScanEnabled ? "Weekly SEO scans enabled" : "Weekly SEO scans disabled");
+        revalidator.revalidate();
+      } else {
+        shopify.toast.show(data.googleAction ? (data.googleAction === "synced" ? `Search Console synced: ${data.syncedCount || 0} rows` : `Search Console ${data.googleAction}`) : "SEO scan queued. You can leave this page while it runs.");
+      }
     } else if (data.error) {
       shopify.toast.show(data.error, { isError: true });
     }
-  }, [scanFetcher.data, shopify]);
+  }, [scanFetcher.data, revalidator, shopify]);
+
+  useEffect(() => {
+    if (!isScanning) return;
+    statusFetcher.load("/app/seo-scan-status");
+    const timer = window.setInterval(() => statusFetcher.load("/app/seo-scan-status"), 2000);
+    return () => window.clearInterval(timer);
+  }, [isScanning, statusFetcher]);
+
+  const completedJobId = statusData?.job?.status === "completed" ? statusData.job.id : null;
+  const failedJobId = statusData?.job?.status === "failed" ? statusData.job.id : null;
+  useEffect(() => {
+    if (!completedJobId) return;
+    shopify.toast.show(`SEO scan complete: ${currentJob?.totalPosts || 0} posts, average ${currentJob?.averageScore || 0}/100`);
+    revalidator.revalidate();
+  }, [completedJobId, currentJob?.averageScore, currentJob?.totalPosts, revalidator, shopify]);
+  useEffect(() => {
+    if (failedJobId) shopify.toast.show(currentJob?.error || "SEO scan failed", { isError: true });
+  }, [failedJobId, currentJob?.error, shopify]);
 
   const selectedIssueCount = allResourcesSelected ? visibleIssues.length : selectedResources.length;
   const selectedIssues = visibleIssues.filter((issue) => allResourcesSelected || selectedResources.includes(issue.id));
@@ -516,6 +638,13 @@ export default function SEOOptimizer() {
             <Button loading={isScanning} onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}>
               Run SEO scan
             </Button>
+            {isScanning && <Button tone="critical" onClick={() => scanFetcher.submit({ intent: "cancel_scan" }, { method: "post" })}>Cancel scan</Button>}
+            <Button
+              pressed={autoScanEnabled}
+              onClick={() => scanFetcher.submit({ intent: "set_auto_scan", enabled: String(!autoScanEnabled) }, { method: "post" })}
+            >
+              {autoScanEnabled ? "Weekly scan on" : "Enable weekly scan"}
+            </Button>
             <Button variant="primary" onClick={() => navigate("/app/blogs")}>
               Review posts
             </Button>
@@ -528,6 +657,21 @@ export default function SEOOptimizer() {
               {shopifyError} Existing saved SEO rows are still shown when available.
             </Text>
           </Card>
+        )}
+
+        {currentJob && (currentJob.status === "queued" || currentJob.status === "running" || currentJob.status === "failed") && (
+          <Banner tone={currentJob.status === "failed" ? "critical" : "info"} title={currentJob.status === "failed" ? "SEO scan failed" : currentJob.phase}>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodySm">
+                {currentJob.status === "failed"
+                  ? currentJob.error || "The worker could not complete this scan. You can run it again."
+                  : currentJob.totalPosts > 0
+                    ? `${currentJob.processedPosts} of ${currentJob.totalPosts} posts saved. ${currentJob.analyzedPosts} changed posts analyzed.`
+                    : "The scan is waiting for the background worker."}
+              </Text>
+              {currentJob.status !== "failed" && <ProgressBar progress={currentJob.progress} size="small" />}
+            </BlockStack>
+          </Banner>
         )}
 
         <SearchConsoleCard data={searchConsole} busy={isGoogleBusy} submit={(values) => scanFetcher.submit(values, { method: "post" })} />

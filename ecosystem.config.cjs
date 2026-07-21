@@ -12,5 +12,17 @@ module.exports = {
         NODE_OPTIONS: '--dns-result-order=ipv4first',
       },
     },
+    {
+      name: 'shoppable-blog-seo-worker',
+      script: 'npm',
+      args: 'run seo:worker',
+      autorestart: true,
+      restart_delay: 3000,
+      env: {
+        NODE_ENV: 'production',
+        SHOPIFY_BILLING_TEST: 'false',
+        NODE_OPTIONS: '--dns-result-order=ipv4first',
+      },
+    },
   ],
 };

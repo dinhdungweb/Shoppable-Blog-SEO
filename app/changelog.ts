@@ -28,6 +28,9 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Analytics now reads daily aggregates and unique-session counters instead of loading every raw tracking event." },
       { type: "Improved", text: "Existing tracking history is backfilled automatically, while new events update raw and aggregate data in one idempotent transaction." },
       { type: "New", text: "A configurable raw-event retention command keeps long-term daily reports while controlling database growth." },
+      { type: "New", text: "SEO scans now run in a persistent background queue with live progress, cancellation, failure recovery and optional weekly scheduling." },
+      { type: "Improved", text: "Merchants can leave SEO Optimizer while a scan runs, avoiding long browser requests and timeouts on large stores." },
+      { type: "Fixed", text: "Uninstall and privacy cleanup now includes analytics aggregates, Search Console records, bulk-change history and SEO scan jobs." },
     ],
   },
   {

@@ -56,6 +56,13 @@ performing an idempotent transaction that removes shop-owned data.
 
 - Use managed PostgreSQL with backups and point-in-time recovery.
 - Keep `SHOPIFY_API_SECRET` private; it signs tracking tokens.
+- Start both entries in `ecosystem.config.cjs` so `shoppable-blog-seo-worker`
+  can process persistent SEO scan jobs. After deployment, run
+  `pm2 startOrReload ecosystem.config.cjs --update-env` and verify both processes
+  with `pm2 status`.
+- `SEO_WORKER_SECRET` is optional and defaults to `SHOPIFY_API_SECRET`. Set it to
+  an independent random secret when desired. `SEO_WORKER_URL` only needs to be
+  set if the web process is not reachable at `http://127.0.0.1:3004/app/seo`.
 - Monitor non-2xx webhook and app-proxy responses and retryable database errors.
 - Review `npm audit` output during dependency upgrades; avoid automatic
   force-upgrades without testing Shopify/Remix compatibility.

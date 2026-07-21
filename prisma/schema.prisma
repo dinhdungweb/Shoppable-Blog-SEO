@@ -78,6 +78,7 @@ model ShopConfig {
   autoGenerateAltText     Boolean  @default(true)
   requireApproval         Boolean  @default(true)
   forbiddenWords          String   @default("")
+  seoAutoScanEnabled      Boolean  @default(false)
 
   // Legacy fields
   widgetStyle   String   @default("carousel")
@@ -170,6 +171,29 @@ model ArticleSEO {
   @@index([shop])
   @@index([shop, sourceUpdatedAt])
   @@unique([shop, articleId])
+}
+
+model SeoScanJob {
+  id             String    @id @default(cuid())
+  shop           String
+  status         String    @default("queued")
+  trigger        String    @default("manual")
+  phase          String    @default("Queued")
+  progress       Int       @default(0)
+  totalPosts     Int       @default(0)
+  processedPosts Int       @default(0)
+  analyzedPosts  Int       @default(0)
+  averageScore   Int?
+  error          String?
+  requestedAt    DateTime  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  heartbeatAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([shop, requestedAt])
+  @@index([status, requestedAt])
 }
 
 // Analytics: tracking widget events
