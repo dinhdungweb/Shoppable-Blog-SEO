@@ -44,7 +44,7 @@ import { normalizeContentNavConfig } from "../content-navigation";
 import { auditSeoPortfolio } from "../seo-portfolio-audit";
 import { buildSearchOpportunities } from "../search-console-opportunities";
 import { getPublicSeoScanError } from "../seo-scan-error";
-import { disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
+import { createAuthorizationUrl, disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -290,6 +290,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  if (intent === "google_connect") {
+    try {
+      return json({ success: true, googleAction: "connect", authorizationUrl: await createAuthorizationUrl(shop) });
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : "Could not start Google connection." }, { status: 400 });
+    }
+  }
   if (intent === "google_select") {
     try { await selectSearchConsoleSite(shop, String(formData.get("siteUrl") || "")); return json({ success: true, googleAction: "selected" }); }
     catch (error) { return json({ error: error instanceof Error ? error.message : "Could not select property." }, { status: 400 }); }
@@ -556,9 +563,13 @@ export default function SEOOptimizer() {
   const isGoogleBusy = scanFetcher.state !== "idle" && String(scanFetcher.formData?.get("intent") || "").startsWith("google_");
 
   useEffect(() => {
-    const data = scanFetcher.data as { success?: boolean; queued?: boolean; cancelled?: boolean; error?: string; googleAction?: string; syncedCount?: number; autoScanEnabled?: boolean } | undefined;
+    const data = scanFetcher.data as { success?: boolean; queued?: boolean; cancelled?: boolean; error?: string; googleAction?: string; authorizationUrl?: string; syncedCount?: number; autoScanEnabled?: boolean } | undefined;
     if (!data || handledActionData.current === data) return;
     handledActionData.current = data;
+    if (data.googleAction === "connect" && data.authorizationUrl) {
+      window.top?.location.assign(data.authorizationUrl);
+      return;
+    }
     if (data.success) {
       if (data.cancelled) {
         shopify.toast.show("SEO scan cancelled");
@@ -1003,7 +1014,7 @@ function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; bu
     <Card padding="400">
       <InlineStack align="space-between" blockAlign="center">
         <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">Connect read-only data to find pages with ranking and click opportunities.</Text></BlockStack>
-        <Button variant="primary" url="/app/seo/google/connect" target="_top">Connect Google</Button>
+        <Button variant="primary" loading={busy} onClick={() => submit({ intent: "google_connect" })}>Connect Google</Button>
       </InlineStack>
     </Card>
   );
