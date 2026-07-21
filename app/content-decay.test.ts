@@ -26,6 +26,7 @@ describe("content decay analysis", () => {
     });
     expect(new Set(report.issues.map((issue) => issue.type))).toEqual(new Set(["traffic_decline", "ctr_decline", "stale_content", "outdated_year", "unavailable_product", "broken_outbound"]));
     expect(report.externalLinksChecked).toBe(1);
+    expect(report.inventoryDataAvailable).toBe(true);
   });
 
   it("does not flag healthy recent content", () => {

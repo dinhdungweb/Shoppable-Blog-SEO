@@ -45,6 +45,7 @@ export type ContentDecayReport = {
   externalLinksChecked: number;
   externalLinksSkipped: number;
   schemaEnabled: boolean;
+  inventoryDataAvailable: boolean;
   issues: DecayIssue[];
 };
 
@@ -56,6 +57,7 @@ export function analyzeContentDecay(input: {
   externalLinksChecked?: number;
   externalLinksSkipped?: number;
   schemaEnabled?: boolean;
+  inventoryDataAvailable?: boolean;
   now?: Date;
 }): ContentDecayReport {
   const now = input.now || new Date();
@@ -107,6 +109,7 @@ export function analyzeContentDecay(input: {
     externalLinksChecked: input.externalLinksChecked || 0,
     externalLinksSkipped: input.externalLinksSkipped || 0,
     schemaEnabled: input.schemaEnabled !== false,
+    inventoryDataAvailable: input.inventoryDataAvailable !== false,
     issues: issues.sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || a.articleTitle.localeCompare(b.articleTitle)),
   };
 }

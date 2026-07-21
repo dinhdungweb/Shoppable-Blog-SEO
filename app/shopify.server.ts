@@ -27,6 +27,7 @@ const shopify = shopifyApp({
     "read_content",
     "write_content",
     "read_products",
+    "read_inventory",
     "read_themes",
     "read_files",
     "write_files",

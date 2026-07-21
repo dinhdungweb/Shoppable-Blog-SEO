@@ -55,6 +55,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Images reset to Original size no longer reopen as a 600px preset when their intrinsic width happens to be 600 pixels." },
       { type: "New", text: "Content Decay Monitor identifies declining organic clicks and CTR, stale articles, outdated title years, unavailable Shopify products and broken outbound links in a saved per-shop report." },
       { type: "Improved", text: "Content decay checks use Shopify product inventory policies and Search Console comparison periods, while keeping all article changes review-only." },
+      { type: "Fixed", text: "Content Decay falls back to Shopify product status when an installed shop has not granted inventory access, instead of failing the full analysis." },
+      { type: "Improved", text: "The app now requests read-only Shopify inventory access so Content Decay can distinguish genuinely out-of-stock products while respecting continue-selling policies." },
     ],
   },
   {

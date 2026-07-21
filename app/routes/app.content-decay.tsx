@@ -37,18 +37,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       prisma.shopConfig.findUnique({ where: { shop: session.shop }, select: { addBlogSchema: true } }),
       fetchShopDomains(admin, session.shop),
     ]);
-    const [products, external] = await Promise.all([
+    const [productResult, external] = await Promise.all([
       fetchProductStates(admin, linkedProducts),
       checkExternalLinks(articles, shopDomains),
     ]);
     const report = analyzeContentDecay({
       articles,
       metrics,
-      products,
+      products: productResult.products,
       brokenOutboundByArticle: external.brokenByArticle,
       externalLinksChecked: external.checked,
       externalLinksSkipped: external.skipped,
       schemaEnabled: config?.addBlogSchema !== false,
+      inventoryDataAvailable: productResult.inventoryDataAvailable,
     });
     const analyzedAt = new Date();
     await prisma.contentDecayAnalysis.upsert({
@@ -58,7 +59,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     return json({ success: true, report, analyzedAt: analyzedAt.toISOString() });
   } catch (error) {
-    console.error("Content decay analysis failed", error);
+    console.error("Content decay analysis failed", error instanceof Error ? error.message : String(error));
     return json({ error: "Could not analyze content decay. Please try again." }, { status: 500 });
   }
 };
@@ -101,6 +102,7 @@ export default function ContentDecayPage() {
         </InlineGrid>
         {!report.searchDataAvailable && <Banner tone="info" title="Search performance checks are waiting"><p>Connect and sync Google Search Console in SEO Optimizer to detect click and CTR decline.</p></Banner>}
         {!report.schemaEnabled && <Banner tone="warning" title="Article schema is disabled"><p>Enable Blog schema in Settings before relying on structured data for Shopify articles. <Button size="micro" url="/app/settings">Open settings</Button></p></Banner>}
+        {!report.inventoryDataAvailable && <Banner tone="info" title="Inventory-level checks are limited"><p>The current Shopify installation does not provide inventory quantities. Deleted and inactive products are still checked; out-of-stock checks will run only when inventory access is available.</p></Banner>}
         {report.externalLinksSkipped > 0 && <Banner tone="info"><p>{report.externalLinksSkipped} additional external links were skipped because each manual analysis checks at most {MAX_EXTERNAL_LINKS} unique article links.</p></Banner>}
         <Card padding="0">
           <Box padding="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">Priority queue</Text><Text as="p" variant="bodySm" tone="subdued">Updated {formatDate(analyzedAt)} · Review high-priority rows first. No changes are published automatically.</Text></BlockStack><div style={{ minWidth: 230 }}><Select label="Issue type" labelHidden value={filter} onChange={setFilter} options={filterOptions(report)} /></div></InlineStack></Box>
@@ -142,24 +144,33 @@ async function fetchArticles(admin: any): Promise<DecayArticle[]> {
   return articles;
 }
 
-async function fetchProductStates(admin: any, links: Array<{ articleId: string; productId: string; productTitle: string }>): Promise<DecayProduct[]> {
+async function fetchProductStates(admin: any, links: Array<{ articleId: string; productId: string; productTitle: string }>): Promise<{ products: DecayProduct[]; inventoryDataAvailable: boolean }> {
   const uniqueIds = [...new Set(links.map((item) => item.productId).filter(Boolean))];
   const state = new Map<string, { exists: boolean; available: boolean }>();
+  let inventoryDataAvailable = true;
   for (let index = 0; index < uniqueIds.length; index += 50) {
     const ids = uniqueIds.slice(index, index + 50);
-    const response = await admin.graphql(`#graphql query DecayProducts($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id status variants(first: 100) { nodes { inventoryPolicy inventoryQuantity } } } } }`, { variables: { ids } });
-    const result: any = await response.json();
+    let result: any;
+    try {
+      const response = await admin.graphql(`#graphql query DecayProducts($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id status variants(first: 100) { nodes { inventoryPolicy inventoryQuantity } } } } }`, { variables: { ids } });
+      result = await response.json();
+      if (result.errors?.length) throw new Error(result.errors.map((item: any) => item.message).join("; "));
+    } catch {
+      inventoryDataAvailable = false;
+      const fallbackResponse = await admin.graphql(`#graphql query DecayProductStatus($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id status } } }`, { variables: { ids } });
+      result = await fallbackResponse.json();
+    }
     if (result.errors?.length) throw new Error(result.errors.map((item: any) => item.message).join("; "));
     const returned = new Set<string>();
     for (const product of result.data?.nodes || []) if (product?.id) {
       returned.add(product.id);
       const variants = product.variants?.nodes || [];
-      const available = product.status === "ACTIVE" && variants.some((variant: any) => Number(variant.inventoryQuantity) > 0 || variant.inventoryPolicy === "CONTINUE");
+      const available = product.status === "ACTIVE" && (!inventoryDataAvailable || variants.some((variant: any) => Number(variant.inventoryQuantity) > 0 || variant.inventoryPolicy === "CONTINUE"));
       state.set(product.id, { exists: true, available });
     }
     ids.filter((id) => !returned.has(id)).forEach((id) => state.set(id, { exists: false, available: false }));
   }
-  return links.map((link) => ({ ...link, ...(state.get(link.productId) || { exists: false, available: false }) }));
+  return { products: links.map((link) => ({ ...link, ...(state.get(link.productId) || { exists: false, available: false }) })), inventoryDataAvailable };
 }
 
 async function checkExternalLinks(articles: DecayArticle[], shopDomains: string[]) {
