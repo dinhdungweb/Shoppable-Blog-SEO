@@ -7,6 +7,7 @@ export type PortfolioSeoPost = {
   body: string;
   blogHandle: string;
   handle: string;
+  publishedAt?: string | null;
 };
 
 export type PortfolioSeoIssue = {
@@ -27,9 +28,11 @@ export function auditSeoPortfolio(posts: PortfolioSeoPost[]) {
   const issues = new Map<string, PortfolioSeoIssue[]>();
   posts.forEach((post) => issues.set(post.id, []));
 
+  addDuplicateIssues(posts, issues, "title", "duplicate_article_title", "Duplicate article title", 8);
   addDuplicateIssues(posts, issues, "seoTitle", "duplicate_seo_title", "Duplicate SEO title", 8);
   addDuplicateIssues(posts, issues, "seoDescription", "duplicate_meta_description", "Duplicate meta description", 6);
   addKeywordCannibalization(posts, issues);
+  addSearchIntentOverlap(posts, issues);
   addOrphanIssues(posts, issues);
   addNearDuplicateIssues(posts, issues);
   return issues;
@@ -38,7 +41,7 @@ export function auditSeoPortfolio(posts: PortfolioSeoPost[]) {
 function addDuplicateIssues(
   posts: PortfolioSeoPost[],
   result: Map<string, PortfolioSeoIssue[]>,
-  field: "seoTitle" | "seoDescription",
+  field: "title" | "seoTitle" | "seoDescription",
   type: string,
   label: string,
   penalty: number,
@@ -50,11 +53,13 @@ function addDuplicateIssues(
     group.forEach((post) => push(result, post.id, {
       type,
       label,
-      message: `${group.length} posts share the same ${field === "seoTitle" ? "SEO title" : "meta description"}: ${names}.`,
+      message: `${group.length} posts share the same ${field === "title" ? "article title" : field === "seoTitle" ? "SEO title" : "meta description"}: ${names}.`,
       severity: "warning",
-      impact: field === "seoTitle" ? "High" : "Medium",
+      impact: field === "seoDescription" ? "Medium" : "High",
       effort: "Low",
-      fix: `Write a unique ${field === "seoTitle" ? "title that matches this post's intent" : "description with a post-specific benefit"}.`,
+      fix: field === "seoDescription"
+        ? "Write a unique description with a post-specific benefit."
+        : "Give each post a distinct title and search intent, or consolidate overlapping posts.",
       penalty,
     }));
   });
@@ -75,6 +80,38 @@ function addKeywordCannibalization(posts: PortfolioSeoPost[], result: Map<string
       penalty: 7,
     }));
   });
+}
+
+function addSearchIntentOverlap(posts: PortfolioSeoPost[], result: Map<string, PortfolioSeoIssue[]>) {
+  const intentTokens = new Map(posts.map((post) => [post.id, words(`${post.title} ${post.seoTitle}`)]));
+  for (let leftIndex = 0; leftIndex < posts.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < posts.length; rightIndex += 1) {
+      const left = posts[leftIndex];
+      const right = posts[rightIndex];
+      const leftTokens = intentTokens.get(left.id) || new Set<string>();
+      const rightTokens = intentTokens.get(right.id) || new Set<string>();
+      if (Math.min(leftTokens.size, rightTokens.size) < 2) continue;
+      const similarity = jaccard(leftTokens, rightTokens);
+      if (similarity < 0.6) continue;
+      if (normalizeText(left.title) === normalizeText(right.title)) continue;
+      if (primaryKeyword(left) && primaryKeyword(left) === primaryKeyword(right)) continue;
+
+      const older = olderPost(left, right);
+      [left, right].forEach((post) => {
+        const other = post.id === left.id ? right : left;
+        push(result, post.id, {
+          type: "search_intent_overlap",
+          label: "Overlapping search intent",
+          message: `This post appears to target a similar intent to “${other.title}” (${Math.round(similarity * 100)}% topic similarity).${older ? ` “${older.title}” is the older article.` : ""}`,
+          severity: "warning",
+          impact: "High",
+          effort: "Medium",
+          fix: "Choose one primary page, merge useful content where appropriate, assign the other post a distinct focus topic, update internal links, and create a Shopify URL redirect if a post is removed.",
+          penalty: 6,
+        });
+      });
+    }
+  }
 }
 
 function addOrphanIssues(posts: PortfolioSeoPost[], result: Map<string, PortfolioSeoIssue[]>) {
@@ -108,12 +145,13 @@ function addOrphanIssues(posts: PortfolioSeoPost[], result: Map<string, Portfoli
 }
 
 function addNearDuplicateIssues(posts: PortfolioSeoPost[], result: Map<string, PortfolioSeoIssue[]>) {
-  if (posts.length > 300) return;
   const tokenSets = new Map(posts.map((post) => [post.id, words(post.body)]));
+  const candidatePairs = posts.length > 300 ? buildNearDuplicateCandidates(posts, tokenSets) : null;
   for (let leftIndex = 0; leftIndex < posts.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < posts.length; rightIndex += 1) {
       const left = posts[leftIndex];
       const right = posts[rightIndex];
+      if (candidatePairs && !candidatePairs.has(pairKey(left.id, right.id))) continue;
       const leftWords = tokenSets.get(left.id) || new Set<string>();
       const rightWords = tokenSets.get(right.id) || new Set<string>();
       const similarity = jaccard(leftWords, rightWords);
@@ -130,6 +168,40 @@ function addNearDuplicateIssues(posts: PortfolioSeoPost[], result: Map<string, P
       }));
     }
   }
+}
+
+function buildNearDuplicateCandidates(posts: PortfolioSeoPost[], tokenSets: Map<string, Set<string>>) {
+  const postings = new Map<string, string[]>();
+  tokenSets.forEach((tokens, postId) => {
+    tokens.forEach((token) => postings.set(token, [...(postings.get(token) || []), postId]));
+  });
+  const sharedCounts = new Map<string, number>();
+  const maxFrequency = Math.max(20, Math.ceil(posts.length * 0.08));
+  postings.forEach((postIds) => {
+    if (postIds.length < 2 || postIds.length > maxFrequency) return;
+    for (let left = 0; left < postIds.length; left += 1) {
+      for (let right = left + 1; right < postIds.length; right += 1) {
+        const key = pairKey(postIds[left], postIds[right]);
+        sharedCounts.set(key, (sharedCounts.get(key) || 0) + 1);
+      }
+    }
+  });
+  return new Set([...sharedCounts].filter(([, count]) => count >= 20).map(([key]) => key));
+}
+
+function pairKey(left: string, right: string) {
+  return left < right ? `${left}:${right}` : `${right}:${left}`;
+}
+
+function primaryKeyword(post: PortfolioSeoPost) {
+  return normalizeText(post.focusKeyword.split(",")[0] || "");
+}
+
+function olderPost(left: PortfolioSeoPost, right: PortfolioSeoPost) {
+  const leftDate = left.publishedAt ? new Date(left.publishedAt).getTime() : Number.NaN;
+  const rightDate = right.publishedAt ? new Date(right.publishedAt).getTime() : Number.NaN;
+  if (!Number.isFinite(leftDate) || !Number.isFinite(rightDate) || leftDate === rightDate) return null;
+  return leftDate < rightDate ? left : right;
 }
 
 function findRelatedPost(target: PortfolioSeoPost, posts: PortfolioSeoPost[]) {

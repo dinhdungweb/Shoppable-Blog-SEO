@@ -44,6 +44,9 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "SEO scan progress now advances per Shopify page, article-analysis batch and saved-result batch." },
       { type: "New", text: "Content quality and E-E-A-T checks now review actionable Shopify article signals: authorship, citations, first-hand experience and direct answers." },
       { type: "Improved", text: "Checks without a reliable Shopify field or an in-app fix are omitted instead of appearing as errors merchants cannot resolve." },
+      { type: "New", text: "Duplicate and cannibalization audits now detect duplicate Shopify article titles and overlapping search intent even when focus keywords differ." },
+      { type: "Improved", text: "Near-duplicate content checks now scale to large Shopify blog libraries instead of stopping at 300 posts." },
+      { type: "Improved", text: "Cannibalization guidance recommends Shopify-compatible actions: consolidate content, separate focus topics, update internal links and create URL redirects." },
     ],
   },
   {

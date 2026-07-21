@@ -133,8 +133,8 @@ const DONUT_COLORS = {
   Medium: "#FFC453",
   Low: "#29845A",
 };
-const SEO_AUDIT_VERSION = 5;
-const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "orphan_article", "near_duplicate_content"]);
+const SEO_AUDIT_VERSION = 6;
+const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_article_title", "duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "search_intent_overlap", "orphan_article", "near_duplicate_content"]);
 
 function safeTokenEqual(supplied: string, expected: string) {
   const suppliedHash = crypto.createHash("sha256").update(supplied).digest();
@@ -2079,6 +2079,7 @@ function applyPortfolioIssues(posts: AuditedPost[]) {
     body: post.body,
     blogHandle: post.blogHandle,
     handle: post.handle,
+    publishedAt: post.publishedAt,
   })));
 
   posts.forEach((post) => {
