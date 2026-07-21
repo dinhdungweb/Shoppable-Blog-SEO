@@ -1005,6 +1005,8 @@ type SearchConsoleData = {
 };
 
 function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; busy: boolean; submit: (values: Record<string, string>) => void }) {
+  const [showAllOpportunities, setShowAllOpportunities] = useState(false);
+
   if (!data.configured) return (
     <Banner title="Google Search Console is ready to configure" tone="info">
       <p>Add GOOGLE_SEARCH_CONSOLE_CLIENT_ID, GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET and SHOPIFY_APP_URL to enable real search performance data.</p>
@@ -1039,11 +1041,19 @@ function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; bu
         </InlineGrid>
         {data.opportunities.length > 0 && <BlockStack gap="300">
           <Divider />
-          <Text as="h3" variant="headingSm">Top opportunity</Text>
-          {data.opportunities.slice(0, 1).map((item) => <BlockStack key={item.id} gap="100">
-            <BlockStack gap="050"><Text as="span" fontWeight="semibold">{item.title}</Text><Text as="span" variant="bodySm" tone="subdued">{item.query || "Page total"} · {item.detail}</Text></BlockStack>
-            <InlineStack align="end"><Button size="micro" url={item.pageUrl} target="_blank">Open</Button></InlineStack>
+          <Text as="h3" variant="headingSm">Top opportunities</Text>
+          {data.opportunities.slice(0, showAllOpportunities ? data.opportunities.length : 3).map((item, index) => <BlockStack key={item.id} gap="200">
+            {index > 0 && <Divider />}
+            <InlineStack align="space-between" blockAlign="center" wrap={false} gap="200">
+              <BlockStack gap="050"><Text as="span" fontWeight="semibold">{item.title}</Text><Text as="span" variant="bodySm" tone="subdued">{item.query || "Page total"} · {item.detail}</Text></BlockStack>
+              <Button size="micro" url={item.pageUrl} target="_blank">Open</Button>
+            </InlineStack>
           </BlockStack>)}
+          {data.opportunities.length > 3 && (
+            <Button variant="plain" onClick={() => setShowAllOpportunities((current) => !current)}>
+              {showAllOpportunities ? "Show less" : `View all opportunities (${data.opportunities.length})`}
+            </Button>
+          )}
         </BlockStack>}
       </BlockStack>
     </Card>
