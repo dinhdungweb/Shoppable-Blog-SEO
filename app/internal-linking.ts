@@ -113,6 +113,10 @@ export function insertApprovedLink(body: string, anchorText: string, targetUrl: 
   return { body: `${body}<p>Related: <a href="${escapedUrl}">${escapedAnchor}</a></p>`, insertedInContext: false };
 }
 
+export function appendApprovedLink(body: string, anchorText: string, targetUrl: string) {
+  return `${body}<p>Related: <a href="${escapeAttribute(targetUrl)}">${escapeHtml(anchorText)}</a></p>`;
+}
+
 export function suggestInternalLinksForDraft(
   source: LinkArticle,
   targets: LinkArticle[],
@@ -199,7 +203,31 @@ function naturalAnchor(sourceBody: string, targetTitle: string) {
   const text = cleanText(sourceBody);
   const phrases = [targetTitle, ...targetTitle.split(/[:|–—-]/).map((part) => part.trim()).filter((part) => part.length >= 4)];
   const match = phrases.find((phrase) => text.toLowerCase().includes(phrase.toLowerCase()));
-  return match || targetTitle.replace(/\s*[|–—-].*$/, "").trim();
+  if (match) return match;
+
+  const titleWords = targetTitle.replace(/\s*[|–—-].*$/, "").trim().split(/\s+/).filter(Boolean);
+  const normalizedSource = normalizeSearchText(text);
+  for (let size = Math.min(7, titleWords.length - 1); size >= 2; size -= 1) {
+    for (let start = 0; start <= titleWords.length - size; start += 1) {
+      const candidate = titleWords.slice(start, start + size).join(" ");
+      const normalizedCandidate = normalizeSearchText(candidate);
+      if (normalizedCandidate.length >= 6 && normalizedSource.includes(normalizedCandidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return titleWords.slice(0, 7).join(" ");
+}
+
+function normalizeSearchText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function keywords(value: string) {

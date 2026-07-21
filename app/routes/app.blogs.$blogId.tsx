@@ -76,6 +76,7 @@ import type { SeoAuditIssue } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
 import {
+  appendApprovedLink,
   insertApprovedLink,
   suggestInternalLinksForDraft,
   type LinkSuggestion,
@@ -131,6 +132,11 @@ type ProductBlockOption = {
   label: string;
   marker: string;
   productCount: number;
+};
+
+type EditorLinkBridge = {
+  getSelection: () => { available: boolean; text: string };
+  insertLink: (targetUrl: string, fallbackText: string) => boolean;
 };
 
 const EDITOR_BLOCK_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote"]);
@@ -1117,6 +1123,10 @@ export default function ArticleDetail() {
   const handledFetcherDataRef = useRef<any>(null);
   const [focusKeyword, setFocusKeyword] = useState(seoData?.focusKeyword || "");
   const [pendingInternalLink, setPendingInternalLink] = useState<LinkSuggestion | null>(null);
+  const [internalLinkAnchor, setInternalLinkAnchor] = useState("");
+  const [internalLinkPlacement, setInternalLinkPlacement] = useState<"selection" | "automatic" | "end">("automatic");
+  const [editorLinkSelection, setEditorLinkSelection] = useState({ available: false, text: "" });
+  const editorLinkBridgeRef = useRef<EditorLinkBridge | null>(null);
 
   const effectiveMetaTitle = metaTitleTouched ? metaTitle || title : title;
 
@@ -1810,6 +1820,9 @@ export default function ArticleDetail() {
                   }}
                   onOpenImagePicker={openEditorImagePicker}
                   onProductBlockInserted={handleProductBlockInserted}
+                  onLinkBridgeReady={(bridge) => {
+                    editorLinkBridgeRef.current = bridge;
+                  }}
                 />
                 
                 <div id="seo-card">
@@ -1932,7 +1945,16 @@ export default function ArticleDetail() {
               />
               <InternalLinkAssistantCard
                 suggestions={internalLinkSuggestions}
-                onReview={setPendingInternalLink}
+                onReview={(suggestion) => {
+                  const selection = editorLinkBridgeRef.current?.getSelection() || {
+                    available: false,
+                    text: "",
+                  };
+                  setEditorLinkSelection(selection);
+                  setInternalLinkPlacement(selection.available ? "selection" : "automatic");
+                  setInternalLinkAnchor(selection.text || suggestion.anchorText);
+                  setPendingInternalLink(suggestion);
+                }}
                 onOpenAssistant={() => navigate("/app/internal-links")}
               />
               <ArticleImageCard
@@ -2023,19 +2045,36 @@ export default function ArticleDetail() {
           content: "Add to draft",
           onAction: () => {
             if (!pendingInternalLink) return;
-            const result = insertApprovedLink(
-              body,
-              pendingInternalLink.anchorText,
-              pendingInternalLink.targetUrl,
-            );
+            if (internalLinkPlacement === "selection") {
+              const inserted = editorLinkBridgeRef.current?.insertLink(
+                pendingInternalLink.targetUrl,
+                internalLinkAnchor.trim() || pendingInternalLink.anchorText,
+              );
+              if (!inserted) {
+                shopify.toast.show("The selected editor position is no longer available. Select text again or use automatic placement.", { isError: true });
+                return;
+              }
+              markDirty();
+              setPendingInternalLink(null);
+              shopify.toast.show("Internal link added at the selected position. Save the post to publish it.");
+              return;
+            }
+
+            if (internalLinkPlacement === "end") {
+              setBody(appendApprovedLink(body, internalLinkAnchor.trim() || pendingInternalLink.anchorText, pendingInternalLink.targetUrl));
+              markDirty();
+              setPendingInternalLink(null);
+              shopify.toast.show("Related link added at the end of the draft. Save the post to publish it.");
+              return;
+            }
+
+            const result = insertApprovedLink(body, internalLinkAnchor.trim() || pendingInternalLink.anchorText, pendingInternalLink.targetUrl);
             setBody(result.body);
             markDirty();
             setPendingInternalLink(null);
-            shopify.toast.show(
-              result.insertedInContext
-                ? "Internal link added to the draft. Save the post to publish it."
-                : "Related link added at the end of the draft. Save the post to publish it.",
-            );
+            shopify.toast.show(result.insertedInContext
+              ? "Internal link added at the suggested anchor. Save the post to publish it."
+              : "Related link added at the end of the draft. Save the post to publish it.");
           },
         }}
         secondaryActions={[{ content: "Cancel", onAction: () => setPendingInternalLink(null) }]}
@@ -2052,10 +2091,32 @@ export default function ArticleDetail() {
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
                     {pendingInternalLink.targetTitle}
                   </Text>
-                  <Text as="p" variant="bodySm">Anchor: “{pendingInternalLink.anchorText}”</Text>
                   <Text as="p" variant="bodySm" tone="subdued">{pendingInternalLink.targetUrl}</Text>
                 </BlockStack>
               </Box>
+              <TextField
+                label="Anchor text"
+                value={internalLinkAnchor}
+                onChange={setInternalLinkAnchor}
+                autoComplete="off"
+                helpText="Use a short, natural phrase that describes the destination page."
+              />
+              <ChoiceList
+                title="Insert position"
+                choices={[
+                  {
+                    label: editorLinkSelection.text
+                      ? `Selected text: “${editorLinkSelection.text.slice(0, 80)}${editorLinkSelection.text.length > 80 ? "…" : ""}”`
+                      : "Current cursor position",
+                    value: "selection",
+                    disabled: !editorLinkSelection.available,
+                  },
+                  { label: "Suggested anchor in the article", value: "automatic" },
+                  { label: "End of article as a related link", value: "end" },
+                ]}
+                selected={[internalLinkPlacement]}
+                onChange={(values) => setInternalLinkPlacement(values[0] as "selection" | "automatic" | "end")}
+              />
             </BlockStack>
           )}
         </Modal.Section>
@@ -2153,6 +2214,7 @@ function ShopifyContentEditor({
   onExcerptChange,
   onOpenImagePicker,
   onProductBlockInserted,
+  onLinkBridgeReady,
 }: {
   title: string;
   body: string;
@@ -2163,6 +2225,7 @@ function ShopifyContentEditor({
   onExcerptChange: (value: string) => void;
   onOpenImagePicker: (insertImage: (image: ShopifyImageFile) => void) => void;
   onProductBlockInserted: (blockId: string) => void;
+  onLinkBridgeReady: (bridge: EditorLinkBridge) => void;
 }) {
   return (
     <BlockStack gap="400">
@@ -2188,6 +2251,7 @@ function ShopifyContentEditor({
               showProductButton
               onOpenImagePicker={onOpenImagePicker}
               onProductBlockInserted={onProductBlockInserted}
+              onLinkBridgeReady={onLinkBridgeReady}
             />
           </BlockStack>
         </BlockStack>
@@ -2475,6 +2539,7 @@ function RichArticleEditor({
   showProductButton = false,
   onOpenImagePicker,
   onProductBlockInserted,
+  onLinkBridgeReady,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -2483,6 +2548,7 @@ function RichArticleEditor({
   showProductButton?: boolean;
   onOpenImagePicker?: (insertImage: (image: ShopifyImageFile) => void) => void;
   onProductBlockInserted?: (blockId: string) => void;
+  onLinkBridgeReady?: (bridge: EditorLinkBridge) => void;
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const lastHtmlRef = useRef("");
@@ -2561,6 +2627,47 @@ function RichArticleEditor({
     },
     [emitChange, restoreSelection, saveSelection],
   );
+
+  const getLinkSelection = useCallback(() => {
+    const editor = editorRef.current;
+    const range = savedSelectionRef.current;
+    if (!editor || !range) return { available: false, text: "" };
+    const container = range.commonAncestorContainer;
+    const node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
+    if (!node || !editor.contains(node)) return { available: false, text: "" };
+    return { available: true, text: range.toString().trim() };
+  }, []);
+
+  const insertLinkAtSelection = useCallback(
+    (targetUrl: string, fallbackText: string) => {
+      const editor = editorRef.current;
+      const range = savedSelectionRef.current;
+      if (!editor || !range) return false;
+      const container = range.commonAncestorContainer;
+      const node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
+      if (!node || !editor.contains(node)) return false;
+
+      restoreSelection();
+      if (range.collapsed) {
+        document.execCommand(
+          "insertHTML",
+          false,
+          `<a href="${escapeAttribute(targetUrl)}">${escapeHtml(fallbackText)}</a>`,
+        );
+      } else {
+        document.execCommand("createLink", false, targetUrl);
+      }
+      emitChange();
+      saveSelection();
+      return true;
+    },
+    [emitChange, restoreSelection, saveSelection],
+  );
+
+  useEffect(() => {
+    if (!onLinkBridgeReady) return;
+    onLinkBridgeReady({ getSelection: getLinkSelection, insertLink: insertLinkAtSelection });
+  }, [getLinkSelection, insertLinkAtSelection, onLinkBridgeReady]);
 
   const runCommand = useCallback(
     (command: string, commandValue?: string) => {

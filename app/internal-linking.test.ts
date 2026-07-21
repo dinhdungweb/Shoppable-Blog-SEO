@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeInternalLinks, insertApprovedLink, suggestInternalLinksForDraft } from "./internal-linking";
+import { analyzeInternalLinks, appendApprovedLink, insertApprovedLink, suggestInternalLinksForDraft } from "./internal-linking";
 
 const articles = [
   { id: "1", title: "Running Shoe Guide", handle: "running-shoes", blogHandle: "news", body: '<p>Read our shoe sizing advice.</p><a href="/blogs/news/shoe-sizing">Sizing</a>' },
@@ -19,6 +19,11 @@ describe("internal linking assistant", () => {
     const result = insertApprovedLink("<p>See our Shoe Sizing Advice today.</p>", "Shoe Sizing Advice", "/blogs/news/shoe-sizing");
     expect(result.insertedInContext).toBe(true);
     expect(result.body).toContain('<a href="/blogs/news/shoe-sizing">Shoe Sizing Advice</a>');
+  });
+
+  it("appends a safe related link when the end position is selected", () => {
+    const body = appendApprovedLink("<p>Article</p>", 'Sizing & fit', '/blogs/news/shoe-sizing');
+    expect(body).toBe('<p>Article</p><p>Related: <a href="/blogs/news/shoe-sizing">Sizing &amp; fit</a></p>');
   });
 
   it("does not report external blog URLs as broken internal links", () => {
@@ -49,5 +54,28 @@ describe("internal linking assistant", () => {
         (suggestion) => suggestion.targetId === "2",
       ),
     ).toBe(false);
+  });
+
+  it("uses a matching draft phrase instead of the complete destination title", () => {
+    const target = {
+      id: "target",
+      title: "Complete Shoe Sizing Advice for Marathon Runners",
+      handle: "complete-shoe-sizing",
+      blogHandle: "news",
+      body: "",
+    };
+    const suggestions = suggestInternalLinksForDraft(
+      {
+        id: "draft",
+        title: "Marathon shoe guide",
+        handle: "draft",
+        blogHandle: "news",
+        body: "<p>Read our shoe sizing advice before choosing a pair.</p>",
+      },
+      [target],
+      5,
+    );
+    expect(suggestions[0]?.anchorText).toBe("Shoe Sizing Advice");
+    expect(suggestions[0]?.anchorText).not.toBe(target.title);
   });
 });
