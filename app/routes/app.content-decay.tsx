@@ -134,7 +134,13 @@ async function fetchArticles(admin: any): Promise<DecayArticle[]> {
   const articles: DecayArticle[] = [];
   let cursor: string | null = null;
   do {
-    const response = await admin.graphql(`#graphql query DecayArticles($after: String) { articles(first: 100, after: $after) { nodes { id title handle body updatedAt publishedAt blog { handle } } pageInfo { hasNextPage endCursor } } }`, { variables: { after: cursor } });
+    const response = await admin.graphql(`#graphql
+      query DecayArticles($after: String) {
+        articles(first: 100, after: $after) {
+          nodes { id title handle body updatedAt publishedAt blog { handle } }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`, { variables: { after: cursor } });
     const result: any = await response.json();
     if (result.errors?.length) throw new Error(result.errors.map((item: any) => item.message).join("; "));
     const connection = result.data?.articles;
@@ -152,12 +158,20 @@ async function fetchProductStates(admin: any, links: Array<{ articleId: string; 
     const ids = uniqueIds.slice(index, index + 50);
     let result: any;
     try {
-      const response = await admin.graphql(`#graphql query DecayProducts($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id status variants(first: 100) { nodes { inventoryPolicy inventoryQuantity } } } } }`, { variables: { ids } });
+      const response = await admin.graphql(`#graphql
+        query DecayProducts($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Product { id status variants(first: 100) { nodes { inventoryPolicy inventoryQuantity } } }
+          }
+        }`, { variables: { ids } });
       result = await response.json();
       if (result.errors?.length) throw new Error(result.errors.map((item: any) => item.message).join("; "));
     } catch {
       inventoryDataAvailable = false;
-      const fallbackResponse = await admin.graphql(`#graphql query DecayProductStatus($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id status } } }`, { variables: { ids } });
+      const fallbackResponse = await admin.graphql(`#graphql
+        query DecayProductStatus($ids: [ID!]!) {
+          nodes(ids: $ids) { ... on Product { id status } }
+        }`, { variables: { ids } });
       result = await fallbackResponse.json();
     }
     if (result.errors?.length) throw new Error(result.errors.map((item: any) => item.message).join("; "));

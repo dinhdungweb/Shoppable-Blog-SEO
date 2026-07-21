@@ -73,7 +73,8 @@ export default function ChangelogPage() {
             {CHANGELOG_RELEASES.map((release, index) => {
               const isOpen = openVersions.has(release.version);
               const showAll = expandedVersions.has(release.version);
-              const visibleChanges = showAll ? release.changes : release.changes.slice(0, INITIAL_CHANGE_COUNT);
+              const newestChangesFirst = [...release.changes].reverse();
+              const visibleChanges = showAll ? newestChangesFirst : newestChangesFirst.slice(0, INITIAL_CHANGE_COUNT);
               const hiddenCount = release.changes.length - visibleChanges.length;
 
               return (

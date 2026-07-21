@@ -57,6 +57,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Content decay checks use Shopify product inventory policies and Search Console comparison periods, while keeping all article changes review-only." },
       { type: "Fixed", text: "Content Decay falls back to Shopify product status when an installed shop has not granted inventory access, instead of failing the full analysis." },
       { type: "Improved", text: "The app now requests read-only Shopify inventory access so Content Decay can distinguish genuinely out-of-stock products while respecting continue-selling policies." },
+      { type: "Fixed", text: "Content Decay Shopify queries now use valid GraphQL document formatting instead of failing with an unexpected end-of-file parser error." },
     ],
   },
   {
