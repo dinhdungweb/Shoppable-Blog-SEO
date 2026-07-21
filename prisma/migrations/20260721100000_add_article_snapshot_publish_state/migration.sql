@@ -1,0 +1,1 @@
+ALTER TABLE "ArticleSEO" ADD COLUMN "publishedAt" TIMESTAMP(3);

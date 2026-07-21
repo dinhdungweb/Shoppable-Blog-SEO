@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import { useEffect } from "react";
 import {
   Badge,
@@ -105,7 +105,8 @@ const RECOMMENDED_ICON_MAP = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session, billing } = await authenticate.admin(request);
+  const startedAt = Date.now();
+  const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
 
   // Resolve plan limits to determine the analytics window
@@ -116,93 +117,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const currentStart = startOfDay(new Date(now.getTime() - (windowDays - 1) * DAY_MS));
   const previousStart = startOfDay(new Date(now.getTime() - (windowDays * 2 - 1) * DAY_MS));
 
-  let blogs: any[] = [];
-  let shopifyArticles: any[] = [];
-  let shopifyError = "";
-
-  try {
-    const response = await admin.graphql(
-      `#graphql
-      query OverviewBlogs {
-        blogs(first: 50) {
-          nodes {
-            id
-            title
-            handle
-            articles(first: 100) {
-              nodes {
-                id
-                title
-                handle
-                publishedAt
-                image {
-                  url
-                  altText
-                }
-                blog {
-                  id
-                  title
-                  handle
-                }
-              }
-            }
-          }
-        }
-      }`,
-    );
-    const result: any = await response.json();
-
-    if (result.errors?.length) {
-      console.error("Overview Shopify query error:", result.errors);
-      shopifyError = "Could not load Shopify blog posts.";
-    } else {
-      blogs = result.data?.blogs?.nodes || [];
-      shopifyArticles = blogs.flatMap((blog: any) =>
-        (blog.articles?.nodes || []).map((article: any) => ({
-          ...article,
-          blog: article.blog || {
-            id: blog.id,
-            title: blog.title,
-            handle: blog.handle,
-          },
-        })),
-      );
-    }
-  } catch (error: any) {
-    if (error?.message?.includes("Missing access token")) {
-      return json({ needsRevalidation: true });
-    }
-    console.error("Overview Shopify query failed:", error);
-    shopifyError = "Could not load Shopify blog posts.";
-  }
-
-  const baseArticles = shopifyArticles.map((article: any) => ({
-    id: article.id,
-    title: article.title || "Untitled post",
-    handle: article.handle || "",
-    image: article.image?.url || "",
-    imageAlt: article.image?.altText || "",
-    publishedAt: article.publishedAt || null,
-    updatedAt: article.updatedAt || article.publishedAt || null,
-    seoTitle: "",
-    seoDescription: "",
-    blogId: article.blog?.id || "",
-    blogTitle: article.blog?.title || "Blog",
-    blogHandle: article.blog?.handle || "",
-  }));
+  const shopifyError = "";
+  let baseArticles: any[] = [];
 
   const [
-    ,
     linkedProducts,
     seoRows,
     allEvents,
     everEventCount,
   ] = await Promise.all([
-    prisma.shopConfig.upsert({
-      where: { shop },
-      update: {},
-      create: { shop },
-    }),
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
       select: {
@@ -218,124 +141,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
     prisma.articleSEO.findMany({
       where: { shop },
-      select: { articleId: true, articleTitle: true, seoScore: true, metaDescription: true },
+      select: { articleId: true, articleTitle: true, seoScore: true, metaDescription: true, metaTitle: true, articleHandle: true, imageUrl: true, imageAlt: true, blogTitle: true, blogHandle: true, sourceUpdatedAt: true, publishedAt: true },
     }),
-    prisma.widgetEvent.findMany({
-      where: { shop, createdAt: { gte: previousStart } },
-      select: {
-        articleId: true,
-        productId: true,
-        eventType: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: "asc" },
-    }),
+    prisma.$queryRaw<Array<{ articleId: string; productId: string; eventType: string; createdAt: Date; count: number }>>`
+      SELECT "articleId", "productId", "eventType", date_trunc('day', "createdAt") AS "createdAt", COUNT(*)::int AS "count"
+      FROM "WidgetEvent"
+      WHERE "shop" = ${shop} AND "createdAt" >= ${previousStart}
+      GROUP BY "articleId", "productId", "eventType", date_trunc('day', "createdAt")
+      ORDER BY "createdAt" ASC
+    `,
     prisma.widgetEvent.count({ where: { shop } }),
   ]);
 
-  let appEmbedEnabled = false;
-  let appEmbedError = "";
-  try {
-    const themesResponse = await fetch(`https://${session.shop}/admin/api/2025-01/themes.json`, {
-      headers: { "X-Shopify-Access-Token": session.accessToken || "" }
-    });
-    const themesResult = await themesResponse.json();
-    const mainTheme = themesResult.themes?.find((t: any) => t.role === "main");
+  baseArticles = seoRows.map((row) => ({ id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle,
+    image: row.imageUrl, imageAlt: row.imageAlt, publishedAt: row.publishedAt?.toISOString() || null,
+    updatedAt: row.sourceUpdatedAt?.toISOString() || null, seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
+    blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle }));
 
-    if (mainTheme) {
-      const assetResponse = await fetch(`https://${session.shop}/admin/api/2025-01/themes/${mainTheme.id}/assets.json?asset[key]=config/settings_data.json`, {
-        headers: { "X-Shopify-Access-Token": session.accessToken || "" }
-      });
-      const assetResult = await assetResponse.json();
-      if (assetResult.asset?.value) {
-        const settingsData = JSON.parse(assetResult.asset.value);
-        const blocks = settingsData?.current?.blocks || {};
-        for (const blockId in blocks) {
-          const block = blocks[blockId];
-          if (block.type && block.type.includes("sbs-article-embed")) {
-            if (String(block.disabled) !== "true") {
-              appEmbedEnabled = true;
-              break;
-            }
-          }
-        }
-      } else {
-         appEmbedError = "No asset value found in response";
-      }
-    } else {
-       appEmbedError = "No main theme found";
-    }
-  } catch (error: any) {
-    console.error("Failed to check app embed status:", error);
-    appEmbedError = error?.message || String(error);
-    appEmbedEnabled = false;
-  }
-
-  let webPixelEnabled = false;
-  let webPixelError = "";
-  
-  try {
-    // 1. Check if it exists
-    let exists = false;
-    try {
-      const pixelCheckResponse = await admin.graphql(
-        `#graphql
-        query {
-          webPixel {
-            id
-          }
-        }`
-      );
-      const pixelCheckResult: any = await pixelCheckResponse.json();
-      if (pixelCheckResult.data?.webPixel?.id) {
-        exists = true;
-      }
-    } catch (checkError: any) {
-      // admin.graphql throws if response has GraphQL errors (e.g. "No web pixel was found")
-      console.log("Pixel check error (likely not found):", checkError.message);
-    }
-    
-    if (exists) {
-      webPixelEnabled = true;
-    } else {
-      // 2. Create it since it doesn't exist
-      const pixelCreateResponse = await admin.graphql(
-        `#graphql
-        mutation webPixelCreate($webPixel: WebPixelInput!) {
-          webPixelCreate(webPixel: $webPixel) {
-            webPixel {
-              id
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }`,
-        {
-          variables: {
-            webPixel: {
-              settings: JSON.stringify({ accountID: shop })
-            }
-          }
-        }
-      );
-      const pixelCreateResult: any = await pixelCreateResponse.json();
-      if (pixelCreateResult.data?.webPixelCreate?.userErrors?.length > 0) {
-        console.error("Web pixel creation errors:", pixelCreateResult.data.webPixelCreate.userErrors);
-        webPixelError = pixelCreateResult.data.webPixelCreate.userErrors.map((e: any) => e.message).join(", ");
-      } else if (pixelCreateResult.errors?.length > 0) {
-        console.error("GraphQL errors:", pixelCreateResult.errors);
-        webPixelError = pixelCreateResult.errors.map((e: any) => e.message).join(", ");
-      } else {
-        webPixelEnabled = true;
-      }
-    }
-  } catch (error: any) {
-    console.error("Failed to check/create web pixel:", error);
-    webPixelError = error?.message || String(error);
-    webPixelEnabled = false;
-  }
+  // Slow theme and pixel checks are loaded after the dashboard renders.
+  const appEmbedEnabled = false;
+  const appEmbedError = "Checking…";
+  const webPixelEnabled = false;
+  const webPixelError = "Checking…";
 
   const productCountMap = new Map<string, number>();
   const productPriceMap = new Map<string, number>();
@@ -420,7 +247,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     })
     .sort((a, b) => getTimeValue(b.updatedAt || b.publishedAt) - getTimeValue(a.updatedAt || a.publishedAt));
 
-  const publishedArticles = articles.filter((article) => Boolean(article.publishedAt));
+  const hasPublishStateSnapshot = articles.some((article) => Boolean(article.publishedAt));
+  const publishedArticles = hasPublishStateSnapshot ? articles.filter((article) => Boolean(article.publishedAt)) : articles;
   const shoppablePublishedCount = publishedArticles.filter((article) => article.productCount > 0).length;
   const missingMetaDescriptions = articles.filter((article) => !article.seoDescription).length;
   const noLinkedProducts = articles.filter((article) => article.productCount === 0).length;
@@ -438,7 +266,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 
   const setupItems: SetupItem[] = [
-    { label: "Blog connected", done: blogs.length > 0 },
+    { label: "Blog connected", done: baseArticles.length > 0 },
     { 
       label: "App enabled in theme", 
       done: appEmbedEnabled,
@@ -462,6 +290,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     lowCtrPosts,
     everEventCount,
   });
+  console.info("Dashboard loader timing", { shop, articles: articles.length, events: allEvents.length, durationMs: Date.now() - startedAt });
 
   return json({
     shop,
@@ -499,6 +328,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function Dashboard() {
   const data = useLoaderData<any>();
+  const setupFetcher = useFetcher<any>();
   const navigate = useNavigate();
   const revalidator = useRevalidator();
 
@@ -507,6 +337,10 @@ export default function Dashboard() {
       revalidator.revalidate();
     }
   }, [data, revalidator]);
+
+  useEffect(() => {
+    if (setupFetcher.state === "idle" && !setupFetcher.data) setupFetcher.load("/app/dashboard-status");
+  }, [setupFetcher]);
 
   if (data?.needsRevalidation) {
     return (
@@ -535,10 +369,11 @@ export default function Dashboard() {
     topAddToCartProducts,
     topPurchasedProducts,
     counts,
-    setup,
+    setup: initialSetup,
     recentPosts,
     recommendedActions,
   } = data;
+  const setup = mergeSetupStatus(initialSetup, setupFetcher.data);
 
   const productCtr = getCtr(metrics.clicks, metrics.impressions);
 
@@ -1214,12 +1049,23 @@ function buildRecommendedActions({
   return actions;
 }
 
-function getMetrics(events: Array<{ articleId: string; productId: string; eventType: string }>, priceMap: Map<string, number>) {
+function mergeSetupStatus(setup: any, status: any) {
+  if (!status || status.error) return setup;
+  const items = setup.items.map((item: any) => {
+    if (item.label === "App enabled in theme") return { ...item, done: Boolean(status.appEmbedEnabled), actionLabel: status.appEmbedError || (status.appEmbedEnabled ? undefined : "Enable") };
+    if (item.label === "Conversion tracking (Web Pixel) active") return { ...item, done: Boolean(status.webPixelEnabled), actionLabel: status.webPixelError || undefined };
+    return item;
+  });
+  const done = items.filter((item: any) => item.done).length;
+  return { ...setup, items, done, progress: Math.round((done / items.length) * 100) };
+}
+
+function getMetrics(events: Array<{ articleId: string; productId: string; eventType: string; count?: number }>, priceMap: Map<string, number>) {
   return events.reduce((acc, event) => addEventToMetrics(acc, event, priceMap), emptyMetrics());
 }
 
 function getArticleMetricsMap(
-  events: Array<{ articleId: string; productId: string; eventType: string }>,
+  events: Array<{ articleId: string; productId: string; eventType: string; count?: number }>,
   priceMap: Map<string, number>,
 ) {
   const map = new Map<string, PeriodMetrics>();
@@ -1233,7 +1079,7 @@ function getArticleMetricsMap(
 }
 
 function buildDashboardProductRows(
-  events: Array<{ articleId: string; productId: string; eventType: string }>,
+  events: Array<{ articleId: string; productId: string; eventType: string; count?: number }>,
   priceMap: Map<string, number>,
   productInfoMap: Map<string, { title: string; image: string; price: number }>,
 ) {
@@ -1283,14 +1129,15 @@ function sortDashboardProductRows(products: DashboardProduct[], metricKey: "addT
 
 function addEventToMetrics(
   metrics: PeriodMetrics,
-  event: { articleId: string; productId: string; eventType: string },
+  event: { articleId: string; productId: string; eventType: string; count?: number },
   priceMap: Map<string, number>,
 ) {
-  if (event.eventType === "impression") metrics.impressions += 1;
-  if (event.eventType === "click") metrics.clicks += 1;
-  if (event.eventType === "add_to_cart") metrics.addToCarts += 1;
+  const count = event.count || 1;
+  if (event.eventType === "impression") metrics.impressions += count;
+  if (event.eventType === "click") metrics.clicks += count;
+  if (event.eventType === "add_to_cart") metrics.addToCarts += count;
   if (event.eventType === "purchase" || event.eventType === "order") {
-    metrics.purchases += 1;
+    metrics.purchases += count;
     
     let normalizedProductId = event.productId;
     if (normalizedProductId && /^\d+$/.test(normalizedProductId)) {
@@ -1299,7 +1146,7 @@ function addEventToMetrics(
       normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
     }
     
-    metrics.revenue += priceMap.get(`${event.articleId}:${normalizedProductId}`) || 0;
+    metrics.revenue += (priceMap.get(`${event.articleId}:${normalizedProductId}`) || 0) * count;
   }
 
   return metrics;
@@ -1312,7 +1159,7 @@ function normalizeProductId(value: string) {
 }
 
 function buildChartData(
-  events: Array<{ articleId: string; productId: string; eventType: string; createdAt: Date }>,
+  events: Array<{ articleId: string; productId: string; eventType: string; createdAt: Date; count?: number }>,
   priceMap: Map<string, number>,
   start: Date,
   end: Date,

@@ -99,7 +99,8 @@ const INSIGHT_ICON_MAP = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session, billing } = await authenticate.admin(request);
+  const startedAt = Date.now();
+  const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const { limits } = await getActivePlanAndLimits(billing);
   const windowDays = limits.analyticsWindowDays;
@@ -107,62 +108,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const now = new Date();
   const currentStart = startOfDay(new Date(now.getTime() - (windowDays - 1) * DAY_MS));
   const previousStart = startOfDay(new Date(now.getTime() - (windowDays * 2 - 1) * DAY_MS));
-  let shopifyError = "";
+  const shopifyError = "";
   let articleSources: ArticleSource[] = [];
-
-  try {
-    const response = await admin.graphql(
-      `#graphql
-      query AnalyticsBlogs {
-        blogs(first: 50) {
-          nodes {
-            id
-            title
-            handle
-            articles(first: 100) {
-              nodes {
-                id
-                title
-                handle
-                image {
-                  url
-                  altText
-                }
-                blog {
-                  id
-                  title
-                  handle
-                }
-              }
-            }
-          }
-        }
-      }`,
-    );
-    const result: any = await response.json();
-
-    if (result.errors?.length) {
-      console.error("Analytics Shopify query error:", result.errors);
-      shopifyError = "Could not load Shopify blog posts.";
-    } else {
-      const blogs = result.data?.blogs?.nodes || [];
-      articleSources = blogs.flatMap((blog: any) =>
-        (blog.articles?.nodes || []).map((article: any) => ({
-          id: article.id,
-          title: article.title || "Untitled post",
-          handle: article.handle || "",
-          image: article.image?.url || "",
-          imageAlt: article.image?.altText || "",
-          blogId: article.blog?.id || blog.id,
-          blogTitle: article.blog?.title || blog.title || "Blog",
-          blogHandle: article.blog?.handle || blog.handle || "",
-        })),
-      );
-    }
-  } catch (error) {
-    console.error("Analytics Shopify query failed:", error);
-    shopifyError = "Could not load Shopify blog posts.";
-  }
 
   const [linkedProducts, seoRows, events] = await Promise.all([
     prisma.articleProduct.findMany({
@@ -184,6 +131,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         articleId: true,
         articleTitle: true,
         seoScore: true,
+        articleHandle: true,
+        imageUrl: true,
+        imageAlt: true,
+        blogTitle: true,
+        blogHandle: true,
       },
     }),
     prisma.widgetEvent.findMany({
@@ -199,6 +151,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       orderBy: { createdAt: "asc" },
     }),
   ]);
+
+  articleSources = seoRows.map((row) => ({ id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle,
+    image: row.imageUrl, imageAlt: row.imageAlt, blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle }));
 
   const productCountMap = new Map<string, number>();
   const priceMap = new Map<string, number>();
@@ -286,6 +241,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     topClickedProducts,
     insights,
   });
+  console.info("Analytics loader timing", { shop, articles: articleSourceMap.size, events: events.length, durationMs: Date.now() - startedAt });
 };
 
 export default function Analytics() {

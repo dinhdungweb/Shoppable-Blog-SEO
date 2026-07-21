@@ -22,6 +22,9 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Search Console insights load bounded opportunity rows and database aggregates instead of every query row." },
       { type: "Improved", text: "A lightweight CSS issue chart replaces the larger chart dependency on SEO Optimizer." },
       { type: "Fixed", text: "Internal-link lookup and related-post scoring scale more efficiently for large blog libraries." },
+      { type: "Improved", text: "Dashboard and Analytics now reuse the saved article snapshot instead of downloading the same Shopify article list again." },
+      { type: "Improved", text: "Dashboard event metrics are aggregated by day in PostgreSQL before they reach the application." },
+      { type: "Improved", text: "Theme and Web Pixel status checks load after the Dashboard renders and no longer create resources during a page view." },
     ],
   },
   {

@@ -58,6 +58,7 @@ type ArticleInput = {
   imageUrl: string;
   imageAlt: string;
   updatedAt: string;
+  publishedAt: string | null;
   seoTitle: string;
   seoDescription: string;
   blogId: string;
@@ -203,7 +204,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const searchData = await loadSearchConsoleMetrics(shop, Boolean(searchConnection));
   const searchMetrics = searchData.metrics;
   const auditedPosts: AuditedPost[] = seoRows.map((row) => ({
-    id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "",
+    id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "", publishedAt: null,
     imageUrl: row.imageUrl, imageAlt: row.imageAlt, updatedAt: "", seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
     blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle, authorName: "", productCount: 0,
     score: row.seoScore, issues: parseStoredIssues(row.issues), effectiveSeoTitle: row.metaTitle || row.articleTitle,
@@ -376,6 +377,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           imageUrl: article.imageUrl,
           imageAlt: article.imageAlt,
           sourceUpdatedAt: article.updatedAt ? new Date(article.updatedAt) : null,
+          publishedAt: article.publishedAt ? new Date(article.publishedAt) : null,
           contentHash: contentHashMap.get(article.id),
           auditVersion: SEO_AUDIT_VERSION,
         },
@@ -395,6 +397,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           imageUrl: article.imageUrl,
           imageAlt: article.imageAlt,
           sourceUpdatedAt: article.updatedAt ? new Date(article.updatedAt) : null,
+          publishedAt: article.publishedAt ? new Date(article.publishedAt) : null,
           contentHash: contentHashMap.get(article.id),
           auditVersion: SEO_AUDIT_VERSION,
         },
@@ -915,7 +918,7 @@ async function fetchShopifyArticles(admin: any): Promise<ArticleInput[]> {
     const response = await admin.graphql(`#graphql
       query SeoArticles($after: String) {
         articles(first: 100, after: $after, sortKey: UPDATED_AT) {
-          nodes { id title handle updatedAt author { name } body summary image { url altText }
+          nodes { id title handle updatedAt publishedAt author { name } body summary image { url altText }
             seoTitle: metafield(namespace: "global", key: "title_tag") { value }
             seoDescription: metafield(namespace: "global", key: "description_tag") { value }
             blog { id title handle }
@@ -936,6 +939,7 @@ async function fetchShopifyArticles(admin: any): Promise<ArticleInput[]> {
       imageUrl: article.image?.url || "",
       imageAlt: article.image?.altText || "",
       updatedAt: article.updatedAt || "",
+      publishedAt: article.publishedAt || null,
       seoTitle: article.seoTitle?.value || "",
       seoDescription: article.seoDescription?.value || "",
       blogId: article.blog?.id || "",
@@ -1911,7 +1915,7 @@ function cleanText(value: unknown) {
 
 function getSeoContentHash(article: ArticleInput, productCount: number, config: SeoAuditConfig) {
   return crypto.createHash("sha256").update(JSON.stringify({
-    title: article.title, handle: article.handle, body: article.body, summary: article.summary,
+    title: article.title, handle: article.handle, body: article.body, summary: article.summary, publishedAt: article.publishedAt,
     imageUrl: article.imageUrl, imageAlt: article.imageAlt, seoTitle: article.seoTitle,
     seoDescription: article.seoDescription, authorName: article.authorName, productCount,
     config: { addBlogSchema: config.addBlogSchema, addProductSchema: config.addProductSchema, canContentNavigation: config.canContentNavigation, tocEnabled: config.tocEnabled, tocAutoInsertEnabled: config.tocAutoInsertEnabled },
