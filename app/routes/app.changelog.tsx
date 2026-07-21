@@ -1,6 +1,15 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { useState } from "react";
-import { Badge, BlockStack, Box, Button, Card, InlineStack, Page, Text } from "@shopify/polaris";
+import { Badge, BlockStack, Box, Button, Card, Icon, InlineStack, Page, Text } from "@shopify/polaris";
+import {
+  CalendarIcon,
+  CheckCircleIcon,
+  ChevronDownIcon,
+  ListBulletedIcon,
+  MagicIcon,
+  NoteIcon,
+  ArrowUpIcon,
+} from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { CHANGELOG_RELEASES, type ChangelogRelease } from "../changelog";
@@ -43,6 +52,7 @@ export default function ChangelogPage() {
           <div className="bp-changelog-hero">
             <BlockStack gap="200">
               <InlineStack gap="200" blockAlign="center">
+                <span className="bp-changelog-heading-icon"><Icon source={NoteIcon} tone="info" /></span>
                 <Text as="h2" variant="headingLg">Product updates</Text>
                 <Badge tone="new">{`Latest v${CHANGELOG_RELEASES[0]?.version}`}</Badge>
               </InlineStack>
@@ -51,9 +61,9 @@ export default function ChangelogPage() {
               </Text>
             </BlockStack>
             <div className="bp-changelog-stats" aria-label="Changelog summary">
-              <SummaryStat value={CHANGELOG_RELEASES.length} label="Releases" />
-              <SummaryStat value={changeCount} label="Updates" />
-              <SummaryStat value={formatShortDate(CHANGELOG_RELEASES[0]?.date)} label="Latest release" />
+              <SummaryStat icon={NoteIcon} value={CHANGELOG_RELEASES.length} label="Releases" />
+              <SummaryStat icon={ListBulletedIcon} value={changeCount} label="Updates" />
+              <SummaryStat icon={CalendarIcon} value={formatShortDate(CHANGELOG_RELEASES[0]?.date)} label="Latest release" />
             </div>
           </div>
         </Card>
@@ -88,7 +98,9 @@ export default function ChangelogPage() {
                     <span className="bp-release-tags">
                       {release.tags.map((tag) => <Badge key={tag} tone={tone(tag)}>{tag}</Badge>)}
                     </span>
-                    <span className="bp-release-chevron" aria-hidden="true">⌄</span>
+                    <span className="bp-release-chevron" aria-hidden="true">
+                      <Icon source={ChevronDownIcon} tone="subdued" />
+                    </span>
                   </button>
 
                   {isOpen && (
@@ -120,9 +132,9 @@ export default function ChangelogPage() {
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">How to read updates</Text>
-                <Legend badge="New" text="New capabilities available in the app." />
-                <Legend badge="Improved" text="Existing workflows made faster or clearer." />
-                <Legend badge="Fixed" text="Bugs and reliability issues resolved." />
+                <Legend icon={MagicIcon} badge="New" text="New capabilities available in the app." />
+                <Legend icon={ArrowUpIcon} badge="Improved" text="Existing workflows made faster or clearer." />
+                <Legend icon={CheckCircleIcon} badge="Fixed" text="Bugs and reliability issues resolved." />
                 <Box borderBlockStartWidth="025" borderColor="border" paddingBlockStart="300">
                   <Text as="p" variant="bodySm" tone="subdued">
                     Need help? Include the release version when contacting support.
@@ -137,22 +149,33 @@ export default function ChangelogPage() {
   );
 }
 
-function SummaryStat({ value, label }: { value: string | number; label: string }) {
+function SummaryStat({ icon, value, label }: { icon: typeof NoteIcon; value: string | number; label: string }) {
   return (
     <div className="bp-changelog-stat">
-      <Text as="strong" variant="headingMd">{value}</Text>
-      <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+      <span className="bp-changelog-stat-icon"><Icon source={icon} tone="info" /></span>
+      <span className="bp-changelog-stat-copy">
+        <Text as="strong" variant="headingMd">{value}</Text>
+        <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+      </span>
     </div>
   );
 }
 
-function Legend({ badge, text }: { badge: ChangelogRelease["tags"][number]; text: string }) {
+function Legend({ icon, badge, text }: { icon: typeof NoteIcon; badge: ChangelogRelease["tags"][number]; text: string }) {
   return (
     <div className="bp-changelog-legend">
-      <Badge tone={tone(badge)}>{badge}</Badge>
-      <Text as="p" variant="bodySm" tone="subdued">{text}</Text>
+      <span className="bp-changelog-legend-icon"><Icon source={icon} tone={iconTone(badge)} /></span>
+      <span>
+        <Badge tone={tone(badge)}>{badge}</Badge>
+        <span className="bp-changelog-legend-text"><Text as="span" variant="bodySm" tone="subdued">{text}</Text></span>
+      </span>
     </div>
   );
+}
+
+function iconTone(type: "New" | "Improved" | "Fixed") {
+  if (type === "Fixed") return "success" as const;
+  return "info" as const;
 }
 
 function tone(type: "New" | "Improved" | "Fixed") {
@@ -175,8 +198,11 @@ export function links() {
     rel: "stylesheet",
     href: `data:text/css,${encodeURIComponent(`
       .bp-changelog-hero { display: flex; align-items: center; justify-content: space-between; gap: 32px; }
+      .bp-changelog-heading-icon { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 8px; background: var(--p-color-bg-surface-info); }
       .bp-changelog-stats { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); }
-      .bp-changelog-stat { display: flex; flex-direction: column; gap: 2px; min-width: 120px; padding: 4px 24px; border-left: 1px solid var(--p-color-border-secondary); }
+      .bp-changelog-stat { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 8px; min-width: 120px; padding: 4px 24px; border-left: 1px solid var(--p-color-border-secondary); }
+      .bp-changelog-stat-icon { display: flex; }
+      .bp-changelog-stat-copy { display: flex; flex-direction: column; gap: 2px; }
       .bp-changelog-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; align-items: start; gap: 20px; }
       .bp-changelog-list { position: relative; display: flex; flex-direction: column; gap: 12px; }
       .bp-changelog-list::before { content: ''; position: absolute; top: 26px; bottom: 26px; left: 23px; width: 2px; background: var(--p-color-border-secondary); }
@@ -190,14 +216,16 @@ export function links() {
       .bp-release-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
       .bp-release-meta { color: var(--p-color-text-secondary); font-size: 12px; }
       .bp-release-tags { display: flex; justify-content: flex-end; gap: 6px; }
-      .bp-release-chevron { font-size: 20px; line-height: 1; transition: transform 150ms ease; }
+      .bp-release-chevron { display: flex; transition: transform 150ms ease; }
       .bp-release--open .bp-release-chevron { transform: rotate(180deg); }
       .bp-release-body { padding: 0 20px 18px 47px; }
       .bp-change-list { display: flex; flex-direction: column; margin-top: 14px; border-top: 1px solid var(--p-color-border-secondary); }
       .bp-change-row { display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: start; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--p-color-border-secondary); }
       .bp-release-more { padding-top: 10px; text-align: center; }
       .bp-changelog-aside { position: sticky; top: 16px; }
-      .bp-changelog-legend { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: start; gap: 8px; }
+      .bp-changelog-legend { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; gap: 8px; }
+      .bp-changelog-legend-icon { display: flex; padding-top: 1px; }
+      .bp-changelog-legend-text { display: block; margin-top: 5px; }
       @media (max-width: 900px) {
         .bp-changelog-hero { align-items: flex-start; flex-direction: column; }
         .bp-changelog-stats { width: 100%; }
