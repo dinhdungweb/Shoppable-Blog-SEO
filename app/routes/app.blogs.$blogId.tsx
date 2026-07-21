@@ -584,6 +584,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           shop,
           articleTitle: title,
           seoScore: audit.score,
+          baseSeoScore: audit.score,
+          contentHash: null,
+          auditVersion: 0,
           metaTitle,
           metaDescription,
           focusKeyword,
@@ -595,6 +598,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           articleId: article.id,
           articleTitle: title,
           seoScore: audit.score,
+          baseSeoScore: audit.score,
+          contentHash: null,
+          auditVersion: 0,
           metaTitle,
           metaDescription,
           focusKeyword,
@@ -717,6 +723,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         shop,
         articleTitle: title,
         seoScore: audit.score,
+        baseSeoScore: audit.score,
+        contentHash: null,
+        auditVersion: 0,
         metaTitle,
         metaDescription,
         focusKeyword,
@@ -728,6 +737,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         articleId,
         articleTitle: title,
         seoScore: audit.score,
+        baseSeoScore: audit.score,
+        contentHash: null,
+        auditVersion: 0,
         metaTitle,
         metaDescription,
         focusKeyword,
@@ -913,6 +925,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         shop,
         articleTitle: cleanString(formData.get("articleTitle")),
         seoScore: audit.score,
+        baseSeoScore: audit.score,
+        contentHash: null,
+        auditVersion: 0,
         metaTitle: cleanString(formData.get("metaTitle")),
         metaDescription: cleanString(formData.get("metaDescription")),
         focusKeyword,
@@ -924,6 +939,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         articleId,
         articleTitle: cleanString(formData.get("articleTitle")),
         seoScore: audit.score,
+        baseSeoScore: audit.score,
+        contentHash: null,
+        auditVersion: 0,
         metaTitle: cleanString(formData.get("metaTitle")),
         metaDescription: cleanString(formData.get("metaDescription")),
         focusKeyword,
@@ -988,6 +1006,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         shop,
         articleTitle,
         seoScore: audit.score,
+        baseSeoScore: audit.score,
+        contentHash: null,
+        auditVersion: 0,
         metaTitle: suggestedTitle,
         metaDescription: suggestedDescription,
         focusKeyword,
@@ -999,6 +1020,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         articleId,
         articleTitle,
         seoScore: audit.score,
+        baseSeoScore: audit.score,
+        contentHash: null,
+        auditVersion: 0,
         metaTitle: suggestedTitle,
         metaDescription: suggestedDescription,
         focusKeyword,
@@ -1751,7 +1775,7 @@ export default function ArticleDetail() {
           </InlineStack>
         </div>
 
-        <InlineGrid columns={{ xs: 1, sm: 2, md: 5 }} gap="400">
+        <InlineGrid columns={{ xs: 1, sm: 2, md: 6 }} gap="400">
           <MetricCard
             title="Status"
             value={isVisible ? "Published" : "Draft"}
@@ -1759,12 +1783,20 @@ export default function ArticleDetail() {
             icon={ViewIcon}
           />
           <MetricCard
-            title="SEO score"
+            title={`On-page score (${isDirty ? "Draft" : "Saved"})`}
             value={String(seoScore)}
             suffix="/100"
             tone={seoScore >= 80 ? "success" : seoScore >= 60 ? "warning" : "critical"}
             icon={SortIcon}
             progress={seoScore}
+          />
+          <MetricCard
+            title="Site-adjusted (Last scan)"
+            value={seoData ? String(seoData.seoScore) : "—"}
+            suffix={seoData ? "/100" : undefined}
+            tone={!seoData ? "info" : seoData.seoScore >= 80 ? "success" : seoData.seoScore >= 60 ? "warning" : "critical"}
+            icon={DataTableIcon}
+            progress={seoData ? seoData.seoScore : undefined}
           />
           <MetricCard
             title="Products linked"

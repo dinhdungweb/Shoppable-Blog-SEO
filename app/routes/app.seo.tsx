@@ -92,6 +92,7 @@ type SeoIssue = {
 type AuditedPost = ArticleInput & {
   productCount: number;
   score: number;
+  baseScore: number;
   issues: SeoIssue[];
   lastAnalyzedAt: string | null;
   effectiveSeoTitle: string;
@@ -132,7 +133,7 @@ const DONUT_COLORS = {
   Medium: "#FFC453",
   Low: "#29845A",
 };
-const SEO_AUDIT_VERSION = 2;
+const SEO_AUDIT_VERSION = 3;
 const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "orphan_article", "near_duplicate_content"]);
 
 function safeTokenEqual(supplied: string, expected: string) {
@@ -197,6 +198,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         articleId: true,
         articleTitle: true,
         seoScore: true,
+        baseSeoScore: true,
+        auditVersion: true,
         metaTitle: true,
         metaDescription: true,
         focusKeyword: true,
@@ -222,7 +225,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "", publishedAt: null,
     imageUrl: row.imageUrl, imageAlt: row.imageAlt, updatedAt: "", seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
     blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle, authorName: "", productCount: 0,
-    score: row.seoScore, issues: parseStoredIssues(row.issues), effectiveSeoTitle: row.metaTitle || row.articleTitle,
+    score: row.seoScore, baseScore: row.auditVersion >= SEO_AUDIT_VERSION ? row.baseSeoScore : row.seoScore, issues: parseStoredIssues(row.issues), effectiveSeoTitle: row.metaTitle || row.articleTitle,
     effectiveSeoDescription: row.metaDescription || "", focusKeyword: row.focusKeyword || "",
     lastAnalyzedAt: row.lastAnalyzedAt?.toISOString() || null,
   }));
@@ -231,6 +234,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const issueGroups = buildIssueGroups(auditedPosts);
   const issueStats = getIssueStats(issueGroups);
   const averageScore = getAverageScore(auditedPosts);
+  const averageOnPageScore = getAverageScore(auditedPosts.map((post) => ({ score: post.baseScore })));
   const lastScanAt = seoRows.reduce<Date | null>((latest, row) => {
     if (!row.lastAnalyzedAt) return latest;
     if (!latest || row.lastAnalyzedAt > latest) return row.lastAnalyzedAt;
@@ -244,6 +248,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     shopifyError: "",
     averageScore,
+    averageOnPageScore,
     issueGroups,
     issueStats,
     affectedPosts: auditedPosts.filter((post) => post.issues.length > 0).length,
@@ -258,7 +263,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       averageScore: scanJob.averageScore, error: getPublicSeoScanError(scanJob.error),
       requestedAt: scanJob.requestedAt.toISOString(), completedAt: scanJob.completedAt?.toISOString() || null,
     } : null,
-    postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6).map((post) => ({ id: post.id, title: post.title, imageUrl: post.imageUrl, imageAlt: post.imageAlt, score: post.score })),
+    postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6).map((post) => ({ id: post.id, title: post.title, imageUrl: post.imageUrl, imageAlt: post.imageAlt, score: post.score, baseScore: post.baseScore })),
     searchConsole: {
       configured: isSearchConsoleConfigured(), connected: Boolean(searchConnection), selectedSiteUrl: searchConnection?.selectedSiteUrl || "",
       availableSites, lastSyncedAt: searchConnection?.lastSyncedAt?.toISOString() || null, error: searchConnection?.lastSyncError || "",
@@ -421,15 +426,27 @@ async function runSeoScan({
     contentHashMap.set(article.id, contentHash);
     const sourceUpdatedAt = article.updatedAt ? new Date(article.updatedAt) : null;
     const unchanged = Boolean(stored && stored.auditVersion === SEO_AUDIT_VERSION && stored.contentHash === contentHash && datesEqual(stored.sourceUpdatedAt, sourceUpdatedAt));
+    const onPageScore = calculateBlogDetailSeoScore(
+      article,
+      productCountMap.get(article.id) || 0,
+      stored,
+      seoAuditConfig,
+      shop,
+      shopDomains,
+    );
     const audit = unchanged
-      ? { score: stored!.baseSeoScore, issues: parseStoredIssues(stored!.issues).filter((issue) => !PORTFOLIO_ISSUE_TYPES.has(issue.type)) }
+      ? {
+          score: Math.max(0, onPageScore - calculateArticleTechnicalPenalty(article)),
+          issues: parseStoredIssues(stored!.issues).filter((issue) => !PORTFOLIO_ISSUE_TYPES.has(issue.type)),
+        }
       : auditArticle(article, productCountMap.get(article.id) || 0, seoAuditConfig, stored, shop, shopDomains);
     if (!unchanged) analyzedCount += 1;
-    baseScoreMap.set(article.id, audit.score);
+    baseScoreMap.set(article.id, onPageScore);
     audits.push({
       ...article,
       productCount: productCountMap.get(article.id) || 0,
       score: audit.score,
+      baseScore: onPageScore,
       issues: audit.issues,
       lastAnalyzedAt: stored?.lastAnalyzedAt?.toISOString() || null,
       effectiveSeoTitle: getEffectiveSeoTitle(stored?.metaTitle, article),
@@ -528,6 +545,7 @@ export default function SEOOptimizer() {
   const {
     shopifyError,
     averageScore,
+    averageOnPageScore,
     issueGroups,
     issueStats,
     affectedPosts,
@@ -713,14 +731,22 @@ export default function SEOOptimizer() {
           </Banner>
         )}
 
-        <InlineGrid columns={{ xs: 1, sm: 2, md: 5 }} gap="400">
+        <InlineGrid columns={{ xs: 1, sm: 2, md: 6 }} gap="400">
           <MetricCard
-            title="SEO health score"
+            title="Site-adjusted score"
             value={String(averageScore)}
             suffix="/100"
             tone={averageScore >= 80 ? "success" : averageScore >= 60 ? "warning" : "critical"}
             icon={ShieldCheckMarkIcon}
             progress={averageScore}
+          />
+          <MetricCard
+            title="On-page score"
+            value={String(averageOnPageScore)}
+            suffix="/100"
+            tone={averageOnPageScore >= 80 ? "success" : averageOnPageScore >= 60 ? "warning" : "critical"}
+            icon={ChartVerticalFilledIcon}
+            progress={averageOnPageScore}
           />
           <MetricCard
             title="High impact issues"
@@ -753,6 +779,10 @@ export default function SEOOptimizer() {
             progress={totalPosts ? (scannedPosts / totalPosts) * 100 : 0}
           />
         </InlineGrid>
+
+        <Text as="p" variant="bodySm" tone="subdued">
+          On-page score measures each saved article by itself. Site-adjusted score also includes orphan content, duplication, and keyword overlap across the store.
+        </Text>
 
         <Layout>
           <Layout.Section>
@@ -936,7 +966,7 @@ export default function SEOOptimizer() {
                                 {post.title}
                               </Text>
                               <Text as="span" variant="bodySm" tone="subdued">
-                                Score {post.score}/100
+                                On-page {post.baseScore}/100 · Site-adjusted {post.score}/100
                               </Text>
                             </BlockStack>
                           </InlineStack>
@@ -1806,12 +1836,20 @@ function auditArticle(
     score: Math.max(
       0,
       calculateBlogDetailSeoScore(article, productCount, storedSeo, config, shopDomain, shopDomains) -
-        Math.min(12, imageStats.inlineMissingAlt * 3 + imageStats.missingDimensions * 2 + imageStats.genericFilenames) -
-        (article.authorName.trim() ? 0 : 4) -
-        Math.min(10, markupStats.unsafeLinks * 5 + markupStats.skippedHeadingLevels + markupStats.duplicateHeadingIds * 2),
+        calculateArticleTechnicalPenalty(article),
     ),
     issues,
   };
+}
+
+function calculateArticleTechnicalPenalty(article: Pick<ArticleInput, "body" | "authorName">) {
+  const imageStats = analyzeImages(article.body || "");
+  const markupStats = analyzeTechnicalMarkup(article.body || "");
+  return (
+    Math.min(12, imageStats.inlineMissingAlt * 3 + imageStats.missingDimensions * 2 + imageStats.genericFilenames) +
+    (article.authorName.trim() ? 0 : 4) +
+    Math.min(10, markupStats.unsafeLinks * 5 + markupStats.skippedHeadingLevels + markupStats.duplicateHeadingIds * 2)
+  );
 }
 
 function calculateBlogDetailSeoScore(
