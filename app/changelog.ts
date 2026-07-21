@@ -62,6 +62,10 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Content Decay table columns now prioritize article titles, URLs and recommended actions while keeping priority and action controls compact." },
       { type: "Improved", text: "Content Decay issues are paginated in 20-row pages with filter-aware Previous and Next controls." },
       { type: "Improved", text: "Content Decay Monitor is now reserved for the Growth plan, with server-side enforcement and a clear upgrade path for other plans." },
+      { type: "Improved", text: "Settings now shows only Shopify-connected controls, removing placeholder SEO, AI, analytics and destructive actions that did not affect the store." },
+      { type: "Fixed", text: "Settings validates saved values, reports save failures, warns before closing a page with unsaved changes and uses responsive controls on smaller admin screens." },
+      { type: "Improved", text: "Legacy display and content-navigation settings URLs now redirect to the single canonical Settings workspace." },
+      { type: "Improved", text: "Internal Linking Assistant is now available on Pro and Growth plans, with server-side access enforcement and an upgrade path for Free stores." },
     ],
   },
   {

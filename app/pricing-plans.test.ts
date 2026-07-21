@@ -6,6 +6,7 @@ describe("pricing plan enforcement", () => {
     expect(getPlanKey("Unknown enterprise plan")).toBe("free");
     expect(getLimitsForPlan("").shoppableArticles).toBe(3);
     expect(getLimitsForPlan("").canContentDecay).toBe(false);
+    expect(getLimitsForPlan("").canInternalLinking).toBe(false);
   });
 
   it("maps paid and legacy plans", () => {
@@ -13,6 +14,8 @@ describe("pricing plan enforcement", () => {
     expect(getPlanKey("Shoppable Blog Growth")).toBe("growth");
     expect(getLimitsForPlan("Pro").canContentDecay).toBe(false);
     expect(getLimitsForPlan("Growth").canContentDecay).toBe(true);
+    expect(getLimitsForPlan("Pro").canInternalLinking).toBe(true);
+    expect(getLimitsForPlan("Growth").canInternalLinking).toBe(true);
     expect(formatLimit(Infinity)).toBe("Unlimited");
   });
 });

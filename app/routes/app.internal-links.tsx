@@ -8,23 +8,33 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { analyzeInternalLinks, insertApprovedLink } from "../internal-linking";
 import type { InternalLinkReport, LinkArticle, LinkSuggestion } from "../internal-linking";
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  if (!limits.canInternalLinking) {
+    return json({ report: null, analyzedAt: null, canInternalLinking: false, planKey });
+  }
   const saved = await prisma.internalLinkAnalysis.findUnique({ where: { shop: session.shop } });
   const savedReport = saved?.report as unknown as InternalLinkReport | undefined;
   return json({
     report: savedReport?.auditVersion === 2 ? savedReport : null,
     analyzedAt: saved?.analyzedAt.toISOString() || null,
+    canInternalLinking: true,
+    planKey,
   });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
+  const { limits } = await getActivePlanAndLimits(billing);
+  if (!limits.canInternalLinking) {
+    return json({ error: "Internal Linking Assistant is available on Pro and Growth plans." }, { status: 403 });
+  }
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
 
@@ -107,6 +117,23 @@ export default function InternalLinksPage() {
   const analyzing = analyzeFetcher.state !== "idle";
   const applying = applyFetcher.state !== "idle";
   const runAnalysis = () => analyzeFetcher.submit({ intent: "analyze" }, { method: "post" });
+
+  if (!initialData.canInternalLinking) {
+    return (
+      <Page>
+        <TitleBar title="Internal Linking Assistant" />
+        <Card>
+          <EmptyState
+            heading="Internal Linking Assistant is a Pro feature"
+            action={{ content: "Upgrade to Pro", url: `/app/pricing?reason=internal_linking&plan=${initialData.planKey}` }}
+            image={EMPTY_IMAGE}
+          >
+            <p>Upgrade to analyze related Shopify articles, broken destinations, repeated anchors and topic clusters, then insert approved links.</p>
+          </EmptyState>
+        </Card>
+      </Page>
+    );
+  }
 
   return (
     <Page fullWidth>

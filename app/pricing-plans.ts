@@ -12,6 +12,7 @@ export type PlanKey = "free" | "pro" | "growth";
  *   Infinity = unlimited.
  * - analyticsWindowDays: how many past days are shown in analytics / dashboard.
  * - canContentNavigation: access to breadcrumbs and table of contents settings (Pro+).
+ * - canInternalLinking: access to Internal Linking Assistant (Pro+).
  * - canBulkReview: access to Bulk Review workflow (Growth only).
  * - canCustomCss: access to Custom CSS field in widget settings (Growth only).
  * - canContentDecay: access to Content Decay Monitor (Growth only).
@@ -21,6 +22,7 @@ export const PLAN_LIMITS = {
     shoppableArticles: 3,
     analyticsWindowDays: 7,
     canContentNavigation: false,
+    canInternalLinking: false,
     canBulkReview: false,
     canCustomCss: false,
     canContentDecay: false,
@@ -29,6 +31,7 @@ export const PLAN_LIMITS = {
     shoppableArticles: 100,
     analyticsWindowDays: 30,
     canContentNavigation: true,
+    canInternalLinking: true,
     canBulkReview: false,
     canCustomCss: false,
     canContentDecay: false,
@@ -37,6 +40,7 @@ export const PLAN_LIMITS = {
     shoppableArticles: Infinity,
     analyticsWindowDays: 90,
     canContentNavigation: true,
+    canInternalLinking: true,
     canBulkReview: true,
     canCustomCss: true,
     canContentDecay: true,
@@ -45,6 +49,7 @@ export const PLAN_LIMITS = {
   shoppableArticles: number;
   analyticsWindowDays: number;
   canContentNavigation: boolean;
+  canInternalLinking: boolean;
   canBulkReview: boolean;
   canCustomCss: boolean;
   canContentDecay: boolean;

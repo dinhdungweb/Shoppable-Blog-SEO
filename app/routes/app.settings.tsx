@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { unstable_usePrompt, useFetcher, useLoaderData } from "@remix-run/react";
 import {
   Page,
   Banner,
@@ -9,7 +9,6 @@ import {
   Text,
   BlockStack,
   InlineStack,
-  Badge,
   Divider,
   TextField,
   Select,
@@ -20,15 +19,10 @@ import {
 } from "@shopify/polaris";
 import {
   SettingsIcon,
-  SearchIcon,
-  MagicIcon,
   AlertTriangleIcon,
   StoreIcon,
   ChartVerticalIcon,
   CheckCircleIcon,
-  RefreshIcon,
-  ExitIcon,
-  DeleteIcon,
   ListBulletedIcon,
   HomeIcon,
 } from "@shopify/polaris-icons";
@@ -51,6 +45,11 @@ import {
   normalizeHexColor as normalizeContentNavHexColor,
   pickValue,
 } from "../content-navigation";
+import {
+  clampSettingNumber,
+  cleanSettingText,
+  pickSettingChoice,
+} from "../settings-validation";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
@@ -80,10 +79,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 function getInitialSettingsTab(tab: string | null) {
   if (tab === "display") return 1;
   if (tab === "content-navigation" || tab === "toc") return 2;
-  if (tab === "seo") return 3;
-  if (tab === "tracking") return 4;
-  if (tab === "ai") return 5;
-  if (tab === "danger") return 6;
+  if (tab === "tracking") return 3;
   return 0;
 }
 
@@ -92,53 +88,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shop = session.shop;
   const { limits } = await getActivePlanAndLimits(billing);
   const formData = await request.formData();
-  const maxProducts = Math.max(1, Math.min(12, Number(formData.get("maxProducts") || 6) || 6));
-  const gridColumns = Math.max(2, Math.min(4, Number(formData.get("gridColumns") || 3) || 3));
-  const carouselItemsVisible = Math.max(1, Math.min(5, Number(formData.get("carouselItemsVisible") || 4) || 4));
+  const maxProducts = clampSettingNumber(formData.get("maxProducts"), 1, 12, 6);
+  const gridColumns = clampSettingNumber(formData.get("gridColumns"), 2, 4, 3);
+  const carouselItemsVisible = clampSettingNumber(formData.get("carouselItemsVisible"), 1, 5, 4);
 
-  const updates = {
-    defaultBlog: formData.get("defaultBlog") as string,
-    language: formData.get("language") as string,
-    market: formData.get("market") as string,
-    appStatus: formData.get("appStatus") === "true",
-    widgetStyle: pickFormChoice(formData, "widgetStyle", ["carousel", "grid"], "carousel"),
-    primaryColor: normalizeWidgetHexColor(formData.get("primaryColor")),
-    productCardLayout: pickFormChoice(formData, "productCardLayout", ["Standard", "Compact", "Minimal", "Featured"], "Standard"),
-    cardPosition: formData.get("cardPosition") as string,
-    buttonText: formData.get("buttonText") as string,
-    showPrice: formData.get("showPrice") === "true",
-    showAddToCart: formData.get("showAddToCart") === "true",
-    showVariantSelector: formData.get("showVariantSelector") === "true",
-    openInNewTab: formData.get("openInNewTab") === "true",
-    maxProducts,
-    imageAspectRatio: pickFormChoice(formData, "imageAspectRatio", ["Square", "Portrait", "Wide"], "Square"),
-    imageFit: pickFormChoice(formData, "imageFit", ["Cover", "Contain"], "Cover"),
-    cardDensity: pickFormChoice(formData, "cardDensity", ["Compact", "Comfortable", "Spacious"], "Comfortable"),
-    gridColumns,
-    textAlignment: pickFormChoice(formData, "textAlignment", ["Left", "Center"], "Left"),
-    buttonStyle: pickFormChoice(formData, "buttonStyle", ["Solid", "Outline", "Subtle", "Link"], "Solid"),
-    shadowStyle: pickFormChoice(formData, "shadowStyle", ["None", "Soft", "Lifted"], "Soft"),
-    showCarouselArrows: formData.get("showCarouselArrows") === "true",
-    showCarouselDots: formData.get("showCarouselDots") === "true",
-    carouselItemsVisible,
-    borderRadius: formData.get("borderRadius") as string,
-    ...(limits.canCustomCss ? { customCss: formData.get("customCss") as string } : {}),
-    metaTitleTemplate: formData.get("metaTitleTemplate") as string,
-    metaDescriptionTemplate: formData.get("metaDescriptionTemplate") as string,
-    urlHandleRules: formData.get("urlHandleRules") as string,
-    canonicalRules: formData.get("canonicalRules") as string,
-    addBlogSchema: formData.get("addBlogSchema") === "true",
-    addProductSchema: formData.get("addProductSchema") === "true",
-    attributionWindow: formData.get("attributionWindow") as string,
-    utmRules: formData.get("utmRules") as string,
-    enableConversionTracking: formData.get("enableConversionTracking") === "true",
-    brandTone: formData.get("brandTone") as string,
-    defaultContentStructure: formData.get("defaultContentStructure") as string,
-    autoGenerateAltText: formData.get("autoGenerateAltText") === "true",
-    requireApproval: formData.get("requireApproval") === "true",
-    forbiddenWords: formData.get("forbiddenWords") as string,
-    ...(limits.canContentNavigation
-      ? {
+  try {
+    const updates = {
+      appStatus: formData.get("appStatus") === "true",
+      widgetStyle: pickSettingChoice(formData, "widgetStyle", ["carousel", "grid"], "carousel"),
+      primaryColor: normalizeWidgetHexColor(formData.get("primaryColor")),
+      productCardLayout: pickSettingChoice(formData, "productCardLayout", ["Standard", "Compact", "Minimal", "Featured"], "Standard"),
+      buttonText: cleanSettingText(formData.get("buttonText"), 80, "View product"),
+      showPrice: formData.get("showPrice") === "true",
+      showAddToCart: formData.get("showAddToCart") === "true",
+      openInNewTab: formData.get("openInNewTab") === "true",
+      maxProducts,
+      imageAspectRatio: pickSettingChoice(formData, "imageAspectRatio", ["Square", "Portrait", "Wide"], "Square"),
+      imageFit: pickSettingChoice(formData, "imageFit", ["Cover", "Contain"], "Cover"),
+      cardDensity: pickSettingChoice(formData, "cardDensity", ["Compact", "Comfortable", "Spacious"], "Comfortable"),
+      gridColumns,
+      textAlignment: pickSettingChoice(formData, "textAlignment", ["Left", "Center"], "Left"),
+      buttonStyle: pickSettingChoice(formData, "buttonStyle", ["Solid", "Outline", "Subtle", "Link"], "Solid"),
+      shadowStyle: pickSettingChoice(formData, "shadowStyle", ["None", "Soft", "Lifted"], "Soft"),
+      showCarouselArrows: formData.get("showCarouselArrows") === "true",
+      showCarouselDots: formData.get("showCarouselDots") === "true",
+      carouselItemsVisible,
+      borderRadius: pickSettingChoice(formData, "borderRadius", ["4px", "8px", "12px", "20px"], "8px"),
+      ...(limits.canCustomCss ? { customCss: cleanSettingText(formData.get("customCss"), 20000, "") } : {}),
+      utmRules: pickSettingChoice(formData, "utmRules", ["Auto-append to product links", "Do not append"], "Auto-append to product links"),
+      enableConversionTracking: formData.get("enableConversionTracking") === "true",
+      ...(limits.canContentNavigation
+        ? {
           breadcrumbsEnabled: formData.get("breadcrumbsEnabled") === "true",
           breadcrumbsStyle: pickValue(
             formData.get("breadcrumbsStyle"),
@@ -146,7 +126,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             CONTENT_NAV_DEFAULTS.breadcrumbsStyle,
           ),
           breadcrumbsShowHome: formData.get("breadcrumbsShowHome") === "true",
-          breadcrumbsHomeLabel: String(formData.get("breadcrumbsHomeLabel") || "Home").trim() || "Home",
+          breadcrumbsHomeLabel: cleanSettingText(formData.get("breadcrumbsHomeLabel"), 80, "Home"),
           breadcrumbsShowBlog: formData.get("breadcrumbsShowBlog") === "true",
           breadcrumbsCurrentClickable: formData.get("breadcrumbsCurrentClickable") === "true",
           breadcrumbsSeparator: String(formData.get("breadcrumbsSeparator") || "/").trim().slice(0, 8) || "/",
@@ -157,7 +137,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             TOC_AUTO_INSERT_POSITION_OPTIONS,
             CONTENT_NAV_DEFAULTS.tocAutoInsertPosition,
           ),
-          tocTitle: String(formData.get("tocTitle") || "Table of contents").trim() || "Table of contents",
+          tocTitle: cleanSettingText(formData.get("tocTitle"), 120, "Table of contents"),
           tocLevels: pickValue(formData.get("tocLevels"), TOC_LEVEL_OPTIONS, CONTENT_NAV_DEFAULTS.tocLevels),
           tocStyle: pickValue(formData.get("tocStyle"), TOC_STYLE_OPTIONS, CONTENT_NAV_DEFAULTS.tocStyle),
           tocLayout: pickValue(formData.get("tocLayout"), TOC_LAYOUT_OPTIONS, CONTENT_NAV_DEFAULTS.tocLayout),
@@ -166,23 +146,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           tocMobileCollapsed: formData.get("tocMobileCollapsed") === "true",
           tocStickyOffset: clampContentNavNumber(formData.get("tocStickyOffset"), 0, 240, CONTENT_NAV_DEFAULTS.tocStickyOffset),
           contentNavPrimaryColor: normalizeContentNavHexColor(formData.get("contentNavPrimaryColor")),
-          ...(limits.canCustomCss ? { contentNavCustomCss: String(formData.get("contentNavCustomCss") || "") } : {}),
-        }
-      : {}),
-  };
+          ...(limits.canCustomCss ? { contentNavCustomCss: cleanSettingText(formData.get("contentNavCustomCss"), 20000, "") } : {}),
+          }
+        : {}),
+    };
 
-  await prisma.shopConfig.update({
-    where: { shop },
-    data: updates,
-  });
+    await prisma.shopConfig.update({
+      where: { shop },
+      data: updates,
+    });
 
-  return json({ success: true, updates });
+    return json({ success: true as const, updates });
+  } catch (error) {
+    console.error("Settings update failed", { shop, error });
+    return json({ success: false as const, error: "Settings could not be saved. Please try again." }, { status: 500 });
+  }
 };
-
-function pickFormChoice(formData: FormData, key: string, allowed: string[], fallback: string) {
-  const value = String(formData.get(key) || "");
-  return allowed.includes(value) ? value : fallback;
-}
 
 // --- CUSTOM TOGGLE COMPONENT ---
 const CustomToggle = ({
@@ -190,12 +169,14 @@ const CustomToggle = ({
   label,
   description,
   disabled = false,
+  hideLabel = false,
   onChange,
 }: {
   checked: boolean;
   label: string;
   description?: string;
   disabled?: boolean;
+  hideLabel?: boolean;
   onChange: (val: boolean) => void;
 }) => (
   <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', opacity: disabled ? 0.6 : 1 }}>
@@ -212,10 +193,12 @@ const CustomToggle = ({
     >
        <div style={{ width: '16px', height: '16px', borderRadius: '8px', backgroundColor: '#fff', position: 'absolute', top: '2px', right: checked ? '2px' : 'auto', left: checked ? 'auto' : '2px', transition: 'all 0.2s' }} />
     </button>
-    <BlockStack gap="0">
-      <Text as="span" variant="bodyMd" fontWeight="semibold">{label}</Text>
-      {description && <Text as="p" variant="bodySm" tone="subdued">{description}</Text>}
-    </BlockStack>
+    {!hideLabel && (
+      <BlockStack gap="0">
+        <Text as="span" variant="bodyMd" fontWeight="semibold">{label}</Text>
+        {description && <Text as="p" variant="bodySm" tone="subdued">{description}</Text>}
+      </BlockStack>
+    )}
   </div>
 );
 
@@ -245,12 +228,29 @@ export default function Settings() {
   useEffect(() => {
     const result = fetcher.data;
     if (fetcher.state !== "idle" || !result) return;
-    if (result.success) {
+    if (result.success && "updates" in result) {
       setSavedState((previous) => ({ ...previous, ...result.updates }));
       setFormState((previous) => ({ ...previous, ...result.updates }));
       shopify.toast.show("Settings saved");
+    } else if ("error" in result && result.error) {
+      shopify.toast.show(result.error, { isError: true });
     }
   }, [fetcher.state, fetcher.data, shopify]);
+
+  useEffect(() => {
+    if (!hasChanges) return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [hasChanges]);
+
+  unstable_usePrompt({
+    when: hasChanges,
+    message: "You have unsaved settings. Leave this page and discard them?",
+  });
 
   const handleChange = (key: string, value: any) => {
     setFormState(prev => ({ ...prev, [key]: value }));
@@ -278,10 +278,7 @@ export default function Settings() {
       { id: 'general', content: 'General', panelID: 'general-panel' },
       { id: 'display', content: 'Shoppable display', panelID: 'display-panel' },
       { id: 'content-navigation', content: 'Content navigation', panelID: 'content-navigation-panel' },
-      { id: 'seo', content: 'SEO rules', panelID: 'seo-panel' },
       { id: 'tracking', content: 'Tracking', panelID: 'tracking-panel' },
-      { id: 'ai', content: 'AI writing', panelID: 'ai-panel' },
-      { id: 'danger', content: 'Danger zone', panelID: 'danger-panel' },
     ],
     [],
   );
@@ -318,7 +315,7 @@ export default function Settings() {
         <InlineStack align="space-between" blockAlign="center">
           <BlockStack gap="100">
             <Text as="h1" variant="headingLg" fontWeight="bold">Settings</Text>
-            <Text as="p" variant="bodyMd" tone="subdued">Configure how the app works for your store, including SEO rules, tracking, and upcoming AI content preferences.</Text>
+            <Text as="p" variant="bodyMd" tone="subdued">Configure storefront display, content navigation, and first-party conversion tracking for this Shopify store.</Text>
           </BlockStack>
           <InlineStack gap="300" blockAlign="center">
             {!hasChanges && (
@@ -327,7 +324,7 @@ export default function Settings() {
                 <Text as="span" tone="success">All changes saved</Text>
               </InlineStack>
             )}
-            <Button onClick={handleDiscard}>Discard changes</Button>
+            <Button onClick={handleDiscard} disabled={!hasChanges}>Discard changes</Button>
           </InlineStack>
         </InlineStack>
 
@@ -381,14 +378,6 @@ export default function Settings() {
                 </div>
                 <Text as="p" variant="bodyMd" tone="subdued">Basic app configuration and defaults.</Text>
 
-                <InlineGrid columns={2} gap="400">
-                  <Select label="Default blog" options={['News & Articles']} value={formState.defaultBlog} onChange={(v) => handleChange('defaultBlog', v)} />
-                  <Select label="Language" options={['English']} value={formState.language} onChange={(v) => handleChange('language', v)} />
-                </InlineGrid>
-                <Select label="Market" options={['United States']} value={formState.market} onChange={(v) => handleChange('market', v)} />
-
-                <Divider />
-
                 <InlineStack align="space-between" blockAlign="center">
                   <BlockStack gap="0">
                     <Text as="h3" variant="bodyMd" fontWeight="bold">App status</Text>
@@ -398,12 +387,7 @@ export default function Settings() {
                     <div style={{ backgroundColor: formState.appStatus ? '#E8F5E9' : '#F1F2F3', color: formState.appStatus ? '#29845A' : '#6D7175', padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold' }}>
                       {formState.appStatus ? 'Active' : 'Inactive'}
                     </div>
-                    <div
-                      onClick={() => handleChange('appStatus', !formState.appStatus)}
-                      style={{ width: '36px', height: '20px', borderRadius: '10px', backgroundColor: formState.appStatus ? '#29845A' : '#C9CCCF', position: 'relative', cursor: 'pointer' }}
-                    >
-                      <div style={{ width: '16px', height: '16px', borderRadius: '8px', backgroundColor: '#fff', position: 'absolute', top: '2px', right: formState.appStatus ? '2px' : 'auto', left: formState.appStatus ? 'auto' : '2px', transition: 'all 0.2s' }} />
-                    </div>
+                    <CustomToggle checked={formState.appStatus} onChange={(value) => handleChange('appStatus', value)} label="App status" hideLabel />
                   </InlineStack>
                 </InlineStack>
               </BlockStack>
@@ -419,7 +403,7 @@ export default function Settings() {
                       <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={StoreIcon} tone="base" /></div>
                       <Text as="h2" variant="headingMd" fontWeight="bold">Display mode</Text>
                     </div>
-                    <InlineGrid columns={2} gap="300">
+                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <Select
                         label="Display mode"
                         options={[
@@ -441,7 +425,7 @@ export default function Settings() {
                         onChange={(v) => handleChange('productCardLayout', v)}
                       />
                     </InlineGrid>
-                    <InlineGrid columns={2} gap="300">
+                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <TextField
                         label="Max products"
                         type="number"
@@ -489,7 +473,7 @@ export default function Settings() {
                 <Card padding="400">
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd" fontWeight="bold">Card style</Text>
-                    <InlineGrid columns={2} gap="300">
+                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <Select
                         label="Image ratio"
                         options={[
@@ -510,7 +494,7 @@ export default function Settings() {
                         onChange={(v) => handleChange('imageFit', v)}
                       />
                     </InlineGrid>
-                    <InlineGrid columns={2} gap="300">
+                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <Select
                         label="Card spacing"
                         options={[
@@ -531,7 +515,7 @@ export default function Settings() {
                         onChange={(v) => handleChange('textAlignment', v)}
                       />
                     </InlineGrid>
-                    <InlineGrid columns={2} gap="300">
+                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <Select
                         label="Border radius"
                         options={[
@@ -560,7 +544,7 @@ export default function Settings() {
                 <Card padding="400">
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd" fontWeight="bold">Product actions</Text>
-                    <InlineGrid columns={2} gap="300">
+                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <Select
                         label="Button style"
                         options={[
@@ -596,7 +580,6 @@ export default function Settings() {
                     <BlockStack gap="300">
                       <CustomToggle checked={formState.showPrice !== false} onChange={(v) => handleChange('showPrice', v)} label="Show price" />
                       <CustomToggle checked={formState.showAddToCart !== false} onChange={(v) => handleChange('showAddToCart', v)} label="Show product button" />
-                      <CustomToggle checked={formState.showVariantSelector === true} onChange={(v) => handleChange('showVariantSelector', v)} label="Show variant selector" description="Coming soon" disabled />
                       <CustomToggle checked={formState.openInNewTab !== false} onChange={(v) => handleChange('openInNewTab', v)} label="Open product in new tab" />
                     </BlockStack>
                     {canCustomCss && (
@@ -649,7 +632,7 @@ export default function Settings() {
                       disabled={contentNavigationLocked}
                       onChange={(value) => handleChange('breadcrumbsEnabled', value)}
                     />
-                    <InlineGrid columns={2} gap="300">
+                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <Select
                         label="Breadcrumb style"
                         disabled={breadcrumbsSettingsDisabled}
@@ -671,7 +654,7 @@ export default function Settings() {
                         autoComplete="off"
                       />
                     </InlineGrid>
-                    <InlineGrid columns={2} gap="300">
+                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <TextField
                         label="Home label"
                         disabled={breadcrumbsSettingsDisabled}
@@ -756,7 +739,7 @@ export default function Settings() {
                         onChange={(value) => handleChange('tocTitle', value)}
                         autoComplete="off"
                       />
-                      <InlineGrid columns={2} gap="300">
+                      <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                         <Select
                           label="TOC layout"
                           disabled={tocSettingsDisabled}
@@ -795,7 +778,7 @@ export default function Settings() {
                           helpText="Pixels from the top when left or right rail layout is active."
                         />
                       )}
-                      <InlineGrid columns={2} gap="300">
+                      <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                         <Select
                           label="Heading levels"
                           disabled={tocSettingsDisabled}
@@ -854,43 +837,6 @@ export default function Settings() {
             </InlineGrid>
           )}
 
-          {selectedTabId === 'seo' && (
-            <Card padding="400">
-              <BlockStack gap="400">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={SearchIcon} tone="base" /></div>
-                  <Text as="h2" variant="headingMd" fontWeight="bold">SEO rules</Text>
-                </div>
-                <Text as="p" variant="bodyMd" tone="subdued">Define how SEO metadata and structure are generated.</Text>
-
-                <TextField
-                  label="Meta title template"
-                  value={formState.metaTitleTemplate}
-                  connectedRight={<Button disclosure>Insert variable</Button>}
-                  onChange={(v) => handleChange('metaTitleTemplate', v)}
-                  autoComplete="off"
-                />
-                <TextField
-                  label="Meta description template"
-                  value={formState.metaDescriptionTemplate}
-                  connectedRight={<Button disclosure>Insert variable</Button>}
-                  onChange={(v) => handleChange('metaDescriptionTemplate', v)}
-                  autoComplete="off"
-                />
-
-                <InlineGrid columns={2} gap="400">
-                  <Select label="URL handle rules" options={['Use post title']} value={formState.urlHandleRules} onChange={(v) => handleChange('urlHandleRules', v)} />
-                  <Select label="Canonical rules" options={['Use default canonical (self)']} value={formState.canonicalRules} onChange={(v) => handleChange('canonicalRules', v)} />
-                </InlineGrid>
-
-                <BlockStack gap="300">
-                  <CustomToggle checked={formState.addBlogSchema} onChange={(v) => handleChange('addBlogSchema', v)} label="Add Blog schema (Article)" />
-                  <CustomToggle checked={formState.addProductSchema} onChange={(v) => handleChange('addProductSchema', v)} label="Add Product schema (Product)" />
-                </BlockStack>
-              </BlockStack>
-            </Card>
-          )}
-
           {selectedTabId === 'tracking' && (
             <Card padding="400">
               <BlockStack gap="400">
@@ -909,27 +855,12 @@ export default function Settings() {
                   <Text as="p" variant="bodySm" tone="subdued">{formState.enableConversionTracking ? 'Tracking is collecting data' : 'Tracking is paused'}</Text>
                 </BlockStack>
 
-                <InlineGrid columns={2} gap="400">
+                <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
                   <BlockStack gap="100">
                     <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} />
                     <Text as="p" variant="bodySm" tone="subdued">Appends UTM parameters to outbound links</Text>
                   </BlockStack>
-                  <Select label="Attribution window (coming soon)" options={['7 days', '30 days']} value={formState.attributionWindow} onChange={(v) => handleChange('attributionWindow', v)} disabled />
                 </InlineGrid>
-
-                <div style={{ padding: '16px', border: '1px solid #EBEBEB', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-                    <div style={{ width: '32px', height: '32px', backgroundColor: '#F9AB00', borderRadius: '4px', position: 'relative' }}>
-                      <div style={{ width: '8px', height: '20px', backgroundColor: '#fff', position: 'absolute', bottom: '4px', left: '6px', borderRadius: '2px' }} />
-                      <div style={{ width: '8px', height: '14px', backgroundColor: '#fff', position: 'absolute', bottom: '4px', left: '18px', borderRadius: '2px' }} />
-                    </div>
-                    <BlockStack gap="0">
-                      <Text as="span" fontWeight="bold">Google Analytics 4</Text>
-                      <Text as="span" tone="success" variant="bodySm">Connected</Text>
-                    </BlockStack>
-                  </div>
-                  <Button size="micro">Manage</Button>
-                </div>
 
                 <Divider />
 
@@ -938,92 +869,12 @@ export default function Settings() {
                     <Text as="span" fontWeight="bold">Enable conversion tracking</Text>
                     <Text as="p" variant="bodySm" tone="subdued">Track conversions and revenue from blog traffic</Text>
                   </BlockStack>
-                  <CustomToggle checked={formState.enableConversionTracking} onChange={(v) => handleChange('enableConversionTracking', v)} label="" />
+                  <CustomToggle checked={formState.enableConversionTracking} onChange={(v) => handleChange('enableConversionTracking', v)} label="Enable conversion tracking" hideLabel />
                 </InlineStack>
               </BlockStack>
             </Card>
           )}
 
-          {selectedTabId === 'ai' && (
-            <Card padding="400">
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center" gap="200">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={MagicIcon} tone="base" /></div>
-                    <Text as="h2" variant="headingMd" fontWeight="bold">AI writing rules</Text>
-                  </div>
-                  <Badge tone="attention">Coming soon</Badge>
-                </InlineStack>
-                <Text as="p" variant="bodyMd" tone="subdued">AI content generation is not connected yet. These controls are reserved for a future AI integration.</Text>
-
-                <InlineGrid columns={2} gap="400">
-                  <Select label="Brand tone" options={['Professional', 'Casual', 'Friendly']} value={formState.brandTone} onChange={(v) => handleChange('brandTone', v)} disabled />
-                  <Select label="Default content structure" options={['Introduction, H2 sections, Conclusion']} value={formState.defaultContentStructure} onChange={(v) => handleChange('defaultContentStructure', v)} disabled />
-                </InlineGrid>
-
-                <BlockStack gap="300">
-                  <CustomToggle checked={formState.autoGenerateAltText} onChange={(v) => handleChange('autoGenerateAltText', v)} label="Auto-generate alt text for images" description="Coming soon with AI integration" disabled />
-                  <CustomToggle checked={formState.requireApproval} onChange={(v) => handleChange('requireApproval', v)} label="Require approval before publish" description="Coming soon with AI-suggested content" disabled />
-                </BlockStack>
-
-                <TextField label="Forbidden words" placeholder="Enter words to avoid (comma separated)" helpText="Coming soon with AI-generated content" value={formState.forbiddenWords} onChange={(v) => handleChange('forbiddenWords', v)} autoComplete="off" disabled />
-              </BlockStack>
-            </Card>
-          )}
-
-          {selectedTabId === 'danger' && (
-            <Card padding="400">
-              <BlockStack gap="400">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={AlertTriangleIcon} tone="critical" /></div>
-                  <Text as="h2" variant="headingMd" fontWeight="bold">Danger zone</Text>
-                </div>
-                <Text as="p" variant="bodyMd" tone="subdued">Irreversible actions that affect your data and settings.</Text>
-
-                <Divider />
-
-                <InlineStack align="space-between" blockAlign="center">
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <Icon source={RefreshIcon} tone="critical" />
-                    <BlockStack gap="0">
-                      <Text as="span" fontWeight="bold">Reset settings</Text>
-                      <Text as="span" variant="bodySm" tone="subdued">Reset all settings to their default values.</Text>
-                    </BlockStack>
-                  </div>
-                  <Button>Reset settings</Button>
-                </InlineStack>
-
-                <Divider />
-
-                <InlineStack align="space-between" blockAlign="center">
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <Icon source={ExitIcon} tone="critical" />
-                    <BlockStack gap="0">
-                      <Text as="span" fontWeight="bold">Disconnect app</Text>
-                      <Text as="span" variant="bodySm" tone="subdued">Disconnect the app from your store. Data will be retained.</Text>
-                    </BlockStack>
-                  </div>
-                  <Button>Disconnect</Button>
-                </InlineStack>
-
-                <Divider />
-
-                <InlineStack align="space-between" blockAlign="center">
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <Icon source={DeleteIcon} tone="critical" />
-                    <BlockStack gap="0">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Text as="span" fontWeight="bold">Delete AI-generated data</Text>
-                        <Badge tone="attention">Coming soon</Badge>
-                      </InlineStack>
-                      <Text as="span" variant="bodySm" tone="subdued">Available after AI-generated content is connected.</Text>
-                    </BlockStack>
-                  </div>
-                  <Button tone="critical" variant="plain" disabled>Delete data</Button>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-          )}
           </div>
         </BlockStack>
       </BlockStack>

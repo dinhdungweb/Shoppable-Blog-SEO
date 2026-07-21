@@ -216,13 +216,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const shopDomains = await fetchShopDomains(admin, shop);
-  const { limits } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
   const tocAuditOptions = await getSeoTocAuditOptions(shop, limits.canContentNavigation);
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
   const [blogs, internalLinkCandidates] = await Promise.all([
     fetchShopifyEditorBlogs(admin),
-    prisma.articleSEO.findMany({
+    limits.canInternalLinking ? prisma.articleSEO.findMany({
       where: { shop },
       select: {
         articleId: true,
@@ -231,7 +231,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         blogHandle: true,
       },
       orderBy: { sourceUpdatedAt: "desc" },
-    }),
+    }) : Promise.resolve([]),
   ]);
   const defaultAuthorName = DEFAULT_AUTHOR_NAME;
 
@@ -276,6 +276,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       fileImages: [],
       fileImagesError: "",
       internalLinkCandidates,
+      canInternalLinking: limits.canInternalLinking,
+      planKey,
     });
   }
 
@@ -414,6 +416,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     fileImages: [],
     fileImagesError: "",
     internalLinkCandidates,
+    canInternalLinking: limits.canInternalLinking,
+    planKey,
   });
 };
 
@@ -1098,7 +1102,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates } =
+  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
@@ -1219,7 +1223,7 @@ export default function ArticleDetail() {
           blogHandle: currentBlog?.handle || "",
           body,
         },
-        internalLinkCandidates.map((candidate) => ({
+        internalLinkCandidates.filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate)).map((candidate) => ({
           id: candidate.articleId,
           title: candidate.articleTitle,
           handle: candidate.articleHandle,
@@ -1980,7 +1984,7 @@ export default function ArticleDetail() {
                 livePostUrl={postPreviewUrl}
                 isNewPost={isNewPost}
               />
-              <InternalLinkAssistantCard
+              {canInternalLinking ? <InternalLinkAssistantCard
                 suggestions={internalLinkSuggestions}
                 onReview={(suggestion) => {
                   const selection = editorLinkBridgeRef.current?.getSelection() || {
@@ -1992,7 +1996,15 @@ export default function ArticleDetail() {
                   setInternalLinkAnchor(selection.text || suggestion.anchorText);
                   setPendingInternalLink(suggestion);
                 }}
-              />
+              /> : (
+                <Card>
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="headingMd">Internal link assistant</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text>
+                    <Button url={`/app/pricing?reason=internal_linking&plan=${planKey}`}>Upgrade to Pro</Button>
+                  </BlockStack>
+                </Card>
+              )}
               <ArticleImageCard
                 article={article}
                 activeImage={activeImage}
