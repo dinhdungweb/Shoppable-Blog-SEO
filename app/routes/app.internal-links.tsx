@@ -137,14 +137,12 @@ export default function InternalLinksPage() {
             <SummaryCard label="Broken links" value={report.brokenLinks.length} tone={report.brokenLinks.length ? "critical" : "success"} />
           </InlineGrid>
           <Card padding="0">
-            <Box paddingInline="400" paddingBlockStart="200">
-              <Tabs tabs={[
-                { id: "overview", content: "Overview" },
-                { id: "suggestions", content: `Suggestions (${report.suggestions.length})` },
-                { id: "issues", content: `Issues (${report.orphanArticles.length + report.brokenLinks.length + report.repeatedAnchors.length})` },
-                { id: "clusters", content: `Topic clusters (${report.clusters.length})` },
-              ]} selected={selectedTab} onSelect={setSelectedTab} />
-            </Box>
+            <Tabs tabs={[
+              { id: "overview", content: "Overview" },
+              { id: "suggestions", content: `Suggestions (${report.suggestions.length})` },
+              { id: "issues", content: `Issues (${report.orphanArticles.length + report.brokenLinks.length + report.repeatedAnchors.length})` },
+              { id: "clusters", content: `Topic clusters (${report.clusters.length})` },
+            ]} selected={selectedTab} onSelect={setSelectedTab} />
           </Card>
 
           {selectedTab === 0 && <Overview report={report} analyzedAt={analyzedAt} onSelectTab={setSelectedTab} />}
@@ -169,8 +167,8 @@ export default function InternalLinksPage() {
           {pendingSuggestion && <BlockStack gap="400">
             <Banner tone="warning"><p>This updates the Shopify article. Confirm that the destination adds useful context for the reader.</p></Banner>
             <InlineGrid columns={2} gap="400">
-              <BlockStack gap="100"><Text as="p" variant="bodySm" tone="subdued">Link from</Text><Text as="p" fontWeight="semibold">{pendingSuggestion.sourceTitle}</Text><Button size="micro" url={articleEditorUrl(pendingSuggestion.sourceId)} target="_blank">Open source</Button></BlockStack>
-              <BlockStack gap="100"><Text as="p" variant="bodySm" tone="subdued">Link to</Text><Text as="p" fontWeight="semibold">{pendingSuggestion.targetTitle}</Text><Button size="micro" url={articleEditorUrl(pendingSuggestion.targetId)} target="_blank">Open destination</Button></BlockStack>
+              <BlockStack gap="100"><Text as="p" variant="bodySm" tone="subdued">Link from</Text><Text as="p" fontWeight="semibold">{pendingSuggestion.sourceTitle}</Text><Button size="micro" url={articleEditorUrl(pendingSuggestion.sourceId)}>Open source</Button></BlockStack>
+              <BlockStack gap="100"><Text as="p" variant="bodySm" tone="subdued">Link to</Text><Text as="p" fontWeight="semibold">{pendingSuggestion.targetTitle}</Text><Button size="micro" url={articleEditorUrl(pendingSuggestion.targetId)}>Open destination</Button></BlockStack>
             </InlineGrid>
             <Divider />
             <BlockStack gap="100"><Text as="p" variant="bodySm" tone="subdued">Anchor text to insert</Text><Box background="bg-surface-secondary" padding="300" borderRadius="300"><Text as="p" fontWeight="semibold">{pendingSuggestion.anchorText}</Text></Box><Text as="p" variant="bodySm" tone="subdued">The first matching phrase is linked. If it is not present, a “Related” link is appended to the article.</Text></BlockStack>
@@ -231,11 +229,11 @@ function SuggestionsTable({ report, onReview }: { report: InternalLinkReport; on
 function IssuesPanel({ report }: { report: InternalLinkReport }) {
   return <BlockStack gap="400">
     <TableSection title={`Broken destinations (${report.brokenLinks.length})`} description="Links pointing to Shopify articles or products that no longer exist.">
-      {report.brokenLinks.length ? <table style={tableStyle}><thead><tr><Header>Source article</Header><Header>Broken URL</Header><Header>Destination type</Header><Header>Action</Header></tr></thead><tbody>{report.brokenLinks.slice(0, 50).map((item) => <tr key={`${item.sourceId}:${item.href}`} style={rowStyle}><Cell><strong>{item.sourceTitle}</strong></Cell><Cell><code style={{ wordBreak: "break-all" }}>{item.href}</code></Cell><Cell><Badge tone="critical">{item.kind === "article" ? "Article" : "Product"}</Badge></Cell><Cell><Button size="micro" url={articleEditorUrl(item.sourceId)} target="_blank">Open source</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="No broken article or product destinations found." />}
+      {report.brokenLinks.length ? <table style={tableStyle}><thead><tr><Header>Source article</Header><Header>Broken URL</Header><Header>Destination type</Header><Header>Action</Header></tr></thead><tbody>{report.brokenLinks.slice(0, 50).map((item) => <tr key={`${item.sourceId}:${item.href}`} style={rowStyle}><Cell><strong>{item.sourceTitle}</strong></Cell><Cell><code style={{ wordBreak: "break-all" }}>{item.href}</code></Cell><Cell><Badge tone="critical">{item.kind === "article" ? "Article" : "Product"}</Badge></Cell><Cell><Button size="micro" url={articleEditorUrl(item.sourceId)}>Open source</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="No broken article or product destinations found." />}
       <TableLimit shown={Math.min(50, report.brokenLinks.length)} total={report.brokenLinks.length} />
     </TableSection>
     <TableSection title={`Orphan articles (${report.orphanArticles.length})`} description="Published articles with no contextual inbound link from another article.">
-      {report.orphanArticles.length ? <table style={tableStyle}><thead><tr><Header>Article</Header><Header>Problem</Header><Header>Recommended action</Header><Header>Action</Header></tr></thead><tbody>{report.orphanArticles.slice(0, 50).map((item) => <tr key={item.id} style={rowStyle}><Cell><strong>{item.title}</strong></Cell><Cell><Badge tone="warning">No inbound link</Badge></Cell><Cell>Add a relevant link from a related article</Cell><Cell><Button size="micro" url={articleEditorUrl(item.id)} target="_blank">Open article</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="Every article has at least one inbound contextual link." />}
+      {report.orphanArticles.length ? <table style={tableStyle}><thead><tr><Header>Article</Header><Header>Problem</Header><Header>Recommended action</Header><Header>Action</Header></tr></thead><tbody>{report.orphanArticles.slice(0, 50).map((item) => <tr key={item.id} style={rowStyle}><Cell><strong>{item.title}</strong></Cell><Cell><Badge tone="warning">No inbound link</Badge></Cell><Cell>Add a relevant link from a related article</Cell><Cell><Button size="micro" url={articleEditorUrl(item.id)}>Open article</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="Every article has at least one inbound contextual link." />}
       <TableLimit shown={Math.min(50, report.orphanArticles.length)} total={report.orphanArticles.length} />
     </TableSection>
     <TableSection title={`Repeated anchors (${report.repeatedAnchors.length})`} description="Anchor text reused for different destinations can make link context unclear.">
@@ -248,7 +246,7 @@ function ClustersPanel({ report }: { report: InternalLinkReport }) {
   return <BlockStack gap="400">
     <Banner tone="info" title="Pillar → supporting articles"><p>A pillar is a broad, substantial article. Supporting articles cover narrower related questions and should link naturally to the pillar where useful.</p></Banner>
     <TableSection title={`Topic cluster map (${report.clusters.length})`} description="Use this map to review whether supporting articles link naturally to their pillar page.">
-      {report.clusters.length ? <table style={tableStyle}><thead><tr><Header>Pillar page</Header><Header>Supporting articles</Header><Header>Count</Header><Header>Action</Header></tr></thead><tbody>{report.clusters.map((cluster) => <tr key={cluster.pillar.id} style={rowStyle}><Cell><Badge tone="info">Pillar</Badge><br /><strong>{cluster.pillar.title}</strong></Cell><Cell><BlockStack gap="100">{cluster.supporting.map((item) => <Text key={item.id} as="p" variant="bodySm">• {item.title}</Text>)}</BlockStack></Cell><Cell><strong>{cluster.supporting.length}</strong></Cell><Cell><Button size="micro" url={articleEditorUrl(cluster.pillar.id)} target="_blank">Open pillar</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="Not enough related content to build a topic cluster." />}
+      {report.clusters.length ? <table style={tableStyle}><thead><tr><Header>Pillar page</Header><Header>Supporting articles</Header><Header>Count</Header><Header>Action</Header></tr></thead><tbody>{report.clusters.map((cluster) => <tr key={cluster.pillar.id} style={rowStyle}><Cell><Badge tone="info">Pillar</Badge><br /><strong>{cluster.pillar.title}</strong></Cell><Cell><BlockStack gap="100">{cluster.supporting.map((item) => <Text key={item.id} as="p" variant="bodySm">• {item.title}</Text>)}</BlockStack></Cell><Cell><strong>{cluster.supporting.length}</strong></Cell><Cell><Button size="micro" url={articleEditorUrl(cluster.pillar.id)}>Open pillar</Button></Cell></tr>)}</tbody></table> : <EmptyTable text="Not enough related content to build a topic cluster." />}
     </TableSection>
   </BlockStack>;
 }
