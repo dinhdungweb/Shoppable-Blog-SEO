@@ -3961,7 +3961,7 @@ function SeoSidebar({
                       <Badge tone="success">✓ All Good</Badge>
                     )}
                   </InlineStack>
-                  <div style={{ marginLeft: 'auto' }}>
+                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', alignSelf: 'center', lineHeight: 0 }}>
                     <Icon source={openCategories[cat] ? ChevronUpIcon : ChevronDownIcon} tone="subdued" />
                   </div>
                 </div>
@@ -3973,7 +3973,7 @@ function SeoSidebar({
                   <BlockStack gap="200">
                     {catIssues.map((issue, idx) => (
                       <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                        <div style={{ flexShrink: 0 }}>
+                        <div style={{ flexShrink: 0, width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0, transform: 'translateY(-1px)' }}>
                           <Icon source={issue.severity === 'good' ? CheckIcon : issue.severity === 'critical' ? AlertCircleIcon : InfoIcon} 
                                 tone={issue.severity === 'good' ? 'success' : issue.severity === 'critical' ? 'critical' : 'warning'} />
                         </div>
