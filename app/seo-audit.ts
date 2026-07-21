@@ -600,21 +600,16 @@ export function auditContentQuality({
     || /(?:tôi|chúng tôi|kinh nghiệm|trải nghiệm|đã dùng|đã thử|thử nghiệm|đo lường|kết quả thực tế|đánh giá thực tế|trước và sau)/i.test(text)
     || (body.match(/<img\b/gi)?.length || 0) >= 2;
   const hasAiDisclosure = /(?:ai[- ]assisted|generated (?:with|by) ai|artificial intelligence|hỗ trợ bởi ai|tạo bởi ai|trí tuệ nhân tạo)/i.test(text);
-  const hasAuthorProfileLink = /(?:rel=["']author["']|\/(?:pages\/authors?|blogs\/authors?)\/)/i.test(body);
   const directlyAnswersIntent = stripHtml(firstParagraph).split(/\s+/).filter(Boolean).length >= 35 || stripHtml(summary).length >= 90;
 
   return [
     authorName?.trim()
       ? qualityIssue("eeat_author", "Author attribution", `The article identifies ${authorName.trim()} as its author.`, "good")
       : qualityIssue("eeat_author", "Author attribution", "No author is assigned to this article.", "warning", "Medium", "Assign a real author and show the byline on the storefront."),
-    hasAuthorProfileLink
-      ? qualityIssue("eeat_author_profile", "Author profile", "A link to author information was found in the article.", "good")
-      : qualityIssue("eeat_author_profile", "Author profile", "Manual review: confirm the storefront byline links to a useful author profile.", "info"),
+    qualityIssue("eeat_author_profile", "Author profile", "Manual review: Shopify articles provide an author name but no native author-profile URL. Confirm the theme byline links to a useful Page or custom author profile.", "info"),
     published && updated
-      ? qualityIssue("eeat_dates", "Published and updated dates", updated.getTime() > published.getTime() + 86_400_000
-        ? "Published and meaningfully updated dates are available."
-        : "A published date is available. Add an updated date only after a meaningful revision.", updated.getTime() > published.getTime() + 86_400_000 ? "good" : "info")
-      : qualityIssue("eeat_dates", "Published and updated dates", "Manual review: make publication and meaningful update dates visible to readers.", "info"),
+      ? qualityIssue("eeat_dates", "Published and updated dates", `Shopify provides publication and update timestamps${updated.getTime() > published.getTime() + 86_400_000 ? " that differ" : ""}. Manual review: confirm the theme displays them accurately; Shopify updatedAt does not prove a substantive content revision.`, "info")
+      : qualityIssue("eeat_dates", "Published and updated dates", "Manual review: Shopify has not returned both timestamps. Confirm the article is published and the theme displays the available date accurately.", "info"),
     linkStats.external > 0
       ? qualityIssue("eeat_sources", "Sources and citations", "The article links to at least one external source readers can inspect.", "good")
       : qualityIssue("eeat_sources", "Sources and citations", "No external citation was found. Add trustworthy sources for factual or high-stakes claims.", "info"),

@@ -40,7 +40,8 @@ describe("content quality and E-E-A-T checklist", () => {
     });
 
     expect(issues.find((issue) => issue.type === "eeat_author")?.severity).toBe("good");
-    expect(issues.find((issue) => issue.type === "eeat_dates")?.severity).toBe("good");
+    expect(issues.find((issue) => issue.type === "eeat_dates")?.severity).toBe("info");
+    expect(issues.find((issue) => issue.type === "eeat_dates")?.message).toContain("Shopify");
     expect(issues.find((issue) => issue.type === "eeat_sources")?.severity).toBe("good");
     expect(issues.find((issue) => issue.type === "eeat_experience")?.severity).toBe("good");
   });
