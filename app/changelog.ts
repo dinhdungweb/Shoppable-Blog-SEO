@@ -32,6 +32,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Merchants can leave SEO Optimizer while a scan runs, avoiding long browser requests and timeouts on large stores." },
       { type: "Fixed", text: "Uninstall and privacy cleanup now includes analytics aggregates, Search Console records, bulk-change history and SEO scan jobs." },
       { type: "Fixed", text: "Dashboard setup can activate a missing Shopify Web Pixel again without creating resources during page load." },
+      { type: "Fixed", text: "Analytics session comparison now groups date ranges correctly on PostgreSQL." },
     ],
   },
   {

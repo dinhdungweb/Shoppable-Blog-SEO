@@ -142,7 +142,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.$queryRaw<Array<{ period: string; sessions: number }>>`
       SELECT CASE WHEN "date" >= ${currentStart} THEN 'current' ELSE 'previous' END AS "period", COUNT(DISTINCT "sessionKey")::int AS "sessions"
       FROM "AnalyticsDailySession" WHERE "shop" = ${shop} AND "date" >= ${previousStart}
-      GROUP BY CASE WHEN "date" >= ${currentStart} THEN 'current' ELSE 'previous' END
+      GROUP BY 1
     `,
     prisma.$queryRaw<Array<{ date: Date; sessions: number }>>`
       SELECT "date", COUNT(DISTINCT "sessionKey")::int AS "sessions" FROM "AnalyticsDailySession"
