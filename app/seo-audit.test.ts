@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auditContentQuality, auditSeo } from "./seo-audit";
+import { analyzeImageSeo, auditContentQuality, auditSeo } from "./seo-audit";
 
 const base = {
   title: "A useful guide",
@@ -24,6 +24,23 @@ describe("people-first SEO scoring", () => {
     const issue = withoutKeyword.issues.find((item) => item.type === "kw_missing");
     expect(issue?.severity).toBe("warning");
     expect(withoutKeyword.score).toBeLessThanOrEqual(79);
+  });
+});
+
+describe("Shopify image SEO", () => {
+  it("detects actionable inline image problems", () => {
+    const stats = analyzeImageSeo([
+      '<img src="https://cdn.shopify.com/silver-ring-closeup.jpg" width="100" height="100">',
+      '<img src="https://cdn.shopify.com/img-1.png" alt="silver ring silver ring silver ring">',
+      '<img src="data:image/png;base64,abc" role="presentation" alt="Divider">',
+    ].join(""));
+    expect(stats.missingAlt).toBe(1);
+    expect(stats.missingDimensions).toBe(2);
+    expect(stats.genericFilenames).toBe(1);
+    expect(stats.stuffedAlt).toBe(1);
+    expect(stats.decorativeWithAlt).toBe(1);
+    expect(stats.tooSmall).toBe(1);
+    expect(stats.uncrawlableSources).toBe(1);
   });
 });
 

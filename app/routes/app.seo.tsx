@@ -38,7 +38,7 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
 import { getLimitsForPlan } from "../pricing-plans";
 import prisma from "../db.server";
-import { auditContentQuality, auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
+import { analyzeImageSeo, auditContentQuality, auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
 import { auditSeoPortfolio } from "../seo-portfolio-audit";
@@ -59,6 +59,8 @@ type ArticleInput = {
   summary: string;
   imageUrl: string;
   imageAlt: string;
+  imageWidth: number;
+  imageHeight: number;
   updatedAt: string;
   publishedAt: string | null;
   seoTitle: string;
@@ -133,7 +135,7 @@ const DONUT_COLORS = {
   Medium: "#FFC453",
   Low: "#29845A",
 };
-const SEO_AUDIT_VERSION = 6;
+const SEO_AUDIT_VERSION = 7;
 const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_article_title", "duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "search_intent_overlap", "orphan_article", "near_duplicate_content"]);
 
 function safeTokenEqual(supplied: string, expected: string) {
@@ -252,7 +254,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const searchMetrics = searchData.metrics;
   const auditedPosts: AuditedPost[] = seoRows.map((row) => ({
     id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "", publishedAt: null,
-    imageUrl: row.imageUrl, imageAlt: row.imageAlt, updatedAt: "", seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
+    imageUrl: row.imageUrl, imageAlt: row.imageAlt, imageWidth: 0, imageHeight: 0, updatedAt: "", seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
     blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle, authorName: "", productCount: 0,
     score: row.seoScore, baseScore: row.auditVersion >= SEO_AUDIT_VERSION ? row.baseSeoScore : row.seoScore, issues: parseStoredIssues(row.issues), effectiveSeoTitle: row.metaTitle || row.articleTitle,
     effectiveSeoDescription: row.metaDescription || "", focusKeyword: row.focusKeyword || "",
@@ -1211,7 +1213,7 @@ async function fetchShopifyArticles(admin: any, onPage?: (loadedPosts: number) =
     const response = await admin.graphql(`#graphql
       query SeoArticles($after: String) {
         articles(first: 100, after: $after, sortKey: UPDATED_AT) {
-          nodes { id title handle updatedAt publishedAt author { name } body summary image { url altText }
+          nodes { id title handle updatedAt publishedAt author { name } body summary image { url altText width height }
             seoTitle: metafield(namespace: "global", key: "title_tag") { value }
             seoDescription: metafield(namespace: "global", key: "description_tag") { value }
             blog { id title handle }
@@ -1231,6 +1233,8 @@ async function fetchShopifyArticles(admin: any, onPage?: (loadedPosts: number) =
       summary: article.summary || "",
       imageUrl: article.image?.url || "",
       imageAlt: article.image?.altText || "",
+      imageWidth: article.image?.width || 0,
+      imageHeight: article.image?.height || 0,
       updatedAt: article.updatedAt || "",
       publishedAt: article.publishedAt || null,
       seoTitle: article.seoTitle?.value || "",
@@ -1273,7 +1277,7 @@ function auditArticle(
   const allImageAltText = `${article.imageAlt || ""} ${bodyImageAltText}`.trim();
   const hasAnyImage = Boolean(article.imageUrl) || /<img\b/i.test(body);
   const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
-  const imageStats = analyzeImages(body);
+  const imageStats = analyzeImageSeo(body);
   const markupStats = analyzeTechnicalMarkup(body);
   const focusKeyword = textValue(storedSeo?.focusKeyword);
   const keywords = focusKeyword
@@ -1385,12 +1389,12 @@ function auditArticle(
     );
   }
 
-  if (imageStats.inlineMissingAlt > 0) {
+  if (imageStats.missingAlt > 0) {
     addIssue({
       type: "inline_images_missing_alt",
       category: "image",
       label: "Inline images missing alt text",
-      message: `${imageStats.inlineMissingAlt} inline image(s) have no alt attribute.`,
+      message: `${imageStats.missingAlt} inline image(s) have no alt attribute.`,
       severity: "warning",
       impact: "Medium",
       effort: "Low",
@@ -1422,6 +1426,21 @@ function auditArticle(
       effort: "Medium",
       fix: "Use short descriptive filenames when uploading replacement images.",
     }, 1);
+  }
+
+  if (imageStats.stuffedAlt > 0) {
+    addIssue({ type: "image_alt_stuffing", category: "image", label: "Over-optimized alt text", message: `${imageStats.stuffedAlt} image alt value(s) are overly long or repeat terms.`, severity: "warning", impact: "Medium", effort: "Low", fix: "Use one concise, natural description of each image." }, 3);
+  }
+  if (imageStats.decorativeWithAlt > 0) {
+    addIssue({ type: "decorative_image_alt", category: "image", label: "Decorative image alt text", message: `${imageStats.decorativeWithAlt} decorative image(s) contain descriptive alt text.`, severity: "warning", impact: "Low", effort: "Low", fix: "Use alt=\"\" for decorative or aria-hidden images." }, 1);
+  }
+  if (imageStats.uncrawlableSources > 0) {
+    addIssue({ type: "uncrawlable_image_urls", category: "image", label: "Uncrawlable image URLs", message: `${imageStats.uncrawlableSources} image(s) use a source search engines cannot reliably crawl.`, severity: "critical", impact: "High", effort: "Medium", fix: "Upload the image through Shopify and use its HTTPS CDN URL." }, 5);
+  }
+  const featuredImageTooSmall = Boolean(article.imageUrl && article.imageWidth && article.imageHeight && article.imageWidth * article.imageHeight < 50_000);
+  if (imageStats.tooSmall > 0 || featuredImageTooSmall) {
+    const count = imageStats.tooSmall + (featuredImageTooSmall ? 1 : 0);
+    addIssue({ type: "small_article_images", category: "image", label: "Small article images", message: `${count} image(s) have known dimensions below 50,000 pixels.`, severity: "warning", impact: "Medium", effort: "Medium", fix: "Replace important images with higher-resolution Shopify-hosted images." }, 3);
   }
 
   if (!article.authorName.trim()) {
@@ -1903,10 +1922,8 @@ function auditArticle(
 }
 
 function calculateArticleTechnicalPenalty(article: Pick<ArticleInput, "body" | "authorName">) {
-  const imageStats = analyzeImages(article.body || "");
   const markupStats = analyzeTechnicalMarkup(article.body || "");
   return (
-    Math.min(12, imageStats.inlineMissingAlt * 3 + imageStats.missingDimensions * 2 + imageStats.genericFilenames) +
     (article.authorName.trim() ? 0 : 4) +
     Math.min(10, markupStats.unsafeLinks * 5 + markupStats.skippedHeadingLevels + markupStats.duplicateHeadingIds * 2)
   );
@@ -1929,6 +1946,8 @@ function calculateBlogDetailSeoScore(
     body: article.body || "",
     hasImage: Boolean(article.imageUrl),
     imageAlt: article.imageAlt || "",
+    imageWidth: article.imageWidth,
+    imageHeight: article.imageHeight,
     productCount,
     focusKeyword: textValue(storedSeo?.focusKeyword),
     authorName: article.authorName,
@@ -2031,21 +2050,6 @@ function getBodyImageAltText(body: string) {
   }
 
   return alts.join(" ");
-}
-
-function analyzeImages(body: string) {
-  const stats = { inlineMissingAlt: 0, missingDimensions: 0, genericFilenames: 0 };
-  for (const match of body.matchAll(/<img\b([^>]*)>/gi)) {
-    const attrs = match[1] || "";
-    if (!/\balt\s*=/i.test(attrs)) stats.inlineMissingAlt += 1;
-    if (!/\bwidth\s*=/i.test(attrs) || !/\bheight\s*=/i.test(attrs)) stats.missingDimensions += 1;
-    const src = getHtmlAttribute(attrs, "src");
-    const filename = src.split(/[?#]/)[0].split("/").pop() || "";
-    if (/^(img|image|photo|pic|dsc|screenshot|untitled)[-_]?\d*\.(jpe?g|png|gif|webp|avif)$/i.test(filename)) {
-      stats.genericFilenames += 1;
-    }
-  }
-  return stats;
 }
 
 function analyzeTechnicalMarkup(body: string) {
@@ -2244,7 +2248,7 @@ function cleanText(value: unknown) {
 function getSeoContentHash(article: ArticleInput, productCount: number, config: SeoAuditConfig) {
   return crypto.createHash("sha256").update(JSON.stringify({
     title: article.title, handle: article.handle, body: article.body, summary: article.summary, publishedAt: article.publishedAt,
-    imageUrl: article.imageUrl, imageAlt: article.imageAlt, seoTitle: article.seoTitle,
+    imageUrl: article.imageUrl, imageAlt: article.imageAlt, imageWidth: article.imageWidth, imageHeight: article.imageHeight, seoTitle: article.seoTitle,
     seoDescription: article.seoDescription, authorName: article.authorName, productCount,
     config: { addBlogSchema: config.addBlogSchema, addProductSchema: config.addProductSchema, canContentNavigation: config.canContentNavigation, tocEnabled: config.tocEnabled, tocAutoInsertEnabled: config.tocAutoInsertEnabled },
   })).digest("hex");

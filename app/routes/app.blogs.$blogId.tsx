@@ -298,6 +298,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         image {
           url
           altText
+          width
+          height
         }
         seoTitle: metafield(namespace: "global", key: "title_tag") {
           value
@@ -377,6 +379,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     body: article.body || "",
     hasImage: Boolean(article.image?.url),
     imageAlt: article.image?.altText || "",
+    imageWidth: article.image?.width || null,
+    imageHeight: article.image?.height || null,
     productCount: embeddedProducts.length,
     authorName: article.author?.name || defaultAuthorName,
     publishedAt: article.publishedAt,
@@ -524,6 +528,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               image {
                 url
                 altText
+                width
+                height
               }
               blog {
                 id
@@ -670,6 +676,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             image {
               url
               altText
+              width
+              height
             }
             blog {
               id
@@ -1163,6 +1171,8 @@ export default function ArticleDetail() {
       body,
       hasImage: !!(featuredImageUrl || (article.image?.url && !imageRemoved)),
       imageAlt: featuredImageAlt || article.image?.altText || "",
+      imageWidth: article.image?.width || null,
+      imageHeight: article.image?.height || null,
       productCount: embeddedProducts.length,
       focusKeyword,
       authorName,

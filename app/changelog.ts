@@ -47,6 +47,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "New", text: "Duplicate and cannibalization audits now detect duplicate Shopify article titles and overlapping search intent even when focus keywords differ." },
       { type: "Improved", text: "Near-duplicate content checks now scale to large Shopify blog libraries instead of stopping at 300 posts." },
       { type: "Improved", text: "Cannibalization guidance recommends Shopify-compatible actions: consolidate content, separate focus topics, update internal links and create URL redirects." },
+      { type: "New", text: "Advanced Image SEO detects missing dimensions, over-optimized alt text, decorative-image alt misuse, small images and image sources that search engines cannot crawl." },
+      { type: "Improved", text: "Image guidance is Shopify-aware: it recommends Shopify-hosted CDN images without forcing formats or theme-level LCP changes that the article editor cannot safely fix." },
     ],
   },
   {

@@ -20,6 +20,8 @@ type SeoAuditInput = {
   body: string;
   hasImage: boolean;
   imageAlt: string;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
   productCount: number;
   focusKeyword?: string;
   shopDomain?: string;
@@ -44,6 +46,8 @@ export function auditSeo({
   body,
   hasImage,
   imageAlt,
+  imageWidth,
+  imageHeight,
   productCount,
   focusKeyword,
   shopDomain,
@@ -67,6 +71,7 @@ export function auditSeo({
   const allImageAltText = `${imageAlt || ""} ${bodyImageAltText}`.trim();
   const hasAnyImage = hasImage || /<img\b/i.test(body);
   const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
+  const imageStats = analyzeImageSeo(body);
   const keywordScores: Record<string, "success" | "warning" | "critical"> = {};
 
   const titleLower = title.toLowerCase();
@@ -218,6 +223,37 @@ export function auditSeo({
       message: "Your content contains engaging media.",
       severity: "good",
     });
+  }
+
+  if (imageStats.missingAlt > 0) {
+    issues.push({ category: "additional", type: "inline_images_missing_alt", label: "Inline image alt text", message: `${imageStats.missingAlt} inline image(s) have no alt attribute.`, severity: "warning", impact: "Medium", effort: "Low" });
+    score -= Math.min(6, imageStats.missingAlt * 2);
+  }
+  if (imageStats.missingDimensions > 0) {
+    issues.push({ category: "additional", type: "images_missing_dimensions", label: "Image dimensions", message: `${imageStats.missingDimensions} inline image(s) are missing width or height.`, severity: "warning", impact: "Medium", effort: "Low" });
+    score -= Math.min(4, imageStats.missingDimensions);
+  }
+  if (imageStats.genericFilenames > 0) {
+    issues.push({ category: "additional", type: "generic_image_filenames", label: "Generic image filenames", message: `${imageStats.genericFilenames} image(s) use a generic filename that provides little search context.`, severity: "info", impact: "Low", effort: "Medium", fix: "When replacing the image, upload it to Shopify with a short descriptive filename." });
+    score -= Math.min(2, imageStats.genericFilenames);
+  }
+  if (imageStats.stuffedAlt > 0) {
+    issues.push({ category: "additional", type: "image_alt_stuffing", label: "Over-optimized image alt text", message: `${imageStats.stuffedAlt} image alt value(s) are overly long or repeat the same terms.`, severity: "warning", impact: "Medium", effort: "Low", fix: "Rewrite alt text as one concise, natural description of the image." });
+    score -= Math.min(4, imageStats.stuffedAlt * 2);
+  }
+  if (imageStats.decorativeWithAlt > 0) {
+    issues.push({ category: "additional", type: "decorative_image_alt", label: "Decorative image alt text", message: `${imageStats.decorativeWithAlt} decorative image(s) contain descriptive alt text.`, severity: "warning", impact: "Low", effort: "Low", fix: "Use alt=\"\" for images marked as decorative or aria-hidden." });
+    score -= Math.min(2, imageStats.decorativeWithAlt);
+  }
+  if (imageStats.uncrawlableSources > 0) {
+    issues.push({ category: "additional", type: "uncrawlable_image_urls", label: "Uncrawlable image URLs", message: `${imageStats.uncrawlableSources} image(s) use a missing, data, blob, or JavaScript source that search engines cannot reliably crawl.`, severity: "critical", impact: "High", effort: "Medium", fix: "Upload the image to Shopify Files or the article editor and use its HTTPS CDN URL." });
+    score -= Math.min(8, imageStats.uncrawlableSources * 4);
+  }
+  const featuredImageTooSmall = Boolean(hasImage && imageWidth && imageHeight && imageWidth * imageHeight < 50_000);
+  if (imageStats.tooSmall > 0 || featuredImageTooSmall) {
+    const count = imageStats.tooSmall + (featuredImageTooSmall ? 1 : 0);
+    issues.push({ category: "additional", type: "small_article_images", label: "Small article images", message: `${count} image(s) have known dimensions below 50,000 pixels and may be too small for prominent search presentation.`, severity: "warning", impact: "Medium", effort: "Medium", fix: "Replace important article images with higher-resolution Shopify-hosted images." });
+    score -= Math.min(4, count * 2);
   }
 
   const paragraphs = body.split(/<\/p>/i);
@@ -716,6 +752,49 @@ function getBodyImageAltText(body: string) {
   }
 
   return alts.join(" ");
+}
+
+export function analyzeImageSeo(body: string) {
+  const stats = {
+    missingAlt: 0,
+    missingDimensions: 0,
+    genericFilenames: 0,
+    stuffedAlt: 0,
+    decorativeWithAlt: 0,
+    tooSmall: 0,
+    uncrawlableSources: 0,
+  };
+  for (const match of body.matchAll(/<img\b([^>]*)>/gi)) {
+    const attrs = match[1] || "";
+    const hasAltAttribute = /\balt\s*=/i.test(attrs);
+    const alt = getHtmlAttribute(attrs, "alt").trim();
+    const width = Number.parseInt(getHtmlAttribute(attrs, "width"), 10);
+    const height = Number.parseInt(getHtmlAttribute(attrs, "height"), 10);
+    const src = getHtmlAttribute(attrs, "src").trim();
+    if (!hasAltAttribute) stats.missingAlt += 1;
+    if (!Number.isFinite(width) || !Number.isFinite(height)) stats.missingDimensions += 1;
+    else if (width > 0 && height > 0 && width * height < 50_000) stats.tooSmall += 1;
+    if (isStuffedAlt(alt)) stats.stuffedAlt += 1;
+    if ((/\brole\s*=\s*["']presentation["']/i.test(attrs) || /\baria-hidden\s*=\s*["']true["']/i.test(attrs)) && alt) stats.decorativeWithAlt += 1;
+    if (!src || /^(?:data:|blob:|javascript:)/i.test(src)) stats.uncrawlableSources += 1;
+    const filename = src.split(/[?#]/)[0].split("/").pop() || "";
+    if (/^(img|image|photo|pic|dsc|screenshot|untitled)[-_]?\d*\.(jpe?g|png|gif|webp|avif)$/i.test(filename)) stats.genericFilenames += 1;
+  }
+  return stats;
+}
+
+function isStuffedAlt(alt: string) {
+  if (!alt) return false;
+  if (alt.length > 160) return true;
+  const tokens = normalizeAltTokens(alt);
+  if (tokens.length < 5) return false;
+  const counts = new Map<string, number>();
+  tokens.forEach((token) => counts.set(token, (counts.get(token) || 0) + 1));
+  return Math.max(...counts.values()) >= 3;
+}
+
+function normalizeAltTokens(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().match(/[a-z0-9]{3,}/g) || [];
 }
 
 function stripHtml(value: string) {
