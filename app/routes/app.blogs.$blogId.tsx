@@ -583,15 +583,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         update: {
           shop,
           articleTitle: title,
-          seoScore: audit.score,
           baseSeoScore: audit.score,
           contentHash: null,
           auditVersion: 0,
           metaTitle,
           metaDescription,
           focusKeyword,
-          issues: JSON.stringify(audit.issues),
-          lastAnalyzedAt: new Date(),
         },
         create: {
           shop,
@@ -722,15 +719,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       update: {
         shop,
         articleTitle: title,
-        seoScore: audit.score,
         baseSeoScore: audit.score,
         contentHash: null,
         auditVersion: 0,
         metaTitle,
         metaDescription,
         focusKeyword,
-        issues: JSON.stringify(audit.issues),
-        lastAnalyzedAt: new Date(),
       },
       create: {
         shop,
@@ -924,15 +918,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       update: {
         shop,
         articleTitle: cleanString(formData.get("articleTitle")),
-        seoScore: audit.score,
         baseSeoScore: audit.score,
         contentHash: null,
         auditVersion: 0,
         metaTitle: cleanString(formData.get("metaTitle")),
         metaDescription: cleanString(formData.get("metaDescription")),
         focusKeyword,
-        issues: JSON.stringify(audit.issues),
-        lastAnalyzedAt: new Date(),
       },
       create: {
         shop,
@@ -1005,15 +996,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       update: {
         shop,
         articleTitle,
-        seoScore: audit.score,
         baseSeoScore: audit.score,
         contentHash: null,
         auditVersion: 0,
         metaTitle: suggestedTitle,
         metaDescription: suggestedDescription,
         focusKeyword,
-        issues: JSON.stringify(audit.issues),
-        lastAnalyzedAt: new Date(),
       },
       create: {
         shop,
