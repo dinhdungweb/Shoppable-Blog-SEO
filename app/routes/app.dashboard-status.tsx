@@ -7,12 +7,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   if (formData.get("intent") !== "activate_pixel") return json({ error: "Unsupported action" }, { status: 400 });
 
-  const checkResponse = await admin.graphql(`#graphql query DashboardPixelStatus { webPixel { id } }`);
+  const checkResponse = await admin.graphql(`#graphql
+    query DashboardPixelStatus { webPixel { id } }
+  `);
   const checkResult: any = await checkResponse.json();
   if (checkResult.data?.webPixel?.id) return json({ success: true, webPixelEnabled: true });
 
   const createResponse = await admin.graphql(
-    `#graphql mutation DashboardWebPixelCreate($webPixel: WebPixelInput!) {
+    `#graphql
+    mutation DashboardWebPixelCreate($webPixel: WebPixelInput!) {
       webPixelCreate(webPixel: $webPixel) { webPixel { id } userErrors { field message } }
     }`,
     { variables: { webPixel: { settings: JSON.stringify({ accountID: session.shop }) } } },
@@ -52,7 +55,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     appEmbedError = "Could not check theme status";
   }
   try {
-    const response = await admin.graphql(`#graphql query DashboardPixelStatus { webPixel { id } }`);
+    const response = await admin.graphql(`#graphql
+      query DashboardPixelStatus { webPixel { id } }
+    `);
     const result: any = await response.json();
     webPixelEnabled = Boolean(result.data?.webPixel?.id);
     if (result.errors?.length && !webPixelEnabled) console.info("Web Pixel is not active yet", { shop: session.shop });

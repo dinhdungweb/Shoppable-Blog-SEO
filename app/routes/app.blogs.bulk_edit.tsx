@@ -125,13 +125,17 @@ async function setSeo(admin: any, ownerId: string, metaTitle: string, metaDescri
   const metafields = values.filter((item) => item.value).map((item) => ({ ownerId, namespace: "global", key: item.key, type: "single_line_text_field", value: item.value }));
   const errors: string[] = [];
   if (metafields.length) {
-    const response = await admin.graphql(`#graphql mutation BulkSetSeo($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { userErrors { field message } } }`, { variables: { metafields } });
+    const response = await admin.graphql(`#graphql
+      mutation BulkSetSeo($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { userErrors { field message } } }
+    `, { variables: { metafields } });
     const result = await response.json();
     errors.push(...[...(result.errors || []), ...(result.data?.metafieldsSet?.userErrors || [])].map((error: any) => error.message));
   }
   const empty = values.filter((item) => !item.value).map((item) => ({ ownerId, namespace: "global", key: item.key }));
   if (empty.length) {
-    const response = await admin.graphql(`#graphql mutation BulkDeleteSeo($metafields: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $metafields) { userErrors { field message } } }`, { variables: { metafields: empty } });
+    const response = await admin.graphql(`#graphql
+      mutation BulkDeleteSeo($metafields: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $metafields) { userErrors { field message } } }
+    `, { variables: { metafields: empty } });
     const result = await response.json();
     errors.push(...[...(result.errors || []), ...(result.data?.metafieldsDelete?.userErrors || [])].map((error: any) => error.message));
   }
@@ -140,6 +144,8 @@ async function setSeo(admin: any, ownerId: string, metaTitle: string, metaDescri
 function suggestTitle(value: unknown) { const title = clean(value); return title.length <= 60 ? title : `${title.slice(0, 57).replace(/[\s,:;-]+$/g, "")}…`; }
 function suggestDescription(summary: unknown, body: unknown, title: unknown) { const source = clean(summary) || clean(String(body || "").replace(/<[^>]*>/g, " ")) || clean(title); if (source.length <= 155) return source; const shortened = source.slice(0, 155); const boundary = shortened.lastIndexOf(" "); return `${shortened.slice(0, boundary > 110 ? boundary : 152).replace(/[\s,;:-]+$/g, "")}…`; }
 function suggestImageAlt(title: unknown) { return clean(title).replace(/\s*[-|–—]\s*[^-|–—]{1,40}$/u, "").slice(0, 125); }
-async function setImageAlt(admin: any, id: string, imageUrl: string, altText: string) { if (!imageUrl) return ""; const response = await admin.graphql(`#graphql mutation BulkSetArticleImageAlt($id: ID!, $article: ArticleUpdateInput!) { articleUpdate(id: $id, article: $article) { userErrors { field message } } }`, { variables: { id, article: { image: { url: imageUrl, altText } } } }); const result = await response.json(); return [...(result.errors || []), ...(result.data?.articleUpdate?.userErrors || [])].map((error: any) => error.message).join("; "); }
+async function setImageAlt(admin: any, id: string, imageUrl: string, altText: string) { if (!imageUrl) return ""; const response = await admin.graphql(`#graphql
+  mutation BulkSetArticleImageAlt($id: ID!, $article: ArticleUpdateInput!) { articleUpdate(id: $id, article: $article) { userErrors { field message } } }
+`, { variables: { id, article: { image: { url: imageUrl, altText } } } }); const result = await response.json(); return [...(result.errors || []), ...(result.data?.articleUpdate?.userErrors || [])].map((error: any) => error.message).join("; "); }
 function clean(value: unknown) { return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""; }
 function nullable(value: string) { return value || null; }

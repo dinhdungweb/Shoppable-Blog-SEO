@@ -33,6 +33,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Uninstall and privacy cleanup now includes analytics aggregates, Search Console records, bulk-change history and SEO scan jobs." },
       { type: "Fixed", text: "Dashboard setup can activate a missing Shopify Web Pixel again without creating resources during page load." },
       { type: "Fixed", text: "Analytics session comparison now groups date ranges correctly on PostgreSQL." },
+      { type: "Fixed", text: "Web Pixel and bulk SEO mutations now send valid GraphQL documents to Shopify." },
     ],
   },
   {
