@@ -34,6 +34,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Dashboard setup can activate a missing Shopify Web Pixel again without creating resources during page load." },
       { type: "Fixed", text: "Analytics session comparison now groups date ranges correctly on PostgreSQL." },
       { type: "Fixed", text: "Web Pixel and bulk SEO mutations now send valid GraphQL documents to Shopify." },
+      { type: "Fixed", text: "Deferred setup checks show a neutral checking state instead of flashing an error before completion." },
     ],
   },
   {

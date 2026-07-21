@@ -271,12 +271,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       label: "App enabled in theme", 
       done: appEmbedEnabled,
       actionUrl: appEmbedEnabled ? undefined : `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${process.env.SHOPIFY_API_KEY}/sbs-article-embed`,
-      actionLabel: appEmbedError ? `Error: ${appEmbedError}` : "Enable"
+      actionLabel: appEmbedError === "Checking…" ? "Checking…" : appEmbedError ? `Error: ${appEmbedError}` : "Enable"
     },
     {
       label: "Conversion tracking (Web Pixel) active",
       done: webPixelEnabled,
-      actionLabel: webPixelError ? `Error: ${webPixelError}` : undefined
+      actionLabel: webPixelError === "Checking…" ? "Checking…" : webPixelError ? `Error: ${webPixelError}` : undefined
     },
     { label: "Products linked to posts", done: linkedProducts.length > 0 },
     { label: "Tracking events received", done: everEventCount > 0 },
@@ -715,9 +715,11 @@ function ProgressItem({ label, done, actionUrl, actionLabel, onAction, loading }
       </InlineStack>
       {done ? (
         <Badge tone="success">Done</Badge>
+      ) : actionLabel === "Checking…" ? (
+        <Badge tone="info">Checking…</Badge>
       ) : actionLabel?.startsWith("Error:") ? (
         <Badge tone="critical">{actionLabel}</Badge>
-      ) : actionUrl ? (
+      ) : actionUrl || onAction ? (
         <Button size="micro" url={actionUrl} target={actionUrl ? "_blank" : undefined} onClick={onAction} loading={loading}>{actionLabel || "Enable"}</Button>
       ) : (
         <Badge tone="new">Pending</Badge>
