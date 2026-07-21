@@ -13,6 +13,7 @@ import { fetchShopDomains } from "../shopify-domains.server";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const MAX_EXTERNAL_LINKS = 30;
+const ISSUE_PAGE_SIZE = 20;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -74,6 +75,7 @@ export default function ContentDecayPage() {
   const analyzedAt = response?.analyzedAt || initial.analyzedAt;
   const analyzing = fetcher.state !== "idle";
   const [filter, setFilter] = useState("all");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     if (!response || handled.current === response) return;
@@ -83,7 +85,11 @@ export default function ContentDecayPage() {
   }, [response, shopify]);
 
   const visibleIssues = useMemo(() => report?.issues.filter((issue) => filter === "all" || issue.type === filter) || [], [filter, report]);
+  const totalPages = Math.max(1, Math.ceil(visibleIssues.length / ISSUE_PAGE_SIZE));
+  const pagedIssues = visibleIssues.slice((page - 1) * ISSUE_PAGE_SIZE, page * ISSUE_PAGE_SIZE);
   const run = () => fetcher.submit({ intent: "analyze" }, { method: "post" });
+
+  useEffect(() => { setPage(1); }, [filter, report]);
 
   return <Page fullWidth>
     <TitleBar title="Content Decay Monitor"><button variant="primary" disabled={analyzing} onClick={run}>{analyzing ? "Analyzing..." : "Analyze content"}</button></TitleBar>
@@ -107,8 +113,7 @@ export default function ContentDecayPage() {
         <Card padding="0">
           <Box padding="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">Priority queue</Text><Text as="p" variant="bodySm" tone="subdued">Updated {formatDate(analyzedAt)} · Review high-priority rows first. No changes are published automatically.</Text></BlockStack><div style={{ minWidth: 230 }}><Select label="Issue type" labelHidden value={filter} onChange={setFilter} options={filterOptions(report)} /></div></InlineStack></Box>
           <Divider />
-          {visibleIssues.length ? <div style={{ overflowX: "auto" }}><table style={tableStyle}><colgroup><col style={{ width: "17%" }} /><col style={{ width: "17%" }} /><col style={{ width: "20%" }} /><col style={{ width: "11%" }} /><col style={{ width: "21%" }} /><col style={{ width: "7%" }} /><col style={{ width: "7%" }} /></colgroup><thead><tr><Header>Article</Header><Header>Issue</Header><Header>Previous</Header><Header>Current</Header><Header>Recommended action</Header><Header>Priority</Header><Header>Action</Header></tr></thead><tbody>{visibleIssues.slice(0, 100).map((issue) => <IssueRow key={issue.id} issue={issue} />)}</tbody></table></div> : <Box padding="500"><Text as="p" tone="subdued">No content decay issues match this filter.</Text></Box>}
-          {visibleIssues.length > 100 && <Box padding="300"><Text as="p" variant="bodySm" tone="subdued">Showing 100 of {visibleIssues.length} issues.</Text></Box>}
+          {visibleIssues.length ? <><div style={{ overflowX: "auto" }}><table style={tableStyle}><colgroup><col style={{ width: "17%" }} /><col style={{ width: "17%" }} /><col style={{ width: "20%" }} /><col style={{ width: "11%" }} /><col style={{ width: "21%" }} /><col style={{ width: "7%" }} /><col style={{ width: "7%" }} /></colgroup><thead><tr><Header>Article</Header><Header>Issue</Header><Header>Previous</Header><Header>Current</Header><Header>Recommended action</Header><Header>Priority</Header><Header>Action</Header></tr></thead><tbody>{pagedIssues.map((issue) => <IssueRow key={issue.id} issue={issue} />)}</tbody></table></div><Divider /><Box padding="300"><InlineStack align="center" blockAlign="center" gap="300"><Button size="micro" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button><Text as="span" variant="bodySm" tone="subdued">Page {page} of {totalPages} · {visibleIssues.length} issues</Text><Button size="micro" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</Button></InlineStack></Box></> : <Box padding="500"><Text as="p" tone="subdued">No content decay issues match this filter.</Text></Box>}
         </Card>
       </>}
     </BlockStack>

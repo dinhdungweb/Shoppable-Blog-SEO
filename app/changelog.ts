@@ -60,6 +60,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Content Decay Shopify queries now use valid GraphQL document formatting instead of failing with an unexpected end-of-file parser error." },
       { type: "Fixed", text: "Long tracked outbound URLs in Content Decay are compacted with tooltips and can no longer stretch or break the report table layout." },
       { type: "Improved", text: "Content Decay table columns now prioritize article titles, URLs and recommended actions while keeping priority and action controls compact." },
+      { type: "Improved", text: "Content Decay issues are paginated in 20-row pages with filter-aware Previous and Next controls." },
     ],
   },
   {
