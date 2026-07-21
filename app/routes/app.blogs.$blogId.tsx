@@ -4007,28 +4007,27 @@ function InternalLinkAssistantCard({
         </Text>
 
         {suggestions.length ? (
-          <BlockStack gap="300">
-            {suggestions.slice(0, 3).map((suggestion, index) => (
-              <div key={suggestion.id}>
-                {index > 0 && <Divider />}
-                <Box paddingBlockStart={index > 0 ? "300" : "0"}>
-                  <BlockStack gap="200">
+          <div className="bp-internal-link-list">
+            {suggestions.slice(0, 3).map((suggestion) => (
+              <div className="bp-internal-link-item" key={suggestion.id}>
+                <div className="bp-internal-link-copy">
+                  <div className="bp-internal-link-title">
                     <Text as="p" variant="bodySm" fontWeight="semibold">
                       {suggestion.targetTitle}
                     </Text>
-                    <InlineStack align="space-between" blockAlign="center" gap="200" wrap={false}>
-                      <Text as="span" variant="bodySm" tone="subdued" truncate>
-                        Anchor: {suggestion.anchorText}
-                      </Text>
-                      <Button size="micro" onClick={() => onReview(suggestion)}>
-                        Review
-                      </Button>
-                    </InlineStack>
-                  </BlockStack>
-                </Box>
+                  </div>
+                  <div className="bp-internal-link-anchor">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Anchor: {suggestion.anchorText}
+                    </Text>
+                  </div>
+                </div>
+                <Button size="micro" onClick={() => onReview(suggestion)}>
+                  Review
+                </Button>
               </div>
             ))}
-          </BlockStack>
+          </div>
         ) : (
           <Box background="bg-surface-secondary" padding="300" borderRadius="300">
             <Text as="p" variant="bodySm" tone="subdued">
@@ -5305,6 +5304,41 @@ const DETAIL_STYLES = `
   gap: 16px;
   position: sticky;
   top: 16px;
+}
+
+.bp-internal-link-list {
+  border-top: 1px solid var(--p-color-border-secondary);
+}
+
+.bp-internal-link-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--p-color-border-secondary);
+}
+
+.bp-internal-link-copy {
+  min-width: 0;
+}
+
+.bp-internal-link-title,
+.bp-internal-link-anchor {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+}
+
+.bp-internal-link-title {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.bp-internal-link-anchor {
+  margin-top: 4px;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
 }
 
 .bp-field-grid {
