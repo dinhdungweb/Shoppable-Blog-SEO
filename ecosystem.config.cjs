@@ -21,6 +21,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         SHOPIFY_BILLING_TEST: 'false',
+        SEO_WORKER_URL: 'http://127.0.0.1:3004/app/seo',
         NODE_OPTIONS: '--dns-result-order=ipv4first',
       },
     },

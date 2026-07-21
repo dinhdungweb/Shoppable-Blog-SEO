@@ -47,13 +47,19 @@ async function enqueueScheduledJobs() {
 
 async function processJob(job: { id: string; shop: string }) {
   try {
-    const port = process.env.PORT || "3004";
-    const response = await fetch(process.env.SEO_WORKER_URL || `http://127.0.0.1:${port}/app/seo`, {
+    const workerUrl = process.env.SEO_WORKER_URL || "http://127.0.0.1:3004/app/seo";
+    const response = await fetch(workerUrl, {
       method: "POST",
       headers: { "content-type": "application/json", "x-seo-worker-token": process.env.SEO_WORKER_SECRET || process.env.SHOPIFY_API_SECRET || "" },
       body: JSON.stringify({ jobId: job.id, shop: job.shop }),
     });
-    const payload = await response.json() as { scannedCount?: number; analyzedCount?: number; averageScore?: number; error?: string };
+    const responseBody = await response.text();
+    let payload: { scannedCount?: number; analyzedCount?: number; averageScore?: number; error?: string };
+    try {
+      payload = JSON.parse(responseBody);
+    } catch {
+      throw new Error(`SEO worker endpoint ${workerUrl} returned ${response.status} ${response.headers.get("content-type") || "unknown content type"} instead of JSON`);
+    }
     if (!response.ok) throw new Error(payload.error || `SEO worker endpoint returned ${response.status}`);
     await prisma.seoScanJob.update({
       where: { id: job.id },
