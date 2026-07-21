@@ -28,7 +28,7 @@ describe("people-first SEO scoring", () => {
 });
 
 describe("content quality and E-E-A-T checklist", () => {
-  it("recognizes author, freshness, citations and first-hand evidence", () => {
+  it("recognizes actionable authorship, citations and first-hand evidence", () => {
     const issues = auditContentQuality({
       body: '<p>We tested this product and measured the results.</p><a href="https://example.org/research">Research</a>',
       summary: "A detailed answer that explains what readers should choose, why it matters, and what the test results mean in practice.",
@@ -40,10 +40,9 @@ describe("content quality and E-E-A-T checklist", () => {
     });
 
     expect(issues.find((issue) => issue.type === "eeat_author")?.severity).toBe("good");
-    expect(issues.find((issue) => issue.type === "eeat_dates")?.severity).toBe("info");
-    expect(issues.find((issue) => issue.type === "eeat_dates")?.message).toContain("Shopify");
     expect(issues.find((issue) => issue.type === "eeat_sources")?.severity).toBe("good");
     expect(issues.find((issue) => issue.type === "eeat_experience")?.severity).toBe("good");
+    expect(issues).toHaveLength(4);
   });
 
   it("flags missing authors and unclear introductions without guessing manual checks", () => {
@@ -51,6 +50,6 @@ describe("content quality and E-E-A-T checklist", () => {
 
     expect(issues.find((issue) => issue.type === "eeat_author")?.severity).toBe("warning");
     expect(issues.find((issue) => issue.type === "eeat_direct_answer")?.severity).toBe("warning");
-    expect(issues.find((issue) => issue.type === "eeat_ai_disclosure")?.severity).toBe("info");
+    expect(issues.every((issue) => ["eeat_author", "eeat_sources", "eeat_experience", "eeat_direct_answer"].includes(issue.type))).toBe(true);
   });
 });

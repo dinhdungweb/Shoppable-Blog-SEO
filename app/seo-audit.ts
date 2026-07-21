@@ -585,31 +585,21 @@ export function auditContentQuality({
   body,
   summary,
   authorName,
-  publishedAt,
-  updatedAt,
-  productCount,
   shopDomain,
   shopDomains,
 }: ContentQualityInput): SeoAuditIssue[] {
   const text = stripHtml(body);
   const linkStats = analyzeLinks(body, shopDomain, shopDomains);
   const firstParagraph = getFirstParagraph(body) || text.slice(0, 500);
-  const published = toValidDate(publishedAt);
-  const updated = toValidDate(updatedAt);
   const hasExperienceEvidence = /\b(i|we|our|tested|reviewed|compared|measured|results?|case study|before and after|in our experience)\b/i.test(text)
     || /(?:tôi|chúng tôi|kinh nghiệm|trải nghiệm|đã dùng|đã thử|thử nghiệm|đo lường|kết quả thực tế|đánh giá thực tế|trước và sau)/i.test(text)
     || (body.match(/<img\b/gi)?.length || 0) >= 2;
-  const hasAiDisclosure = /(?:ai[- ]assisted|generated (?:with|by) ai|artificial intelligence|hỗ trợ bởi ai|tạo bởi ai|trí tuệ nhân tạo)/i.test(text);
   const directlyAnswersIntent = stripHtml(firstParagraph).split(/\s+/).filter(Boolean).length >= 35 || stripHtml(summary).length >= 90;
 
   return [
     authorName?.trim()
       ? qualityIssue("eeat_author", "Author attribution", `The article identifies ${authorName.trim()} as its author.`, "good")
       : qualityIssue("eeat_author", "Author attribution", "No author is assigned to this article.", "warning", "Medium", "Assign a real author and show the byline on the storefront."),
-    qualityIssue("eeat_author_profile", "Author profile", "Manual review: Shopify articles provide an author name but no native author-profile URL. Confirm the theme byline links to a useful Page or custom author profile.", "info"),
-    published && updated
-      ? qualityIssue("eeat_dates", "Published and updated dates", `Shopify provides publication and update timestamps${updated.getTime() > published.getTime() + 86_400_000 ? " that differ" : ""}. Manual review: confirm the theme displays them accurately; Shopify updatedAt does not prove a substantive content revision.`, "info")
-      : qualityIssue("eeat_dates", "Published and updated dates", "Manual review: Shopify has not returned both timestamps. Confirm the article is published and the theme displays the available date accurately.", "info"),
     linkStats.external > 0
       ? qualityIssue("eeat_sources", "Sources and citations", "The article links to at least one external source readers can inspect.", "good")
       : qualityIssue("eeat_sources", "Sources and citations", "No external citation was found. Add trustworthy sources for factual or high-stakes claims.", "info"),
@@ -619,13 +609,6 @@ export function auditContentQuality({
     directlyAnswersIntent
       ? qualityIssue("eeat_direct_answer", "Direct answer to reader intent", "The introduction or summary gives readers a substantive answer quickly.", "good")
       : qualityIssue("eeat_direct_answer", "Direct answer to reader intent", "The opening does not clearly answer the main reader need.", "warning", "Medium", "Add a concise, direct answer or outcome near the beginning."),
-    qualityIssue("eeat_originality", "Originality across the store", "Site-wide SEO scans check this article for near-duplicate content and competing topics.", "info"),
-    productCount > 0
-      ? qualityIssue("eeat_product_freshness", "Product information freshness", "Manual review: confirm linked product claims, availability, specifications, and prices remain accurate.", "info")
-      : qualityIssue("eeat_product_freshness", "Product information freshness", "No linked products require a freshness review.", "good"),
-    hasAiDisclosure
-      ? qualityIssue("eeat_ai_disclosure", "Content creation transparency", "The article includes an AI-assistance disclosure.", "good")
-      : qualityIssue("eeat_ai_disclosure", "Content creation transparency", "Manual review: if AI materially helped create the content, consider explaining how it was used.", "info"),
   ];
 }
 
@@ -642,12 +625,6 @@ function qualityIssue(
 
 function getFirstParagraph(body: string) {
   return body.match(/<p\b[^>]*>([\s\S]*?)<\/p>/i)?.[1] || "";
-}
-
-function toValidDate(value?: string | Date | null) {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function analyzeLinks(body: string, shopDomain?: string, shopDomains: string[] = []) {
