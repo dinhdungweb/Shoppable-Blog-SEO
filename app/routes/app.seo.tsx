@@ -1022,9 +1022,12 @@ function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; bu
   return (
     <Card padding="400">
       <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="start" wrap={false} gap="200">
-          <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">{data.lastSyncedAt ? `Last synced ${formatDate(data.lastSyncedAt)}` : "Connected — select a property and sync."}</Text></BlockStack>
-          <InlineStack gap="100" wrap={false}><Button size="micro" loading={busy} disabled={!data.selectedSiteUrl} onClick={() => submit({ intent: "google_sync" })}>Sync</Button><Button size="micro" tone="critical" variant="plain" onClick={() => submit({ intent: "google_disconnect" })}>Disconnect</Button></InlineStack>
+        <InlineStack align="space-between" blockAlign="center" wrap={false} gap="200">
+          <InlineStack gap="200" blockAlign="center" wrap={false}>
+            <Icon source={ChartVerticalFilledIcon} tone="info" />
+            <BlockStack gap="050"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" variant="bodySm" tone="subdued">{data.lastSyncedAt ? `Synced ${formatDate(data.lastSyncedAt)}` : "Ready to sync"}</Text></BlockStack>
+          </InlineStack>
+          <InlineStack gap="100" blockAlign="center" wrap={false}><Button size="micro" loading={busy} disabled={!data.selectedSiteUrl} onClick={() => submit({ intent: "google_sync" })}>Sync</Button><Button size="micro" tone="critical" onClick={() => submit({ intent: "google_disconnect" })}>Disconnect</Button></InlineStack>
         </InlineStack>
         {data.error && <Banner tone="critical"><p>{data.error}</p></Banner>}
         <Select label="Search Console property" options={options} value={data.selectedSiteUrl} onChange={(siteUrl) => siteUrl && submit({ intent: "google_select", siteUrl })} />
@@ -1034,11 +1037,12 @@ function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; bu
           <CompactSearchMetric label="CTR" value={`${(data.summary.ctr * 100).toFixed(1)}%`} />
           <CompactSearchMetric label="Position" value={data.summary.position ? data.summary.position.toFixed(1) : "—"} />
         </InlineGrid>
-        {data.opportunities.length > 0 && <BlockStack gap="200">
+        {data.opportunities.length > 0 && <BlockStack gap="300">
+          <Divider />
           <Text as="h3" variant="headingSm">Top opportunity</Text>
           {data.opportunities.slice(0, 1).map((item) => <BlockStack key={item.id} gap="100">
             <BlockStack gap="050"><Text as="span" fontWeight="semibold">{item.title}</Text><Text as="span" variant="bodySm" tone="subdued">{item.query || "Page total"} · {item.detail}</Text></BlockStack>
-            <InlineStack align="end"><Button size="micro" variant="plain" url={item.pageUrl} target="_blank">Open page</Button></InlineStack>
+            <InlineStack align="end"><Button size="micro" url={item.pageUrl} target="_blank">Open</Button></InlineStack>
           </BlockStack>)}
         </BlockStack>}
       </BlockStack>
@@ -1051,7 +1055,7 @@ function CompactSearchMetric({ label, value }: { label: string; value: string })
     <Box background="bg-surface-secondary" padding="300" borderRadius="300">
       <BlockStack gap="050">
         <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
-        <Text as="span" variant="headingMd" fontWeight="bold">{value}</Text>
+        <Text as="span" variant="headingLg" fontWeight="bold">{value}</Text>
       </BlockStack>
     </Box>
   );
