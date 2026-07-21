@@ -30,6 +30,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "New", text: "A configurable raw-event retention command keeps long-term daily reports while controlling database growth." },
       { type: "New", text: "SEO scans now run in a persistent background queue with live progress, cancellation, failure recovery and optional weekly scheduling." },
       { type: "New", text: "Internal Linking Assistant suggests related articles and natural anchors, detects orphan and broken links, maps topic clusters, and inserts links only after approval." },
+      { type: "Improved", text: "Internal Linking reports are saved per shop and organized into overview, suggestions, issues and topic cluster tabs." },
       { type: "Improved", text: "Merchants can leave SEO Optimizer while a scan runs, avoiding long browser requests and timeouts on large stores." },
       { type: "Fixed", text: "Uninstall and privacy cleanup now includes analytics aggregates, Search Console records, bulk-change history and SEO scan jobs." },
       { type: "Fixed", text: "Dashboard setup can activate a missing Shopify Web Pixel again without creating resources during page load." },
