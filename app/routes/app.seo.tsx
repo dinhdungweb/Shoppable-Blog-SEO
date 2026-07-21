@@ -44,7 +44,7 @@ import { normalizeContentNavConfig } from "../content-navigation";
 import { auditSeoPortfolio } from "../seo-portfolio-audit";
 import { buildSearchOpportunities } from "../search-console-opportunities";
 import { getPublicSeoScanError } from "../seo-scan-error";
-import { createAuthorizationUrl, disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
+import { SEARCH_CONSOLE_TOTAL_PAGE, createAuthorizationUrl, disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -155,16 +155,21 @@ async function loadSearchConsoleMetrics(shop: string, connected: boolean) {
   if (!connected) return empty;
   try {
     const where = { shop, windowDays: 28, period: "current" };
-    const [current, previous, aggregate] = await Promise.all([
-      prisma.searchConsoleMetric.findMany({ where, orderBy: { impressions: "desc" }, take: 500,
+    const [current, previous, total, aggregate] = await Promise.all([
+      prisma.searchConsoleMetric.findMany({ where: { ...where, pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, orderBy: { impressions: "desc" }, take: 500,
         select: { pageUrl: true, query: true, clicks: true, impressions: true, ctr: true, position: true, period: true } }),
-      prisma.searchConsoleMetric.findMany({ where: { shop, windowDays: 28, period: "previous" }, orderBy: { clicks: "desc" }, take: 500,
+      prisma.searchConsoleMetric.findMany({ where: { shop, windowDays: 28, period: "previous", pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, orderBy: { clicks: "desc" }, take: 500,
         select: { pageUrl: true, query: true, clicks: true, impressions: true, ctr: true, position: true, period: true } }),
-      prisma.searchConsoleMetric.aggregate({ where, _sum: { clicks: true, impressions: true }, _avg: { position: true } }),
+      prisma.searchConsoleMetric.findFirst({ where: { ...where, pageUrl: SEARCH_CONSOLE_TOTAL_PAGE }, select: { clicks: true, impressions: true, ctr: true, position: true } }),
+      prisma.searchConsoleMetric.aggregate({ where: { ...where, pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, _sum: { clicks: true, impressions: true }, _avg: { position: true } }),
     ]);
-    const clicks = aggregate._sum.clicks || 0;
-    const impressions = aggregate._sum.impressions || 0;
-    return { metrics: [...current, ...previous], summary: { clicks: Math.round(clicks), impressions: Math.round(impressions), ctr: impressions ? clicks / impressions : 0, position: aggregate._avg.position || 0 } };
+    const clicks = total?.clicks ?? aggregate._sum.clicks ?? 0;
+    const impressions = total?.impressions ?? aggregate._sum.impressions ?? 0;
+    return { metrics: [...current, ...previous], summary: {
+      clicks: Math.round(clicks), impressions: Math.round(impressions),
+      ctr: total?.ctr ?? (impressions ? clicks / impressions : 0),
+      position: total?.position ?? aggregate._avg.position ?? 0,
+    } };
   } catch (error) {
     console.error("Search Console snapshot query failed:", error);
     return empty;
@@ -1001,7 +1006,7 @@ type SearchConsoleData = {
   lastSyncedAt: string | null;
   error: string;
   summary: { clicks: number; impressions: number; ctr: number; position: number };
-  opportunities: Array<{ id: string; title: string; detail: string; pageUrl: string; query: string; type: string }>;
+  opportunities: Array<{ id: string; title: string; detail: string; pageUrl: string; query: string; type: string; previousValue: string; currentValue: string; changeValue: string }>;
 };
 
 function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; busy: boolean; submit: (values: Record<string, string>) => void }) {
@@ -1042,13 +1047,30 @@ function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; bu
         {data.opportunities.length > 0 && <BlockStack gap="300">
           <Divider />
           <Text as="h3" variant="headingSm">Top opportunities</Text>
-          {data.opportunities.slice(0, showAllOpportunities ? data.opportunities.length : 3).map((item, index) => <BlockStack key={item.id} gap="200">
-            {index > 0 && <Divider />}
-            <InlineStack align="space-between" blockAlign="center" wrap={false} gap="200">
-              <BlockStack gap="050"><Text as="span" fontWeight="semibold">{item.title}</Text><Text as="span" variant="bodySm" tone="subdued">{item.query || "Page total"} · {item.detail}</Text></BlockStack>
-              <Button size="micro" url={item.pageUrl} target="_blank">Open</Button>
-            </InlineStack>
-          </BlockStack>)}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
+              <thead>
+                <tr style={{ color: "var(--p-color-text-secondary)" }}>
+                  <th style={{ padding: "0 8px 8px 0", fontWeight: 600 }}>Opportunity</th>
+                  <th style={{ padding: "0 8px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>Previous</th>
+                  <th style={{ padding: "0 8px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>Current</th>
+                  <th style={{ padding: "0 8px 8px", fontWeight: 600 }}>Change</th>
+                  <th aria-label="Action" />
+                </tr>
+              </thead>
+              <tbody>
+                {data.opportunities.slice(0, showAllOpportunities ? data.opportunities.length : 3).map((item) => (
+                  <tr key={item.id} style={{ borderTop: "1px solid var(--p-color-border-secondary)" }}>
+                    <td style={{ padding: "10px 8px 10px 0", minWidth: "130px" }}><Text as="span" variant="bodySm" fontWeight="semibold">{item.query || "Page total"}</Text><br /><Text as="span" variant="bodySm" tone="subdued">{item.title}</Text></td>
+                    <td style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>{item.previousValue}</td>
+                    <td style={{ padding: "10px 8px", whiteSpace: "nowrap", fontWeight: 600 }}>{item.currentValue}</td>
+                    <td style={{ padding: "10px 8px", whiteSpace: "nowrap", color: item.type === "decay" ? "var(--p-color-text-critical)" : undefined }}>{item.changeValue}</td>
+                    <td style={{ padding: "10px 0 10px 8px" }}><Button size="micro" url={item.pageUrl} target="_blank">Open</Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {data.opportunities.length > 3 && (
             <Button variant="plain" onClick={() => setShowAllOpportunities((current) => !current)}>
               {showAllOpportunities ? "Show less" : `View all opportunities (${data.opportunities.length})`}

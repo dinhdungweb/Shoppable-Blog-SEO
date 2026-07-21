@@ -5,6 +5,7 @@ const SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const API_URL = "https://www.googleapis.com/webmasters/v3";
+export const SEARCH_CONSOLE_TOTAL_PAGE = "__bp_search_console_total__";
 
 type Site = { siteUrl: string; permissionLevel: string };
 type MetricRow = { keys?: string[]; clicks?: number; impressions?: number; ctr?: number; position?: number };
@@ -115,10 +116,24 @@ export async function syncSearchConsole(shop: string) {
   try {
     const token = await accessToken(shop);
     const now = new Date();
-    const requests = [7, 28, 90].map(async (days) => ({ days, period: "current", rows: await query(token, connection.selectedSiteUrl!, days, 0) }));
-    requests.push((async () => ({ days: 28, period: "previous", rows: await query(token, connection.selectedSiteUrl!, 28, 28) }))());
+    const requestConfigs = [
+      { days: 7, period: "current", offsetDays: 0 },
+      { days: 28, period: "current", offsetDays: 0 },
+      { days: 90, period: "current", offsetDays: 0 },
+      { days: 28, period: "previous", offsetDays: 28 },
+    ];
+    const requests = requestConfigs.map(async ({ days, period, offsetDays }) => {
+      const [rows, totals] = await Promise.all([
+        query(token, connection.selectedSiteUrl!, days, offsetDays, ["page", "query"]),
+        query(token, connection.selectedSiteUrl!, days, offsetDays, []),
+      ]);
+      return { days, period, rows, total: totals[0] };
+    });
     const results = await Promise.all(requests);
-    const records = results.flatMap(({ days, period, rows }) => rows.map((row) => ({ shop, siteUrl: connection.selectedSiteUrl!, pageUrl: row.keys?.[0] || "", query: row.keys?.[1] || "", windowDays: days, period, clicks: row.clicks || 0, impressions: row.impressions || 0, ctr: row.ctr || 0, position: row.position || 0, syncedAt: now }))).filter((row) => row.pageUrl);
+    const records = results.flatMap(({ days, period, rows, total }) => [
+      ...rows.map((row) => ({ shop, siteUrl: connection.selectedSiteUrl!, pageUrl: row.keys?.[0] || "", query: row.keys?.[1] || "", windowDays: days, period, clicks: row.clicks || 0, impressions: row.impressions || 0, ctr: row.ctr || 0, position: row.position || 0, syncedAt: now })),
+      ...(total ? [{ shop, siteUrl: connection.selectedSiteUrl!, pageUrl: SEARCH_CONSOLE_TOTAL_PAGE, query: "", windowDays: days, period, clicks: total.clicks || 0, impressions: total.impressions || 0, ctr: total.ctr || 0, position: total.position || 0, syncedAt: now }] : []),
+    ]).filter((row) => row.pageUrl);
     await prisma.$transaction([
       prisma.searchConsoleMetric.deleteMany({ where: { shop, siteUrl: connection.selectedSiteUrl } }),
       ...(records.length ? [prisma.searchConsoleMetric.createMany({ data: records, skipDuplicates: true })] : []),
@@ -132,10 +147,12 @@ export async function syncSearchConsole(shop: string) {
   }
 }
 
-async function query(token: string, siteUrl: string, days: number, offsetDays: number): Promise<MetricRow[]> {
-  const end = new Date(); end.setUTCDate(end.getUTCDate() - 1 - offsetDays);
+async function query(token: string, siteUrl: string, days: number, offsetDays: number, dimensions: string[]): Promise<MetricRow[]> {
+  // Search Console's finalized performance data normally trails the current date.
+  // Use the same complete-data window shown by its default performance report.
+  const end = new Date(); end.setUTCDate(end.getUTCDate() - 3 - offsetDays);
   const start = new Date(end); start.setUTCDate(start.getUTCDate() - days + 1);
-  const response = await fetch(`${API_URL}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ startDate: date(start), endDate: date(end), dimensions: ["page", "query"], rowLimit: 25000, dataState: "final" }) });
+  const response = await fetch(`${API_URL}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ startDate: date(start), endDate: date(end), dimensions, rowLimit: 25000, dataState: "final" }) });
   const data = await readGoogleResponse(response) as { rows?: MetricRow[] };
   return data.rows || [];
 }
