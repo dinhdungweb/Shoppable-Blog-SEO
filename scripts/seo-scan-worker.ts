@@ -1,5 +1,6 @@
 import "dotenv/config";
 import prisma from "../app/db.server";
+import { resolveSeoWorkerUrl } from "../app/seo-worker-url";
 
 const POLL_INTERVAL_MS = 2_000;
 const STALE_AFTER_MS = 15 * 60 * 1_000;
@@ -47,7 +48,7 @@ async function enqueueScheduledJobs() {
 
 async function processJob(job: { id: string; shop: string }) {
   try {
-    const workerUrl = process.env.SEO_WORKER_URL || "http://127.0.0.1:3004/app/seo?_data=routes%2Fapp.seo";
+    const workerUrl = resolveSeoWorkerUrl(process.env);
     const response = await fetch(workerUrl, {
       method: "POST",
       headers: { "content-type": "application/json", "x-seo-worker-token": process.env.SEO_WORKER_SECRET || process.env.SHOPIFY_API_SECRET || "" },

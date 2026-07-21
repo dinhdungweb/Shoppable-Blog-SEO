@@ -151,22 +151,23 @@ const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
   { id: "content", content: "Content quality" },
 ];
 
-async function loadSearchConsoleMetrics(shop: string, connected: boolean) {
-  const empty = { metrics: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 } };
-  if (!connected) return empty;
+async function loadSearchConsoleMetrics(shop: string, siteUrl: string) {
+  const empty = { metrics: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 }, lastSyncedAt: null as Date | null };
+  if (!siteUrl) return empty;
   try {
-    const where = { shop, windowDays: 28, period: "current" };
-    const [current, previous, total, aggregate] = await Promise.all([
+    const where = { shop, siteUrl, windowDays: 28, period: "current" };
+    const [current, previous, total, aggregate, latest] = await Promise.all([
       prisma.searchConsoleMetric.findMany({ where: { ...where, pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, orderBy: { impressions: "desc" }, take: 500,
         select: { pageUrl: true, query: true, clicks: true, impressions: true, ctr: true, position: true, period: true } }),
-      prisma.searchConsoleMetric.findMany({ where: { shop, windowDays: 28, period: "previous", pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, orderBy: { clicks: "desc" }, take: 500,
+      prisma.searchConsoleMetric.findMany({ where: { shop, siteUrl, windowDays: 28, period: "previous", pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, orderBy: { clicks: "desc" }, take: 500,
         select: { pageUrl: true, query: true, clicks: true, impressions: true, ctr: true, position: true, period: true } }),
       prisma.searchConsoleMetric.findFirst({ where: { ...where, pageUrl: SEARCH_CONSOLE_TOTAL_PAGE }, select: { clicks: true, impressions: true, ctr: true, position: true } }),
       prisma.searchConsoleMetric.aggregate({ where: { ...where, pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, _sum: { clicks: true, impressions: true }, _avg: { position: true } }),
+      prisma.searchConsoleMetric.findFirst({ where: { shop, siteUrl }, orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
     ]);
     const clicks = total?.clicks ?? aggregate._sum.clicks ?? 0;
     const impressions = total?.impressions ?? aggregate._sum.impressions ?? 0;
-    return { metrics: [...current, ...previous], summary: {
+    return { metrics: [...current, ...previous], lastSyncedAt: latest?.syncedAt || null, summary: {
       clicks: Math.round(clicks), impressions: Math.round(impressions),
       ctr: total?.ctr ?? (impressions ? clicks / impressions : 0),
       position: total?.position ?? aggregate._avg.position ?? 0,
@@ -219,7 +220,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.seoScanJob.findFirst({ where: { shop }, orderBy: { requestedAt: "desc" } }),
     prisma.shopConfig.findUnique({ where: { shop }, select: { seoAutoScanEnabled: true } }),
   ]);
-  const searchData = await loadSearchConsoleMetrics(shop, Boolean(searchConnection));
+  const searchData = await loadSearchConsoleMetrics(shop, searchConnection?.selectedSiteUrl || "");
   const searchMetrics = searchData.metrics;
   const auditedPosts: AuditedPost[] = seoRows.map((row) => ({
     id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "", publishedAt: null,
@@ -266,7 +267,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6).map((post) => ({ id: post.id, title: post.title, imageUrl: post.imageUrl, imageAlt: post.imageAlt, score: post.score, baseScore: post.baseScore })),
     searchConsole: {
       configured: isSearchConsoleConfigured(), connected: Boolean(searchConnection), selectedSiteUrl: searchConnection?.selectedSiteUrl || "",
-      availableSites, lastSyncedAt: searchConnection?.lastSyncedAt?.toISOString() || null, error: searchConnection?.lastSyncError || "",
+      availableSites, lastSyncedAt: searchData.lastSyncedAt?.toISOString() || null, error: searchConnection?.lastSyncError || "",
       summary: searchSummary, opportunities: searchOpportunities,
     },
   });
@@ -958,22 +959,26 @@ export default function SEOOptimizer() {
                   <BlockStack gap="300">
                     {postsNeedingAttention.length ? (
                       postsNeedingAttention.map((post) => (
-                        <InlineStack key={post.id} align="space-between" blockAlign="center" wrap={false}>
-                          <InlineStack gap="300" blockAlign="center" wrap={false}>
+                        <div className="bp-seo-attention-row" key={post.id}>
+                          <div className="bp-seo-attention-thumbnail">
                             <Thumbnail source={post.imageUrl || ImageIcon} alt={post.imageAlt || post.title} size="small" />
+                          </div>
+                          <div className="bp-seo-attention-copy">
                             <BlockStack gap="050">
-                              <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
-                                {post.title}
-                              </Text>
+                              <div className="bp-seo-attention-title" title={post.title}>
+                                <Text as="span" variant="bodyMd" fontWeight="semibold">
+                                  {post.title}
+                                </Text>
+                              </div>
                               <Text as="span" variant="bodySm" tone="subdued">
                                 On-page {post.baseScore}/100 · Site-adjusted {post.score}/100
                               </Text>
                             </BlockStack>
-                          </InlineStack>
+                          </div>
                           <Button size="micro" onClick={() => goToPost(post.id)}>
                             Review
                           </Button>
-                        </InlineStack>
+                        </div>
                       ))
                     ) : (
                       <Text as="p" tone="subdued">
@@ -1041,6 +1046,10 @@ type SearchConsoleData = {
 
 function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; busy: boolean; submit: (values: Record<string, string>) => void }) {
   const [showAllOpportunities, setShowAllOpportunities] = useState(false);
+
+  useEffect(() => {
+    setShowAllOpportunities(false);
+  }, [data.selectedSiteUrl]);
 
   if (!data.configured) return (
     <Banner title="Google Search Console is ready to configure" tone="info">
@@ -2227,6 +2236,22 @@ export function links() {
           }
           .bp-seo-affected-post-row:last-child {
             border-bottom: 0;
+          }
+          .bp-seo-attention-row {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+          }
+          .bp-seo-attention-thumbnail,
+          .bp-seo-attention-copy {
+            min-width: 0;
+          }
+          .bp-seo-attention-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
           }
         `),
     },
