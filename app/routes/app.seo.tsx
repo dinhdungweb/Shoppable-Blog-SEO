@@ -133,7 +133,7 @@ const DONUT_COLORS = {
   Medium: "#FFC453",
   Low: "#29845A",
 };
-const SEO_AUDIT_VERSION = 3;
+const SEO_AUDIT_VERSION = 4;
 const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "orphan_article", "near_duplicate_content"]);
 
 function safeTokenEqual(supplied: string, expected: string) {
@@ -1805,12 +1805,12 @@ function auditArticle(
       {
         type: "missing_focus_keyword",
         category: "on_page",
-        label: "Missing focus keyword",
-        message: "Set a Focus Keyword for this content.",
-        severity: "info",
-        impact: "Low",
+        label: "Focus keyword not set",
+        message: "Set a focus keyword to complete keyword placement, relevance, and cannibalization checks.",
+        severity: "warning",
+        impact: "Medium",
         effort: "Low",
-        fix: "Optionally set a primary topic to organize reporting; do not force an exact-match phrase into the copy.",
+        fix: "Choose the primary search topic for this article, then review the keyword checks without forcing unnatural repetition.",
       },
       30,
     );

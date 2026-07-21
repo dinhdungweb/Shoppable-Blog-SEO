@@ -4104,7 +4104,7 @@ function InternalLinkAssistantCard({
   onReview: (suggestion: LinkSuggestion) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const visibleSuggestions = expanded ? suggestions : suggestions.slice(0, 5);
+  const visibleSuggestions = expanded ? suggestions : suggestions.slice(0, 3);
 
   return (
     <Card padding="400">
@@ -4155,9 +4155,9 @@ function InternalLinkAssistantCard({
           </Box>
         )}
 
-        {suggestions.length > 5 && (
+        {suggestions.length > 3 && (
           <Button variant="plain" onClick={() => setExpanded((value) => !value)} fullWidth>
-            {expanded ? "Show less" : `Show ${suggestions.length - 5} more`}
+            {expanded ? "Show less" : `Show ${suggestions.length - 3} more`}
           </Button>
         )}
       </BlockStack>

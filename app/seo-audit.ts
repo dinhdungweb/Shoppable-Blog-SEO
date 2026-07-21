@@ -534,15 +534,15 @@ export function auditSeo({
     });
   } else {
     issues.push({
-      category: "additional",
+      category: "basic",
       type: "kw_missing",
-      label: "Primary topic not set",
-      message: "Optionally set a primary topic for reporting and cannibalization detection.",
-      severity: "info",
-      impact: "Low",
+      label: "Focus keyword not set",
+      message: "Set a focus keyword to complete keyword placement, relevance, and cannibalization checks.",
+      severity: "warning",
+      impact: "Medium",
       effort: "Low",
     });
-    score -= 3;
+    score = Math.min(score, 79);
   }
 
   return {

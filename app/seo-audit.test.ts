@@ -19,10 +19,10 @@ describe("people-first SEO scoring", () => {
     expect(result.score).toBeGreaterThan(50);
   });
 
-  it("treats focus keywords as optional reporting metadata", () => {
+  it("does not award a high score before keyword checks are configured", () => {
     const withoutKeyword = auditSeo(base);
     const issue = withoutKeyword.issues.find((item) => item.type === "kw_missing");
-    expect(issue?.severity).toBe("info");
-    expect(withoutKeyword.score).toBeGreaterThanOrEqual(70);
+    expect(issue?.severity).toBe("warning");
+    expect(withoutKeyword.score).toBeLessThanOrEqual(79);
   });
 });
