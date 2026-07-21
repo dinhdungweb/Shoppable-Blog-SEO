@@ -10,6 +10,21 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.07.21",
+    date: "2026-07-21",
+    title: "Faster SEO Optimizer and incremental scans",
+    summary: "SEO reports now open from a lightweight saved snapshot while fresh Shopify scans run only when requested.",
+    tags: ["Improved", "Fixed"],
+    changes: [
+      { type: "Improved", text: "SEO Optimizer no longer downloads and re-audits every article when the report page opens." },
+      { type: "Improved", text: "SEO scans use cursor pagination and cover stores with more than 100 articles per blog." },
+      { type: "Improved", text: "Content hashes skip detailed audits for unchanged articles while preserving portfolio-wide checks." },
+      { type: "Improved", text: "Search Console insights load bounded opportunity rows and database aggregates instead of every query row." },
+      { type: "Improved", text: "A lightweight CSS issue chart replaces the larger chart dependency on SEO Optimizer." },
+      { type: "Fixed", text: "Internal-link lookup and related-post scoring scale more efficiently for large blog libraries." },
+    ],
+  },
+  {
     version: "2026.07.20",
     date: "2026-07-20",
     title: "Bulk SEO fixes with safe preview and undo",

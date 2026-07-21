@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import crypto from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
@@ -34,14 +35,13 @@ import {
   ShieldCheckMarkIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
 import { auditSeoPortfolio } from "../seo-portfolio-audit";
-import { buildSearchOpportunities, summarizeSearchMetrics } from "../search-console-opportunities";
+import { buildSearchOpportunities } from "../search-console-opportunities";
 import { disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
@@ -129,6 +129,8 @@ const DONUT_COLORS = {
   Medium: "#FFC453",
   Low: "#29845A",
 };
+const SEO_AUDIT_VERSION = 2;
+const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "orphan_article", "near_duplicate_content"]);
 
 const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
   { id: "all", content: "All issues" },
@@ -139,31 +141,42 @@ const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
   { id: "content", content: "Content quality" },
 ];
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session, billing } = await authenticate.admin(request);
-  const shop = session.shop;
-  const shopDomains = await fetchShopDomains(admin, shop);
-  const { limits } = await getActivePlanAndLimits(billing);
-  let shopifyError = "";
-  let articles: ArticleInput[] = [];
-
+async function loadSearchConsoleMetrics(shop: string, connected: boolean) {
+  const empty = { metrics: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 } };
+  if (!connected) return empty;
   try {
-    articles = await fetchShopifyArticles(admin);
+    const where = { shop, windowDays: 28, period: "current" };
+    const [current, previous, aggregate] = await Promise.all([
+      prisma.searchConsoleMetric.findMany({ where, orderBy: { impressions: "desc" }, take: 500,
+        select: { pageUrl: true, query: true, clicks: true, impressions: true, ctr: true, position: true, period: true } }),
+      prisma.searchConsoleMetric.findMany({ where: { shop, windowDays: 28, period: "previous" }, orderBy: { clicks: "desc" }, take: 500,
+        select: { pageUrl: true, query: true, clicks: true, impressions: true, ctr: true, position: true, period: true } }),
+      prisma.searchConsoleMetric.aggregate({ where, _sum: { clicks: true, impressions: true }, _avg: { position: true } }),
+    ]);
+    const clicks = aggregate._sum.clicks || 0;
+    const impressions = aggregate._sum.impressions || 0;
+    return { metrics: [...current, ...previous], summary: { clicks: Math.round(clicks), impressions: Math.round(impressions), ctr: impressions ? clicks / impressions : 0, position: aggregate._avg.position || 0 } };
   } catch (error) {
-    console.error("SEO Shopify query failed:", error);
-    shopifyError = "Could not load Shopify blog posts.";
+    console.error("Search Console snapshot query failed:", error);
+    return empty;
   }
+}
 
-  const [linkedProducts, seoRows, config, searchConnection, searchMetrics] = await Promise.all([
-    prisma.articleProduct.findMany({
-      where: { shop, isActive: true },
-      select: {
-        articleId: true,
-        articleTitle: true,
-        articleHandle: true,
-        blogId: true,
-      },
-    }),
+function parseStoredIssues(value: string | null): SeoIssue[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((issue): issue is SeoIssue => Boolean(issue && typeof issue.type === "string" && typeof issue.label === "string")) : [];
+  } catch {
+    return [];
+  }
+}
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const startedAt = Date.now();
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const [seoRows, searchConnection] = await Promise.all([
     prisma.articleSEO.findMany({
       where: { shop },
       select: {
@@ -175,101 +188,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         focusKeyword: true,
         issues: true,
         lastAnalyzedAt: true,
+        articleHandle: true,
+        blogTitle: true,
+        blogHandle: true,
+        imageUrl: true,
+        imageAlt: true,
       },
-    }),
-    prisma.shopConfig.upsert({
-      where: { shop },
-      update: {},
-      create: { shop },
     }),
     prisma.searchConsoleConnection.findUnique({ where: { shop } }).catch((error) => {
       console.error("Search Console connection table unavailable:", error);
       return null;
     }),
-    prisma.searchConsoleMetric.findMany({ where: { shop, windowDays: 28 }, orderBy: { impressions: "desc" } }).catch((error) => {
-      console.error("Search Console metrics table unavailable:", error);
-      return [];
-    }),
   ]);
-
-  const fallbackArticleMap = new Map<string, ArticleInput>();
-  linkedProducts.forEach((product) => {
-    if (!fallbackArticleMap.has(product.articleId)) {
-      fallbackArticleMap.set(product.articleId, {
-        id: product.articleId,
-        title: product.articleTitle || "Untitled post",
-        handle: product.articleHandle || "",
-        body: "",
-        summary: "",
-        imageUrl: "",
-        imageAlt: "",
-        updatedAt: "",
-        seoTitle: "",
-        seoDescription: "",
-        blogId: product.blogId || "",
-        blogTitle: "Blog",
-        blogHandle: "",
-        authorName: "",
-      });
-    }
-  });
-  seoRows.forEach((row) => {
-    if (!fallbackArticleMap.has(row.articleId)) {
-      fallbackArticleMap.set(row.articleId, {
-        id: row.articleId,
-        title: row.articleTitle || "Untitled post",
-        handle: "",
-        body: "",
-        summary: "",
-        imageUrl: "",
-        imageAlt: "",
-        updatedAt: "",
-        seoTitle: row.metaTitle || "",
-        seoDescription: row.metaDescription || "",
-        blogId: "",
-        blogTitle: "Blog",
-        blogHandle: "",
-        authorName: "",
-      });
-    }
-  });
-
-  const articleMap = new Map(articles.map((article) => [article.id, article]));
-  fallbackArticleMap.forEach((article, id) => {
-    if (!articleMap.has(id)) articleMap.set(id, article);
-  });
-
-  const productCountMap = new Map<string, number>();
-  linkedProducts.forEach((product) => {
-    productCountMap.set(product.articleId, (productCountMap.get(product.articleId) || 0) + 1);
-  });
-
-  const storedSeoMap = new Map(seoRows.map((row) => [row.articleId, row]));
-  const contentNavConfig = normalizeContentNavConfig(config);
-  const seoAuditConfig: SeoAuditConfig = {
-    ...config,
-    canContentNavigation: limits.canContentNavigation,
-    tocEnabled: contentNavConfig.tocEnabled,
-    tocAutoInsertEnabled: contentNavConfig.tocAutoInsertEnabled,
-  };
-  const auditedPosts = Array.from(articleMap.values())
-    .map((article) => {
-      const productCount = productCountMap.get(article.id) || 0;
-      const stored = storedSeoMap.get(article.id);
-      const audit = auditArticle(article, productCount, seoAuditConfig, stored, shop, shopDomains);
-
-      return {
-        ...article,
-        productCount,
-        score: audit.score,
-        issues: audit.issues,
-        effectiveSeoTitle: getEffectiveSeoTitle(stored?.metaTitle, article),
-        effectiveSeoDescription: getEffectiveSeoDescription(stored?.metaDescription, article),
-        focusKeyword: textValue(stored?.focusKeyword),
-        lastAnalyzedAt: stored?.lastAnalyzedAt ? stored.lastAnalyzedAt.toISOString() : null,
-      };
-    });
-  applyPortfolioIssues(auditedPosts);
+  const searchData = await loadSearchConsoleMetrics(shop, Boolean(searchConnection));
+  const searchMetrics = searchData.metrics;
+  const auditedPosts: AuditedPost[] = seoRows.map((row) => ({
+    id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "",
+    imageUrl: row.imageUrl, imageAlt: row.imageAlt, updatedAt: "", seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
+    blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle, authorName: "", productCount: 0,
+    score: row.seoScore, issues: parseStoredIssues(row.issues), effectiveSeoTitle: row.metaTitle || row.articleTitle,
+    effectiveSeoDescription: row.metaDescription || "", focusKeyword: row.focusKeyword || "",
+    lastAnalyzedAt: row.lastAnalyzedAt?.toISOString() || null,
+  }));
   auditedPosts.sort((a, b) => a.score - b.score || b.issues.length - a.issues.length || a.title.localeCompare(b.title));
 
   const issueGroups = buildIssueGroups(auditedPosts);
@@ -281,20 +221,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return latest;
   }, null);
   const availableSites = (searchConnection?.availableSites as Array<{ siteUrl: string; permissionLevel: string }> | null) || [];
-  const searchSummary = summarizeSearchMetrics(searchMetrics);
+  const searchSummary = searchData.summary;
   const searchOpportunities = buildSearchOpportunities(searchMetrics);
+  console.info("SEO loader snapshot timing", { shop, rows: seoRows.length, metrics: searchMetrics.length, durationMs: Date.now() - startedAt });
 
   return json({
-    shopifyError,
+    shopifyError: "",
     averageScore,
     issueGroups,
     issueStats,
     affectedPosts: auditedPosts.filter((post) => post.issues.length > 0).length,
     quickWins: issueGroups.filter((issue) => issue.effort === "Low").reduce((sum, issue) => sum + issue.affected, 0),
-    scannedPosts: seoRows.length,
+    scannedPosts: seoRows.filter((row) => row.lastAnalyzedAt).length,
     totalPosts: auditedPosts.length,
     lastScanAt: lastScanAt ? lastScanAt.toISOString() : null,
-    postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6),
+    postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6).map((post) => ({ id: post.id, title: post.title, imageUrl: post.imageUrl, imageAlt: post.imageAlt, score: post.score })),
     searchConsole: {
       configured: isSearchConsoleConfigured(), connected: Boolean(searchConnection), selectedSiteUrl: searchConnection?.selectedSiteUrl || "",
       availableSites, lastSyncedAt: searchConnection?.lastSyncedAt?.toISOString() || null, error: searchConnection?.lastSyncError || "",
@@ -327,6 +268,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "Unsupported action" }, { status: 400 });
   }
 
+  const scanStartedAt = Date.now();
   const [articles, linkedProducts, config, seoRows, shopDomains] = await Promise.all([
     fetchShopifyArticles(admin),
     prisma.articleProduct.findMany({
@@ -342,15 +284,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { shop },
       select: {
         articleId: true,
+        articleTitle: true,
         seoScore: true,
+        baseSeoScore: true,
         metaTitle: true,
         metaDescription: true,
         focusKeyword: true,
+        issues: true,
         lastAnalyzedAt: true,
+        sourceUpdatedAt: true,
+        contentHash: true,
+        auditVersion: true,
       },
     }),
     fetchShopDomains(admin, shop),
   ]);
+  const fetchDurationMs = Date.now() - scanStartedAt;
 
   const productCountMap = new Map<string, number>();
   linkedProducts.forEach((product) => {
@@ -365,9 +314,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     tocEnabled: contentNavConfig.tocEnabled,
     tocAutoInsertEnabled: contentNavConfig.tocAutoInsertEnabled,
   };
+  let analyzedCount = 0;
+  const baseScoreMap = new Map<string, number>();
+  const contentHashMap = new Map<string, string>();
   const audits: AuditedPost[] = articles.map((article) => {
     const stored = storedSeoMap.get(article.id);
-    const audit = auditArticle(article, productCountMap.get(article.id) || 0, seoAuditConfig, stored, shop, shopDomains);
+    const contentHash = getSeoContentHash(article, productCountMap.get(article.id) || 0, seoAuditConfig);
+    contentHashMap.set(article.id, contentHash);
+    const sourceUpdatedAt = article.updatedAt ? new Date(article.updatedAt) : null;
+    const unchanged = Boolean(stored && stored.auditVersion === SEO_AUDIT_VERSION && stored.contentHash === contentHash && datesEqual(stored.sourceUpdatedAt, sourceUpdatedAt));
+    const audit = unchanged
+      ? { score: stored!.baseSeoScore, issues: parseStoredIssues(stored!.issues).filter((issue) => !PORTFOLIO_ISSUE_TYPES.has(issue.type)) }
+      : auditArticle(article, productCountMap.get(article.id) || 0, seoAuditConfig, stored, shop, shopDomains);
+    if (!unchanged) analyzedCount += 1;
+    baseScoreMap.set(article.id, audit.score);
     return {
       ...article,
       productCount: productCountMap.get(article.id) || 0,
@@ -380,6 +340,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     };
   });
   applyPortfolioIssues(audits);
+  const auditDurationMs = Date.now() - scanStartedAt - fetchDurationMs;
 
   const articleIds = articles.map((a) => a.id);
 
@@ -404,28 +365,49 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           shop,
           articleTitle: article.title,
           seoScore: audit.score,
+          baseSeoScore: baseScoreMap.get(article.id) ?? audit.score,
           metaTitle,
           metaDescription,
           issues: JSON.stringify(audit.issues),
           lastAnalyzedAt: new Date(),
+          articleHandle: article.handle,
+          blogTitle: article.blogTitle,
+          blogHandle: article.blogHandle,
+          imageUrl: article.imageUrl,
+          imageAlt: article.imageAlt,
+          sourceUpdatedAt: article.updatedAt ? new Date(article.updatedAt) : null,
+          contentHash: contentHashMap.get(article.id),
+          auditVersion: SEO_AUDIT_VERSION,
         },
         create: {
           shop,
           articleId: article.id,
           articleTitle: article.title,
           seoScore: audit.score,
+          baseSeoScore: baseScoreMap.get(article.id) ?? audit.score,
           metaTitle,
           metaDescription,
           issues: JSON.stringify(audit.issues),
           lastAnalyzedAt: new Date(),
+          articleHandle: article.handle,
+          blogTitle: article.blogTitle,
+          blogHandle: article.blogHandle,
+          imageUrl: article.imageUrl,
+          imageAlt: article.imageAlt,
+          sourceUpdatedAt: article.updatedAt ? new Date(article.updatedAt) : null,
+          contentHash: contentHashMap.get(article.id),
+          auditVersion: SEO_AUDIT_VERSION,
         },
       });
     }),
   );
 
+  const durationMs = Date.now() - scanStartedAt;
+  console.info("SEO incremental scan timing", { shop, articles: articles.length, analyzedCount, fetchDurationMs, auditDurationMs, durationMs });
   return json({
     success: true,
     scannedCount: audits.length,
+    analyzedCount,
     averageScore: getAverageScore(audits),
   });
 };
@@ -459,10 +441,10 @@ export default function SEOOptimizer() {
   const isGoogleBusy = isScanning && String(scanFetcher.formData?.get("intent") || "").startsWith("google_");
 
   useEffect(() => {
-    const data = scanFetcher.data as { success?: boolean; scannedCount?: number; averageScore?: number; error?: string; googleAction?: string; syncedCount?: number } | undefined;
+    const data = scanFetcher.data as { success?: boolean; scannedCount?: number; analyzedCount?: number; averageScore?: number; error?: string; googleAction?: string; syncedCount?: number } | undefined;
     if (!data) return;
     if (data.success) {
-      shopify.toast.show(data.googleAction ? (data.googleAction === "synced" ? `Search Console synced: ${data.syncedCount || 0} rows` : `Search Console ${data.googleAction}`) : `SEO scan complete: ${data.scannedCount || 0} posts, avg ${data.averageScore || 0}/100`);
+      shopify.toast.show(data.googleAction ? (data.googleAction === "synced" ? `Search Console synced: ${data.syncedCount || 0} rows` : `Search Console ${data.googleAction}`) : `SEO scan complete: ${data.scannedCount || 0} posts (${data.analyzedCount || 0} changed), avg ${data.averageScore || 0}/100`);
     } else if (data.error) {
       shopify.toast.show(data.error, { isError: true });
     }
@@ -478,6 +460,12 @@ export default function SEOOptimizer() {
     { name: "Medium impact", value: issueStats.Medium, color: DONUT_COLORS.Medium },
     { name: "Low impact", value: issueStats.Low, color: DONUT_COLORS.Low },
   ];
+  const donutTotal = Math.max(1, issueStats.total);
+  const highEnd = (issueStats.High / donutTotal) * 100;
+  const mediumEnd = highEnd + (issueStats.Medium / donutTotal) * 100;
+  const donutBackground = issueStats.total
+    ? `conic-gradient(${DONUT_COLORS.High} 0 ${highEnd}%, ${DONUT_COLORS.Medium} ${highEnd}% ${mediumEnd}%, ${DONUT_COLORS.Low} ${mediumEnd}% 100%)`
+    : "var(--p-color-bg-surface-secondary)";
   const goToPost = (postId: string) => navigate(getPostTarget(postId));
   const handleIssueAction = (issue: IssueGroup) => {
     if (issue.category === "schema") {
@@ -711,15 +699,8 @@ export default function SEOOptimizer() {
                   </Text>
                   <InlineStack gap="500" blockAlign="center" wrap={false}>
                     <div style={{ width: "120px", height: "120px", position: "relative" }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie data={donutData} cx="50%" cy="50%" innerRadius={45} outerRadius={60} paddingAngle={2} dataKey="value" stroke="none">
-                            {donutData.map((entry) => (
-                              <Cell key={entry.name} fill={entry.color} />
-                            ))}
-                          </Pie>
-                        </PieChart>
-                      </ResponsiveContainer>
+                      <div aria-hidden="true" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: donutBackground }} />
+                      <div aria-hidden="true" style={{ position: "absolute", inset: "15px", borderRadius: "50%", background: "var(--p-color-bg-surface)" }} />
                       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
                         <Text as="p" variant="headingLg" fontWeight="bold">
                           {issueStats.total}
@@ -927,96 +908,26 @@ function MetricCard({
 }
 
 async function fetchShopifyArticles(admin: any): Promise<ArticleInput[]> {
-  try {
-    return await fetchShopifyArticleList(admin, true);
-  } catch (error) {
-    console.error("Full SEO article query failed, retrying lightweight query:", error);
-    return fetchShopifyArticleList(admin, false);
-  }
-}
-
-async function fetchShopifyArticleList(admin: any, includeContent: boolean): Promise<ArticleInput[]> {
-  const query = includeContent
-    ? `#graphql
-    query SeoBlogs {
-      blogs(first: 50) {
-        nodes {
-          id
-          title
-          handle
-          articles(first: 100) {
-            nodes {
-              id
-              title
-              handle
-              updatedAt
-              author { name }
-              body
-              summary
-              image {
-                url
-                altText
-              }
-              seoTitle: metafield(namespace: "global", key: "title_tag") {
-                value
-              }
-              seoDescription: metafield(namespace: "global", key: "description_tag") {
-                value
-              }
-              blog {
-                id
-                title
-                handle
-              }
-            }
+  const articles: ArticleInput[] = [];
+  let cursor: string | null = null;
+  let hasNextPage = true;
+  while (hasNextPage) {
+    const response = await admin.graphql(`#graphql
+      query SeoArticles($after: String) {
+        articles(first: 100, after: $after, sortKey: UPDATED_AT) {
+          nodes { id title handle updatedAt author { name } body summary image { url altText }
+            seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+            seoDescription: metafield(namespace: "global", key: "description_tag") { value }
+            blog { id title handle }
           }
+          pageInfo { hasNextPage endCursor }
         }
-      }
-    }`
-    : `#graphql
-    query SeoBlogsLite {
-      blogs(first: 50) {
-        nodes {
-          id
-          title
-          handle
-          articles(first: 100) {
-            nodes {
-              id
-              title
-              handle
-              updatedAt
-              author { name }
-              image {
-                url
-                altText
-              }
-              seoTitle: metafield(namespace: "global", key: "title_tag") {
-                value
-              }
-              seoDescription: metafield(namespace: "global", key: "description_tag") {
-                value
-              }
-              blog {
-                id
-                title
-                handle
-              }
-            }
-          }
-        }
-      }
-    }`;
-  const response = await admin.graphql(query);
-  const result: any = await response.json();
-
-  if (result.errors?.length) {
-    throw new Error(result.errors.map((error: any) => error.message).join("; ") || "Could not load Shopify blog posts.");
-  }
-
-  const blogs = result.data?.blogs?.nodes || [];
-  return blogs.flatMap((blog: any) =>
-    (blog.articles?.nodes || []).map((article: any) => ({
+      }`, { variables: { after: cursor } });
+    const result: any = await response.json();
+    if (result.errors?.length) throw new Error(result.errors.map((error: any) => error.message).join("; ") || "Could not load Shopify blog posts.");
+    const connection = result.data?.articles;
+    for (const article of connection?.nodes || []) {
+      articles.push({
       id: article.id,
       title: cleanText(article.title) || "Untitled post",
       handle: cleanText(article.handle),
@@ -1027,12 +938,17 @@ async function fetchShopifyArticleList(admin: any, includeContent: boolean): Pro
       updatedAt: article.updatedAt || "",
       seoTitle: article.seoTitle?.value || "",
       seoDescription: article.seoDescription?.value || "",
-      blogId: article.blog?.id || blog.id,
-      blogTitle: article.blog?.title || blog.title || "Blog",
-      blogHandle: article.blog?.handle || blog.handle || "",
+      blogId: article.blog?.id || "",
+      blogTitle: article.blog?.title || "Blog",
+      blogHandle: article.blog?.handle || "",
       authorName: article.author?.name || "",
-    })),
-  );
+      });
+    }
+    hasNextPage = Boolean(connection?.pageInfo?.hasNextPage);
+    cursor = connection?.pageInfo?.endCursor || null;
+    if (hasNextPage && !cursor) throw new Error("Shopify article pagination did not return a cursor.");
+  }
+  return articles;
 }
 
 function auditArticle(
@@ -1991,6 +1907,19 @@ function slugifyKeyword(value: string) {
 
 function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getSeoContentHash(article: ArticleInput, productCount: number, config: SeoAuditConfig) {
+  return crypto.createHash("sha256").update(JSON.stringify({
+    title: article.title, handle: article.handle, body: article.body, summary: article.summary,
+    imageUrl: article.imageUrl, imageAlt: article.imageAlt, seoTitle: article.seoTitle,
+    seoDescription: article.seoDescription, authorName: article.authorName, productCount,
+    config: { addBlogSchema: config.addBlogSchema, addProductSchema: config.addProductSchema, canContentNavigation: config.canContentNavigation, tocEnabled: config.tocEnabled, tocAutoInsertEnabled: config.tocAutoInsertEnabled },
+  })).digest("hex");
+}
+
+function datesEqual(left: Date | null | undefined, right: Date | null) {
+  return (left?.getTime() || 0) === (right?.getTime() || 0);
 }
 
 export function links() {

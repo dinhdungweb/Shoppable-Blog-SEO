@@ -29,7 +29,7 @@ describe("SEO portfolio audit", () => {
 
   it("detects orphan posts and respects contextual inbound links", () => {
     const result = auditSeoPortfolio([
-      post({ id: "1", body: '<a href="/blogs/news/second-post">Read next</a>' }),
+      post({ id: "1", body: '<a href="https://example.com/blogs/news/second-post?utm_source=blog">Read next</a>' }),
       post({ id: "2", title: "Second", seoTitle: "Second", seoDescription: "Unique second description", focusKeyword: "second topic", handle: "second-post" }),
     ]);
     expect(result.get("2")?.some((issue) => issue.type === "orphan_article")).toBe(false);

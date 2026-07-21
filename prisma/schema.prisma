@@ -154,10 +154,20 @@ model ArticleSEO {
   schemaGenerated Boolean   @default(false)
   lastAnalyzedAt  DateTime?
   issues          String?
+  articleHandle   String    @default("")
+  blogTitle       String    @default("")
+  blogHandle      String    @default("")
+  imageUrl        String    @default("")
+  imageAlt        String    @default("")
+  sourceUpdatedAt DateTime?
+  contentHash     String?
+  auditVersion    Int       @default(1)
+  baseSeoScore    Int       @default(0)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
   @@index([shop])
+  @@index([shop, sourceUpdatedAt])
   @@unique([shop, articleId])
 }
 

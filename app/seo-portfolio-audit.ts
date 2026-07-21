@@ -20,6 +20,9 @@ export type PortfolioSeoIssue = {
   penalty: number;
 };
 
+const relatedPostCache = new WeakMap<PortfolioSeoPost[], Map<string, PortfolioSeoPost | undefined>>();
+const relatedTokenCache = new WeakMap<PortfolioSeoPost[], Map<string, Set<string>>>();
+
 export function auditSeoPortfolio(posts: PortfolioSeoPost[]) {
   const issues = new Map<string, PortfolioSeoIssue[]>();
   posts.forEach((post) => issues.set(post.id, []));
@@ -85,7 +88,7 @@ function addOrphanIssues(posts: PortfolioSeoPost[], result: Map<string, Portfoli
   posts.forEach((source) => {
     const hrefs = getHrefs(source.body);
     hrefs.forEach((href) => {
-      const target = [...postByPath.entries()].find(([path]) => href.includes(path))?.[1];
+      const target = postByPath.get(normalizeHrefPath(href));
       if (target && source.id !== target.id) inboundCounts.set(target.id, (inboundCounts.get(target.id) || 0) + 1);
     });
   });
@@ -130,11 +133,27 @@ function addNearDuplicateIssues(posts: PortfolioSeoPost[], result: Map<string, P
 }
 
 function findRelatedPost(target: PortfolioSeoPost, posts: PortfolioSeoPost[]) {
+  let results = relatedPostCache.get(posts);
+  if (!results) {
+    results = new Map();
+    relatedPostCache.set(posts, results);
+  }
+  if (results.has(target.id)) return results.get(target.id);
+  let tokens = relatedTokenCache.get(posts);
+  if (!tokens) {
+    tokens = new Map(posts.map((post) => [post.id, words(`${post.title} ${post.focusKeyword} ${post.body.slice(0, 800)}`)]));
+    relatedTokenCache.set(posts, tokens);
+  }
   const targetWords = words(`${target.title} ${target.focusKeyword}`);
-  return posts
-    .filter((post) => post.id !== target.id)
-    .map((post) => ({ post, score: jaccard(targetWords, words(`${post.title} ${post.focusKeyword} ${post.body.slice(0, 800)}`)) }))
-    .sort((left, right) => right.score - left.score)[0]?.post;
+  let best: PortfolioSeoPost | undefined;
+  let bestScore = 0;
+  posts.forEach((post) => {
+    if (post.id === target.id) return;
+    const score = jaccard(targetWords, tokens!.get(post.id) || new Set());
+    if (score > bestScore) { best = post; bestScore = score; }
+  });
+  results.set(target.id, best);
+  return best;
 }
 
 function groupBy(posts: PortfolioSeoPost[], key: (post: PortfolioSeoPost) => string) {
@@ -147,14 +166,25 @@ function getHrefs(body: string) {
   return Array.from(body.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']/gi), (match) => match[1].toLowerCase());
 }
 
+function normalizeHrefPath(href: string) {
+  try {
+    return new URL(href, "https://store.invalid").pathname.replace(/\/$/, "").toLowerCase();
+  } catch {
+    return href.split(/[?#]/)[0].replace(/\/$/, "").toLowerCase();
+  }
+}
+
 function words(value: string) {
   return new Set(normalizeText(value.replace(/<[^>]*>/g, " ")).split(" ").filter((word) => word.length > 3));
 }
 
 function jaccard(left: Set<string>, right: Set<string>) {
   if (!left.size || !right.size) return 0;
-  const intersection = [...left].filter((word) => right.has(word)).length;
-  return intersection / new Set([...left, ...right]).size;
+  const smaller = left.size <= right.size ? left : right;
+  const larger = smaller === left ? right : left;
+  let intersection = 0;
+  smaller.forEach((word) => { if (larger.has(word)) intersection += 1; });
+  return intersection / (left.size + right.size - intersection);
 }
 
 function normalizeText(value: string) {
