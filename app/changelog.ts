@@ -38,6 +38,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Weekly scan and scan-result notifications are shown only once per action or job." },
       { type: "Fixed", text: "The SEO worker uses the app's explicit localhost endpoint and reports invalid internal responses clearly." },
       { type: "Fixed", text: "Background scans call the Remix data action directly instead of receiving a rendered HTML document." },
+      { type: "Fixed", text: "SEO scan failures show merchant-safe guidance while technical details remain in server logs." },
     ],
   },
   {

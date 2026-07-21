@@ -43,6 +43,7 @@ import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
 import { auditSeoPortfolio } from "../seo-portfolio-audit";
 import { buildSearchOpportunities } from "../search-console-opportunities";
+import { getPublicSeoScanError } from "../seo-scan-error";
 import { disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
@@ -249,7 +250,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     scanJob: scanJob ? {
       id: scanJob.id, status: scanJob.status, phase: scanJob.phase, progress: scanJob.progress,
       totalPosts: scanJob.totalPosts, processedPosts: scanJob.processedPosts, analyzedPosts: scanJob.analyzedPosts,
-      averageScore: scanJob.averageScore, error: scanJob.error,
+      averageScore: scanJob.averageScore, error: getPublicSeoScanError(scanJob.error),
       requestedAt: scanJob.requestedAt.toISOString(), completedAt: scanJob.completedAt?.toISOString() || null,
     } : null,
     postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6).map((post) => ({ id: post.id, title: post.title, imageUrl: post.imageUrl, imageAlt: post.imageAlt, score: post.score })),
