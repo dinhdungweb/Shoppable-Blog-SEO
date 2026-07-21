@@ -15,4 +15,17 @@ describe("Search Console opportunities", () => {
       { pageUrl: "b", query: "b", clicks: 10, impressions: 300, ctr: .03, position: 10, period: "current" },
     ]).position).toBe(8);
   });
+  it("compares query totals across all ranking pages", () => {
+    const opportunities = buildSearchOpportunities([
+      { pageUrl: "https://x/a", query: "sunrock group", clicks: 4, impressions: 10, ctr: .4, position: 2, period: "current" },
+      { pageUrl: "https://x/b", query: "sunrock group", clicks: 1, impressions: 5, ctr: .2, position: 4, period: "current" },
+      { pageUrl: "https://x/a", query: "sunrock group", clicks: 12, impressions: 20, ctr: .6, position: 2, period: "previous" },
+      { pageUrl: "https://x/b", query: "sunrock group", clicks: 6, impressions: 10, ctr: .6, position: 4, period: "previous" },
+    ]);
+    expect(opportunities.find((item) => item.type === "decay")).toMatchObject({
+      previousValue: "18 clicks",
+      currentValue: "5 clicks",
+      changeValue: "-72%",
+    });
+  });
 });
