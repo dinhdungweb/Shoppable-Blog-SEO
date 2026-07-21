@@ -120,7 +120,13 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
 }
 
 function IssueRow({ issue }: { issue: DecayIssue }) {
-  return <tr style={rowStyle}><Cell><strong>{issue.articleTitle}</strong>{issue.detail && <><br /><span style={subduedStyle}>{issue.detail}</span></>}</Cell><Cell><strong>{issue.message}</strong></Cell><Cell>{issue.previousValue}</Cell><Cell>{issue.currentValue}</Cell><Cell>{issue.recommendation}</Cell><Cell><Badge tone={issue.severity === "high" ? "critical" : issue.severity === "medium" ? "warning" : "info"}>{issue.severity === "high" ? "High" : issue.severity === "medium" ? "Medium" : "Low"}</Badge></Cell><Cell><Button size="micro" url={articleEditorUrl(issue.articleId)}>Review</Button></Cell></tr>;
+  const showDetail = issue.detail && issue.type !== "broken_outbound" && issue.type !== "unavailable_product";
+  return <tr style={rowStyle}><Cell><strong>{issue.articleTitle}</strong>{showDetail && <><br /><span style={subduedStyle}>{issue.detail}</span></>}</Cell><Cell><strong>{issue.message}</strong></Cell><Cell><CompactValue value={issue.previousValue} isUrl={issue.type === "broken_outbound"} /></Cell><Cell>{issue.currentValue}</Cell><Cell>{issue.recommendation}</Cell><Cell><Badge tone={issue.severity === "high" ? "critical" : issue.severity === "medium" ? "warning" : "info"}>{issue.severity === "high" ? "High" : issue.severity === "medium" ? "Medium" : "Low"}</Badge></Cell><Cell><Button size="micro" url={articleEditorUrl(issue.articleId)}>Review</Button></Cell></tr>;
+}
+
+function CompactValue({ value, isUrl }: { value: string; isUrl: boolean }) {
+  if (!isUrl) return <>{value}</>;
+  return <span title={value} style={{ display: "block", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{compactUrl(value)}</span>;
 }
 
 function filterOptions(report: ContentDecayReport) {
@@ -191,7 +197,7 @@ async function checkExternalLinks(articles: DecayArticle[], shopDomains: string[
   const internalHosts = new Set(shopDomains.map((domain) => domain.replace(/^https?:\/\//, "").split("/")[0].toLowerCase()));
   const candidates: Array<{ articleId: string; href: string }> = [];
   for (const article of articles) for (const match of article.body.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']/gi)) {
-    const href = match[1].trim();
+    const href = match[1].replace(/&amp;/gi, "&").trim();
     try { const url = new URL(href); if (["http:", "https:"].includes(url.protocol) && !internalHosts.has(url.hostname.toLowerCase()) && isPublicHost(url.hostname)) candidates.push({ articleId: article.id, href: url.href }); } catch { /* Relative links are internal. */ }
   }
   const unique = [...new Map(candidates.map((item) => [`${item.articleId}|${item.href}`, item])).values()];
@@ -238,9 +244,10 @@ function isPublicHost(hostname: string) {
 }
 
 function articleEditorUrl(articleId: string) { return `/app/blogs/${encodeURIComponent(articleId.split("/").pop() || articleId)}`; }
+function compactUrl(value: string) { try { const url = new URL(value); const text = `${url.hostname}${url.pathname}`; return text.length > 58 ? `${text.slice(0, 55)}...` : text; } catch { return value.length > 58 ? `${value.slice(0, 55)}...` : value; } }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleString() : "not yet"; }
 function Header({ children }: { children: React.ReactNode }) { return <th style={{ padding: "12px 16px", textAlign: "left", whiteSpace: "nowrap", color: "var(--p-color-text-secondary)", fontSize: 12 }}>{children}</th>; }
-function Cell({ children }: { children: React.ReactNode }) { return <td style={{ padding: "12px 16px", minWidth: 130, verticalAlign: "middle" }}>{children}</td>; }
-const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse" };
+function Cell({ children }: { children: React.ReactNode }) { return <td style={{ padding: "12px 16px", minWidth: 130, maxWidth: 280, verticalAlign: "middle", overflowWrap: "anywhere" }}>{children}</td>; }
+const tableStyle: React.CSSProperties = { width: "100%", minWidth: 1080, tableLayout: "fixed", borderCollapse: "collapse" };
 const rowStyle: React.CSSProperties = { borderTop: "1px solid var(--p-color-border-secondary)" };
 const subduedStyle: React.CSSProperties = { color: "var(--p-color-text-secondary)", fontSize: 12, wordBreak: "break-all" };
