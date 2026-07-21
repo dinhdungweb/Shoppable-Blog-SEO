@@ -261,7 +261,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }),
       prisma.articleSEO.findMany({
         where: { shop, articleId: { in: articleIds } },
-        select: { articleId: true, seoScore: true },
+        select: { articleId: true, seoScore: true, baseSeoScore: true },
       }),
       prisma.widgetEvent.groupBy({
         by: ["articleId"],
@@ -284,7 +284,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     embedCounts.map((ec) => [ec.articleId, ec._count.productId]),
   );
 
-  const seoMap = new Map(seoData.map((seo) => [seo.articleId, seo.seoScore]));
+  const seoMap = new Map(
+    seoData.map((seo) => [
+      seo.articleId,
+      {
+        onPageScore: seo.baseSeoScore > 0 ? seo.baseSeoScore : seo.seoScore,
+        siteAdjustedScore: seo.seoScore,
+      },
+    ]),
+  );
 
   const clickMap = new Map(clickCounts.map((c) => [c.articleId, c._count.id]));
 
@@ -305,7 +313,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const finalArticles = articles.map((article) => ({
     ...article,
     productCount: embedCountMap.get(article.id) || 0,
-    seoScore: seoMap.has(article.id) ? seoMap.get(article.id) : null,
+    seoScore: seoMap.get(article.id)?.onPageScore ?? null,
+    siteAdjustedScore: seoMap.get(article.id)?.siteAdjustedScore ?? null,
     clicks: clickMap.get(article.id) || 0,
     revenue: revenueMap.get(article.id) || 0,
   }));
@@ -870,7 +879,7 @@ export default function BlogManager() {
               headings={[
                 { title: 'Post title' },
                 { title: 'Status' },
-                { title: 'SEO score' },
+                { title: 'On-page score' },
                 { title: 'Products linked' },
                 { title: 'Clicks' },
                 { title: 'Revenue' },

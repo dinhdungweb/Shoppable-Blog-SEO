@@ -1201,7 +1201,7 @@ export default function ArticleDetail() {
           blogHandle: candidate.blogHandle,
           body: "",
         })),
-        5,
+        12,
         shopDomains,
       ),
     [article.id, body, currentBlog?.handle, handle, internalLinkCandidates, shopDomains, title],
@@ -1763,7 +1763,7 @@ export default function ArticleDetail() {
           </InlineStack>
         </div>
 
-        <InlineGrid columns={{ xs: 1, sm: 2, md: 6 }} gap="400">
+        <InlineGrid columns={{ xs: 1, sm: 2, md: 5 }} gap="400">
           <MetricCard
             title="Status"
             value={isVisible ? "Published" : "Draft"}
@@ -1777,14 +1777,6 @@ export default function ArticleDetail() {
             tone={seoScore >= 80 ? "success" : seoScore >= 60 ? "warning" : "critical"}
             icon={SortIcon}
             progress={seoScore}
-          />
-          <MetricCard
-            title="Site-adjusted (Last scan)"
-            value={seoData ? String(seoData.seoScore) : "—"}
-            suffix={seoData ? "/100" : undefined}
-            tone={!seoData ? "info" : seoData.seoScore >= 80 ? "success" : seoData.seoScore >= 60 ? "warning" : "critical"}
-            icon={DataTableIcon}
-            progress={seoData ? seoData.seoScore : undefined}
           />
           <MetricCard
             title="Products linked"
@@ -1975,7 +1967,6 @@ export default function ArticleDetail() {
                   setInternalLinkAnchor(selection.text || suggestion.anchorText);
                   setPendingInternalLink(suggestion);
                 }}
-                onOpenAssistant={() => navigate("/app/internal-links")}
               />
               <ArticleImageCard
                 article={article}
@@ -4108,12 +4099,13 @@ function ProductsSummaryCard({
 function InternalLinkAssistantCard({
   suggestions,
   onReview,
-  onOpenAssistant,
 }: {
   suggestions: LinkSuggestion[];
   onReview: (suggestion: LinkSuggestion) => void;
-  onOpenAssistant: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleSuggestions = expanded ? suggestions : suggestions.slice(0, 5);
+
   return (
     <Card padding="400">
       <BlockStack gap="400">
@@ -4135,7 +4127,7 @@ function InternalLinkAssistantCard({
 
         {suggestions.length ? (
           <div className="bp-internal-link-list">
-            {suggestions.slice(0, 3).map((suggestion) => (
+            {visibleSuggestions.map((suggestion) => (
               <div className="bp-internal-link-item" key={suggestion.id}>
                 <div className="bp-internal-link-copy">
                   <div className="bp-internal-link-title">
@@ -4163,9 +4155,11 @@ function InternalLinkAssistantCard({
           </Box>
         )}
 
-        <Button onClick={onOpenAssistant} fullWidth>
-          Open full link report
-        </Button>
+        {suggestions.length > 5 && (
+          <Button variant="plain" onClick={() => setExpanded((value) => !value)} fullWidth>
+            {expanded ? "Show less" : `Show ${suggestions.length - 5} more`}
+          </Button>
+        )}
       </BlockStack>
     </Card>
   );
