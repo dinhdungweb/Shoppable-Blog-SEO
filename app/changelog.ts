@@ -37,6 +37,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Deferred setup checks show a neutral checking state instead of flashing an error before completion." },
       { type: "Fixed", text: "Weekly scan and scan-result notifications are shown only once per action or job." },
       { type: "Fixed", text: "The SEO worker uses the app's explicit localhost endpoint and reports invalid internal responses clearly." },
+      { type: "Fixed", text: "Background scans call the Remix data action directly instead of receiving a rendered HTML document." },
     ],
   },
   {

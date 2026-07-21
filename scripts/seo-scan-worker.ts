@@ -47,7 +47,7 @@ async function enqueueScheduledJobs() {
 
 async function processJob(job: { id: string; shop: string }) {
   try {
-    const workerUrl = process.env.SEO_WORKER_URL || "http://127.0.0.1:3004/app/seo";
+    const workerUrl = process.env.SEO_WORKER_URL || "http://127.0.0.1:3004/app/seo?_data=routes%2Fapp.seo";
     const response = await fetch(workerUrl, {
       method: "POST",
       headers: { "content-type": "application/json", "x-seo-worker-token": process.env.SEO_WORKER_SECRET || process.env.SHOPIFY_API_SECRET || "" },
