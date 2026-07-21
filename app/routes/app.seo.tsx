@@ -188,6 +188,34 @@ function parseStoredIssues(value: string | null): SeoIssue[] {
   }
 }
 
+function serializeScanJob(job: {
+  id: string;
+  status: string;
+  phase: string;
+  progress: number;
+  totalPosts: number;
+  processedPosts: number;
+  analyzedPosts: number;
+  averageScore: number | null;
+  error: string | null;
+  requestedAt: Date;
+  completedAt: Date | null;
+} | null) {
+  return job ? {
+    id: job.id,
+    status: job.status,
+    phase: job.phase,
+    progress: job.progress,
+    totalPosts: job.totalPosts,
+    processedPosts: job.processedPosts,
+    analyzedPosts: job.analyzedPosts,
+    averageScore: job.averageScore || 0,
+    error: getPublicSeoScanError(job.error),
+    requestedAt: job.requestedAt.toISOString(),
+    completedAt: job.completedAt?.toISOString() || null,
+  } : null;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
   const { session } = await authenticate.admin(request);
@@ -258,12 +286,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     totalPosts: auditedPosts.length,
     lastScanAt: lastScanAt ? lastScanAt.toISOString() : null,
     autoScanEnabled: shopConfig?.seoAutoScanEnabled || false,
-    scanJob: scanJob ? {
-      id: scanJob.id, status: scanJob.status, phase: scanJob.phase, progress: scanJob.progress,
-      totalPosts: scanJob.totalPosts, processedPosts: scanJob.processedPosts, analyzedPosts: scanJob.analyzedPosts,
-      averageScore: scanJob.averageScore, error: getPublicSeoScanError(scanJob.error),
-      requestedAt: scanJob.requestedAt.toISOString(), completedAt: scanJob.completedAt?.toISOString() || null,
-    } : null,
+    scanJob: serializeScanJob(scanJob),
     postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6).map((post) => ({ id: post.id, title: post.title, imageUrl: post.imageUrl, imageAlt: post.imageAlt, score: post.score, baseScore: post.baseScore })),
     searchConsole: {
       configured: isSearchConsoleConfigured(), connected: Boolean(searchConnection), selectedSiteUrl: searchConnection?.selectedSiteUrl || "",
@@ -300,6 +323,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shop = session.shop;
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  if (intent === "scan_status") {
+    const latestJob = await prisma.seoScanJob.findFirst({ where: { shop }, orderBy: { requestedAt: "desc" } });
+    return json({ job: serializeScanJob(latestJob) });
+  }
 
   if (intent === "google_connect") {
     try {
@@ -610,8 +638,9 @@ export default function SEOOptimizer() {
 
   useEffect(() => {
     if (!isScanning) return;
-    statusFetcher.load("/app/seo-scan-status");
-    const timer = window.setInterval(() => statusFetcher.load("/app/seo-scan-status"), 2000);
+    const loadStatus = () => statusFetcher.submit({ intent: "scan_status" }, { method: "post", action: "/app/seo" });
+    loadStatus();
+    const timer = window.setInterval(loadStatus, 2000);
     return () => window.clearInterval(timer);
   }, [isScanning, statusFetcher]);
 
