@@ -66,6 +66,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Settings validates saved values, reports save failures, warns before closing a page with unsaved changes and uses responsive controls on smaller admin screens." },
       { type: "Improved", text: "Legacy display and content-navigation settings URLs now redirect to the single canonical Settings workspace." },
       { type: "Improved", text: "Internal Linking Assistant is now available on Pro and Growth plans, with server-side access enforcement and an upgrade path for Free stores." },
+      { type: "Fixed", text: "Shoppable display image ratios now resize only the product image area in both Live preview and the storefront widget, without treating the entire product card as the ratio target." },
     ],
   },
   {

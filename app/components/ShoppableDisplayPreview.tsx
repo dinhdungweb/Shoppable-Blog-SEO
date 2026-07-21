@@ -94,12 +94,12 @@ export function ShoppableDisplayPreview({
   const previewProductCount = clampNumber(config.maxProducts, 1, 12, 6);
   const previewVisibleCount = clampNumber(config.carouselItemsVisible, 1, 5, 4);
   const previewGridColumns = clampNumber(config.gridColumns, 2, 4, 3);
-  const previewImageHeight =
+  const previewImageAspectRatio =
     config.imageAspectRatio === "Wide"
-      ? "76px"
+      ? "16 / 10"
       : config.imageAspectRatio === "Portrait"
-        ? "132px"
-        : "96px";
+        ? "4 / 5"
+        : "1 / 1";
   const previewCarouselBasis = `calc((100% - ${
     previewGapPx * (previewVisibleCount - 1)
   }px) / ${previewVisibleCount})`;
@@ -181,9 +181,10 @@ export function ShoppableDisplayPreview({
     };
     const imageWrapperStyle: CSSProperties = {
       width: isCompact ? `${compactMediaSize}px` : "100%",
-      height: isCompact ? "auto" : isFeatured ? "128px" : previewImageHeight,
-      minHeight: isCompact ? `${compactMediaSize}px` : undefined,
+      height: "auto",
+      aspectRatio: previewImageAspectRatio,
       flex: isCompact ? `0 0 ${compactMediaSize}px` : undefined,
+      alignSelf: isCompact ? "flex-start" : undefined,
       backgroundColor: product.color,
       overflow: "hidden",
       display: "flex",
