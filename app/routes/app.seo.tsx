@@ -708,8 +708,6 @@ export default function SEOOptimizer() {
           </Banner>
         )}
 
-        <SearchConsoleCard data={searchConsole} busy={isGoogleBusy} submit={(values) => scanFetcher.submit(values, { method: "post" })} />
-
         <InlineGrid columns={{ xs: 1, sm: 2, md: 5 }} gap="400">
           <MetricCard
             title="SEO health score"
@@ -873,6 +871,8 @@ export default function SEOOptimizer() {
 
           <Layout.Section variant="oneThird">
             <BlockStack gap="400">
+              <SearchConsoleCard data={searchConsole} busy={isGoogleBusy} submit={(values) => scanFetcher.submit(values, { method: "post" })} />
+
               <Card padding="400">
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd" fontWeight="bold">
@@ -1012,37 +1012,46 @@ function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; bu
   );
   if (!data.connected) return (
     <Card padding="400">
-      <InlineStack align="space-between" blockAlign="center">
-        <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">Connect read-only data to find pages with ranking and click opportunities.</Text></BlockStack>
+      <BlockStack gap="300">
+        <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">Connect search performance data and ranking opportunities.</Text></BlockStack>
         <Button variant="primary" loading={busy} onClick={() => submit({ intent: "google_connect" })}>Connect Google</Button>
-      </InlineStack>
+      </BlockStack>
     </Card>
   );
   const options = [{ label: "Select a property", value: "" }, ...data.availableSites.map((site) => ({ label: `${site.siteUrl} (${site.permissionLevel})`, value: site.siteUrl }))];
   return (
     <Card padding="400">
       <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="center">
-          <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">{data.lastSyncedAt ? `Last synced ${formatDate(data.lastSyncedAt)}` : "Connected — select a property and sync."}</Text></BlockStack>
-          <InlineStack gap="200"><Button loading={busy} disabled={!data.selectedSiteUrl} onClick={() => submit({ intent: "google_sync" })}>Sync data</Button><Button tone="critical" onClick={() => submit({ intent: "google_disconnect" })}>Disconnect</Button></InlineStack>
-        </InlineStack>
+        <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">{data.lastSyncedAt ? `Last synced ${formatDate(data.lastSyncedAt)}` : "Connected — select a property and sync."}</Text></BlockStack>
         {data.error && <Banner tone="critical"><p>{data.error}</p></Banner>}
         <Select label="Search Console property" options={options} value={data.selectedSiteUrl} onChange={(siteUrl) => siteUrl && submit({ intent: "google_select", siteUrl })} />
-        <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
-          <MetricCard title="Organic clicks" value={String(data.summary.clicks)} tone="info" icon={ChartVerticalFilledIcon} progress={0} />
-          <MetricCard title="Impressions" value={String(data.summary.impressions)} tone="info" icon={ChartVerticalFilledIcon} progress={0} />
-          <MetricCard title="Average CTR" value={`${(data.summary.ctr * 100).toFixed(1)}%`} tone="info" icon={ChartVerticalFilledIcon} progress={Math.min(100, data.summary.ctr * 100)} />
-          <MetricCard title="Average position" value={data.summary.position ? data.summary.position.toFixed(1) : "—"} tone="info" icon={ChartVerticalFilledIcon} progress={0} />
+        <InlineGrid columns={2} gap="300">
+          <CompactSearchMetric label="Clicks" value={String(data.summary.clicks)} />
+          <CompactSearchMetric label="Impressions" value={String(data.summary.impressions)} />
+          <CompactSearchMetric label="CTR" value={`${(data.summary.ctr * 100).toFixed(1)}%`} />
+          <CompactSearchMetric label="Position" value={data.summary.position ? data.summary.position.toFixed(1) : "—"} />
         </InlineGrid>
         {data.opportunities.length > 0 && <BlockStack gap="200">
-          <Text as="h3" variant="headingSm">Top search opportunities</Text>
-          {data.opportunities.slice(0, 6).map((item) => <InlineStack key={item.id} align="space-between" blockAlign="center" wrap={false}>
+          <Text as="h3" variant="headingSm">Top opportunity</Text>
+          {data.opportunities.slice(0, 1).map((item) => <BlockStack key={item.id} gap="100">
             <BlockStack gap="050"><Text as="span" fontWeight="semibold">{item.title}</Text><Text as="span" variant="bodySm" tone="subdued">{item.query || "Page total"} · {item.detail}</Text></BlockStack>
             <Button size="micro" url={item.pageUrl} target="_blank">Open page</Button>
-          </InlineStack>)}
+          </BlockStack>)}
         </BlockStack>}
+        <InlineStack gap="200"><Button loading={busy} disabled={!data.selectedSiteUrl} onClick={() => submit({ intent: "google_sync" })}>Sync data</Button><Button tone="critical" variant="plain" onClick={() => submit({ intent: "google_disconnect" })}>Disconnect</Button></InlineStack>
       </BlockStack>
     </Card>
+  );
+}
+
+function CompactSearchMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+      <BlockStack gap="050">
+        <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+        <Text as="span" variant="headingMd" fontWeight="bold">{value}</Text>
+      </BlockStack>
+    </Box>
   );
 }
 
