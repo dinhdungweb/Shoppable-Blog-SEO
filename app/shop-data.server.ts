@@ -3,6 +3,7 @@ import prisma from "./db.server";
 export async function purgeShopData(shop: string) {
   await prisma.$transaction([
     prisma.internalLinkAnalysis.deleteMany({ where: { shop } }),
+    prisma.contentDecayAnalysis.deleteMany({ where: { shop } }),
     prisma.seoScanJob.deleteMany({ where: { shop } }),
     prisma.analyticsDailySession.deleteMany({ where: { shop } }),
     prisma.analyticsDaily.deleteMany({ where: { shop } }),
