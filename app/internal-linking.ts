@@ -113,6 +113,47 @@ export function insertApprovedLink(body: string, anchorText: string, targetUrl: 
   return { body: `${body}<p>Related: <a href="${escapedUrl}">${escapedAnchor}</a></p>`, insertedInContext: false };
 }
 
+export function suggestInternalLinksForDraft(
+  source: LinkArticle,
+  targets: LinkArticle[],
+  limit = 5,
+  shopDomains: string[] = [],
+): LinkSuggestion[] {
+  const sourceTokens = keywords(`${source.title} ${cleanText(source.body).slice(0, 2500)}`);
+  if (!sourceTokens.size) return [];
+
+  const existingPaths = new Set(
+    extractLinks(source.body)
+      .map((link) => normalizeInternalPath(link.href, shopDomains))
+      .filter((path): path is string => Boolean(path)),
+  );
+
+  return targets
+    .filter(
+      (target) =>
+        target.id !== source.id &&
+        Boolean(target.title && target.handle && target.blogHandle) &&
+        !existingPaths.has(articlePath(target)),
+    )
+    .map((target) => ({
+      target,
+      score: similarity(sourceTokens, keywords(target.title)),
+    }))
+    .filter(({ score }) => score >= 0.05)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit)
+    .map(({ target, score }) => ({
+      id: `${source.id}:${target.id}`,
+      sourceId: source.id,
+      sourceTitle: source.title,
+      targetId: target.id,
+      targetTitle: target.title,
+      targetUrl: articlePath(target),
+      anchorText: naturalAnchor(source.body, target.title),
+      score: Math.round(score * 100),
+    }));
+}
+
 function buildSuggestions(articles: LinkArticle[], outgoing: Map<string, Set<string>>) {
   const tokens = new Map(articles.map((article) => [article.id, keywords(`${article.title} ${cleanText(article.body).slice(0, 2500)}`)]));
   const suggestions: LinkSuggestion[] = [];

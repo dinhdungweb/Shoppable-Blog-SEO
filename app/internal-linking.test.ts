@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeInternalLinks, insertApprovedLink } from "./internal-linking";
+import { analyzeInternalLinks, insertApprovedLink, suggestInternalLinksForDraft } from "./internal-linking";
 
 const articles = [
   { id: "1", title: "Running Shoe Guide", handle: "running-shoes", blogHandle: "news", body: '<p>Read our shoe sizing advice.</p><a href="/blogs/news/shoe-sizing">Sizing</a>' },
@@ -27,5 +27,27 @@ describe("internal linking assistant", () => {
     ], [], ["shop.example"]);
     expect(report.brokenLinks).toHaveLength(0);
     expect(report.internalLinks).toBe(0);
+  });
+
+  it("suggests relevant links for a draft and excludes destinations already linked", () => {
+    const draft = {
+      id: "draft",
+      title: "Running shoe size guide",
+      handle: "draft",
+      blogHandle: "news",
+      body: "<p>Choose the correct running shoe size before marathon training.</p>",
+    };
+    const suggestions = suggestInternalLinksForDraft(draft, articles, 5);
+    expect(suggestions.some((suggestion) => suggestion.targetId === "2")).toBe(true);
+
+    const linkedDraft = {
+      ...draft,
+      body: `${draft.body}<a href="/blogs/news/shoe-sizing">Shoe sizing</a>`,
+    };
+    expect(
+      suggestInternalLinksForDraft(linkedDraft, articles, 5).some(
+        (suggestion) => suggestion.targetId === "2",
+      ),
+    ).toBe(false);
   });
 });

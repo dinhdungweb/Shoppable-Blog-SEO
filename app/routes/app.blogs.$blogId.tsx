@@ -75,6 +75,11 @@ import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import type { SeoAuditIssue } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
+import {
+  insertApprovedLink,
+  suggestInternalLinksForDraft,
+  type LinkSuggestion,
+} from "../internal-linking";
 
 type SeoIssue = SeoAuditIssue;
 
@@ -209,7 +214,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const tocAuditOptions = await getSeoTocAuditOptions(shop, limits.canContentNavigation);
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
-  const blogs = await fetchShopifyEditorBlogs(admin);
+  const [blogs, internalLinkCandidates] = await Promise.all([
+    fetchShopifyEditorBlogs(admin),
+    prisma.articleSEO.findMany({
+      where: { shop },
+      select: {
+        articleId: true,
+        articleTitle: true,
+        articleHandle: true,
+        blogHandle: true,
+      },
+      orderBy: { sourceUpdatedAt: "desc" },
+    }),
+  ]);
   const defaultAuthorName = DEFAULT_AUTHOR_NAME;
 
   if (isNewPost) {
@@ -249,6 +266,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       defaultAuthorName,
       fileImages: [],
       fileImagesError: "",
+      internalLinkCandidates,
     });
   }
 
@@ -379,6 +397,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     defaultAuthorName,
     fileImages: [],
     fileImagesError: "",
+    internalLinkCandidates,
   });
 };
 
@@ -1041,7 +1060,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError } =
+  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
@@ -1097,6 +1116,7 @@ export default function ArticleDetail() {
   const uploadFetcherData = uploadFetcher.data as any;
   const handledFetcherDataRef = useRef<any>(null);
   const [focusKeyword, setFocusKeyword] = useState(seoData?.focusKeyword || "");
+  const [pendingInternalLink, setPendingInternalLink] = useState<LinkSuggestion | null>(null);
 
   const effectiveMetaTitle = metaTitleTouched ? metaTitle || title : title;
 
@@ -1141,6 +1161,28 @@ export default function ArticleDetail() {
   const currentBlog = useMemo(
     () => blogs.find((blog: any) => blog.id === selectedBlogId) || article.blog || blogs[0],
     [article.blog, blogs, selectedBlogId],
+  );
+  const internalLinkSuggestions = useMemo(
+    () =>
+      suggestInternalLinksForDraft(
+        {
+          id: article.id || "new-draft",
+          title,
+          handle,
+          blogHandle: currentBlog?.handle || "",
+          body,
+        },
+        internalLinkCandidates.map((candidate) => ({
+          id: candidate.articleId,
+          title: candidate.articleTitle,
+          handle: candidate.articleHandle,
+          blogHandle: candidate.blogHandle,
+          body: "",
+        })),
+        5,
+        shopDomains,
+      ),
+    [article.id, body, currentBlog?.handle, handle, internalLinkCandidates, shopDomains, title],
   );
   const topProduct = [...embeddedProducts].sort((a, b) => b.clicks - a.clicks)[0] || embeddedProducts[0];
   const isSubmitting = fetcher.state !== "idle";
@@ -1888,6 +1930,11 @@ export default function ArticleDetail() {
                 livePostUrl={postPreviewUrl}
                 isNewPost={isNewPost}
               />
+              <InternalLinkAssistantCard
+                suggestions={internalLinkSuggestions}
+                onReview={setPendingInternalLink}
+                onOpenAssistant={() => navigate("/app/internal-links")}
+              />
               <ArticleImageCard
                 article={article}
                 activeImage={activeImage}
@@ -1967,6 +2014,52 @@ export default function ArticleDetail() {
           </InlineStack>
         </div>
       )}
+
+      <Modal
+        open={Boolean(pendingInternalLink)}
+        onClose={() => setPendingInternalLink(null)}
+        title="Review internal link"
+        primaryAction={{
+          content: "Add to draft",
+          onAction: () => {
+            if (!pendingInternalLink) return;
+            const result = insertApprovedLink(
+              body,
+              pendingInternalLink.anchorText,
+              pendingInternalLink.targetUrl,
+            );
+            setBody(result.body);
+            markDirty();
+            setPendingInternalLink(null);
+            shopify.toast.show(
+              result.insertedInContext
+                ? "Internal link added to the draft. Save the post to publish it."
+                : "Related link added at the end of the draft. Save the post to publish it.",
+            );
+          },
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setPendingInternalLink(null) }]}
+      >
+        <Modal.Section>
+          {pendingInternalLink && (
+            <BlockStack gap="300">
+              <Text as="p" variant="bodyMd">
+                Confirm the destination and anchor text before adding this link to the article draft.
+              </Text>
+              <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodySm" tone="subdued">Destination article</Text>
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">
+                    {pendingInternalLink.targetTitle}
+                  </Text>
+                  <Text as="p" variant="bodySm">Anchor: “{pendingInternalLink.anchorText}”</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{pendingInternalLink.targetUrl}</Text>
+                </BlockStack>
+              </Box>
+            </BlockStack>
+          )}
+        </Modal.Section>
+      </Modal>
 
       <Modal
         open={showStyleModal}
@@ -3880,6 +3973,73 @@ function ProductsSummaryCard({
             Manage products
           </Button>
         </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
+
+function InternalLinkAssistantCard({
+  suggestions,
+  onReview,
+  onOpenAssistant,
+}: {
+  suggestions: LinkSuggestion[];
+  onReview: (suggestion: LinkSuggestion) => void;
+  onOpenAssistant: () => void;
+}) {
+  return (
+    <Card padding="400">
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center" gap="200">
+          <InlineStack gap="200" blockAlign="center">
+            <Icon source={LinkIcon} tone="info" />
+            <Text as="h3" variant="headingMd" fontWeight="bold">
+              Internal link assistant
+            </Text>
+          </InlineStack>
+          <Badge tone={suggestions.length ? "info" : undefined}>
+            {suggestions.length ? `${suggestions.length} suggestions` : "Draft"}
+          </Badge>
+        </InlineStack>
+
+        <Text as="p" variant="bodySm" tone="subdued">
+          Suggestions use the title and content currently in this draft. Review a link before adding it.
+        </Text>
+
+        {suggestions.length ? (
+          <BlockStack gap="300">
+            {suggestions.slice(0, 3).map((suggestion, index) => (
+              <div key={suggestion.id}>
+                {index > 0 && <Divider />}
+                <Box paddingBlockStart={index > 0 ? "300" : "0"}>
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm" fontWeight="semibold">
+                      {suggestion.targetTitle}
+                    </Text>
+                    <InlineStack align="space-between" blockAlign="center" gap="200" wrap={false}>
+                      <Text as="span" variant="bodySm" tone="subdued" truncate>
+                        Anchor: {suggestion.anchorText}
+                      </Text>
+                      <Button size="micro" onClick={() => onReview(suggestion)}>
+                        Review
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Box>
+              </div>
+            ))}
+          </BlockStack>
+        ) : (
+          <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+            <Text as="p" variant="bodySm" tone="subdued">
+              Add a descriptive title and more article content to receive relevant suggestions.
+            </Text>
+          </Box>
+        )}
+
+        <Button onClick={onOpenAssistant} fullWidth>
+          Open full link report
+        </Button>
       </BlockStack>
     </Card>
   );
