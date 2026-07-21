@@ -49,6 +49,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Cannibalization guidance recommends Shopify-compatible actions: consolidate content, separate focus topics, update internal links and create URL redirects." },
       { type: "New", text: "Advanced Image SEO detects missing dimensions, over-optimized alt text, decorative-image alt misuse, small images and image sources that search engines cannot crawl." },
       { type: "Improved", text: "Image guidance is Shopify-aware: it recommends Shopify-hosted CDN images without forcing formats or theme-level LCP changes that the article editor cannot safely fix." },
+      { type: "Fixed", text: "Choosing an image size in the article editor now saves matching width and height attributes from the image aspect ratio, resolving missing-dimension SEO warnings." },
     ],
   },
   {

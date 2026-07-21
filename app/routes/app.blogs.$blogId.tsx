@@ -2942,7 +2942,10 @@ function RichArticleEditor({
     saveSelection();
     onOpenImagePicker?.((image) => {
       const alt = image.alt || image.title || "";
-      insertHtml(`<p><img src="${escapeAttribute(image.url)}" alt="${escapeAttribute(alt)}"></p>`);
+      const dimensions = image.width && image.height
+        ? ` width="${Math.round(image.width)}" height="${Math.round(image.height)}"`
+        : "";
+      insertHtml(`<p><img src="${escapeAttribute(image.url)}" alt="${escapeAttribute(alt)}"${dimensions}></p>`);
     });
   };
 
@@ -4986,10 +4989,22 @@ function applyEditorImageSettings(
   image.dataset.editorImageWrap = String(settings.wrap);
   image.dataset.editorImageSpacing = JSON.stringify(spacing);
 
+  const intrinsicWidth = image.naturalWidth || Number.parseInt(image.getAttribute("width") || "", 10) || image.width;
+  const intrinsicHeight = image.naturalHeight || Number.parseInt(image.getAttribute("height") || "", 10) || image.height;
+  const hasAspectRatio = intrinsicWidth > 0 && intrinsicHeight > 0;
+
   if (size?.width) {
     image.style.width = `${size.width}px`;
+    image.setAttribute("width", String(size.width));
+    if (hasAspectRatio) {
+      image.setAttribute("height", String(Math.max(1, Math.round(size.width * intrinsicHeight / intrinsicWidth))));
+    }
   } else {
     image.style.removeProperty("width");
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      image.setAttribute("width", String(image.naturalWidth));
+      image.setAttribute("height", String(image.naturalHeight));
+    }
   }
 
   image.style.maxWidth = "100%";
