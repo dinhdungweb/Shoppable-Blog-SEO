@@ -37,6 +37,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Catalog editor icons and SEO issue spacing are compact and aligned; headings render visually, editor links no longer navigate while editing, and automatic search titles and descriptions follow the draft until customized." },
       { type: "Improved", text: "Product and collection scoring now covers title readability, clean URLs, content depth and structure, mobile-readable paragraphs, contextual links, keyword placement, and deeper Shopify image checks." },
       { type: "Improved", text: "The catalog rich-text link dialog now edits or removes an existing link while preserving its text, matching Shopify's editor workflow without adding another toolbar button." },
+      { type: "Fixed", text: "Catalog card icons now use isolated flex wrappers so global Polaris layout overrides cannot stretch icons and labels across the card." },
+      { type: "Fixed", text: "Collection saving now uses the Shopify Admin API 2026-04 compatible CollectionInput mutation and displays concise GraphQL errors instead of dumping response objects." },
       { type: "Improved", text: "Internal Linking reports are saved per shop and organized into overview, suggestions, issues and topic cluster tabs." },
       { type: "Improved", text: "Merchants can leave SEO Optimizer while a scan runs, avoiding long browser requests and timeouts on large stores." },
       { type: "Fixed", text: "Uninstall and privacy cleanup now includes analytics aggregates, Search Console records, bulk-change history and SEO scan jobs." },

@@ -15,6 +15,7 @@ import catalogSeoStyles from "../styles/catalog-seo.css?url";
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
+  try {
   const { admin, session, billing } = await authenticate.admin(request);
   const type = resourceType(params.resourceType);
   const gid = shopifyGid(type, params.resourceId);
@@ -43,6 +44,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     ? { status: String(node.status || ""), vendor: String(node.vendor || ""), productType: String(node.productType || ""), tags: Array.isArray(node.tags) ? node.tags : [], collectionKind: "", itemCount: 0 }
     : { status: "", vendor: "", productType: "", tags: [], collectionKind: node.ruleSet ? "Automated" : "Manual", itemCount: Number(node.productsCount?.count || 0) };
   return json({ resource, details, audit: auditCatalogResource(resource), savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}`, canInternalLinking: limits.canInternalLinking, planKey, linkTargets });
+  } catch (error: any) {
+    if (error instanceof Response) throw error;
+    const message = readableServerError(error);
+    console.error("Catalog SEO editor loader failed", { message, code: error?.code, graphQLErrors: error?.graphQLErrors || error?.errors?.graphQLErrors });
+    throw new Response(message, { status: 502 });
+  }
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -62,10 +69,17 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const focusKeyword = field(form, "focusKeyword", 500);
   const imageAlt = field(form, "imageAlt", 500);
   if (!title) return json({ error: "Title is required." }, { status: 400 });
-  const variableKey = type === "product" ? "product" : "collection";
+  const variableKey = type === "product" ? "product" : "input";
   const input = { id: gid, title, handle, descriptionHtml, seo: { title: seoTitle || null, description: seoDescription || null }, ...(type === "product" ? { status, vendor, productType, tags } : { ...(imageAlt !== field(form, "originalImageAlt", 500) ? { image: { src: field(form, "imageUrl", 2_000), altText: imageAlt } } : {}) }) };
-  const response = await admin.graphql(type === "product" ? PRODUCT_UPDATE : COLLECTION_UPDATE, { variables: { [variableKey]: input } });
-  const payload: any = await response.json();
+  let payload: any;
+  try {
+    const response = await admin.graphql(type === "product" ? PRODUCT_UPDATE : COLLECTION_UPDATE, { variables: { [variableKey]: input } });
+    payload = await response.json();
+  } catch (error: any) {
+    const message = readableServerError(error);
+    console.error("Catalog SEO editor save failed", { type, message, graphQLErrors: expandGraphQLErrors(error) });
+    return json({ error: message }, { status: 502 });
+  }
   const result = type === "product" ? payload.data?.productUpdate : payload.data?.collectionUpdate;
   const errors = [...(payload.errors || []), ...(result?.userErrors || [])].map((item: any) => item.message).filter(Boolean);
   if (errors.length) return json({ error: errors.join("; ") }, { status: 400 });
@@ -133,12 +147,12 @@ export default function CatalogResourceEditor() {
       </InlineGrid>
       <div className="bp-catalog-editor-main"><main className="bp-catalog-editor-content"><BlockStack gap="400">
         <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">{typeLabel} content</Text><Text as="p" variant="bodySm" tone="subdued">Write useful storefront copy for shoppers, not search engines alone.</Text></BlockStack><Badge>{`${wordCount} words`}</Badge></InlineStack><TextField name="title" label="Title" value={title} onChange={setTitle} autoComplete="off" maxLength={255} showCharacterCount /><BlockStack gap="200"><Text as="h3" fontWeight="semibold">Description</Text><RichTextEditor value={descriptionHtml} onChange={setDescription} /></BlockStack></BlockStack></Card>
-        <Card><BlockStack gap="400"><InlineStack gap="200" blockAlign="center"><Icon source={SearchIcon} tone="info" /><BlockStack gap="100"><Text as="h2" variant="headingMd">Search engine listing</Text><Text as="p" tone="subdued">Preview and edit the title, description and Shopify URL.</Text></BlockStack></InlineStack><div className="bp-search-preview"><div className="bp-search-preview__site">Your store · {resource.type}</div><div className="bp-search-preview__title">{displaySeoTitle}</div><div className="bp-search-preview__url">/{resource.type === "product" ? "products" : "collections"}/{handle}</div><div className="bp-search-preview__description">{displaySeoDescription}</div></div><TextField name="seoTitle" label="Page title" value={seoTitle} onChange={(next) => { seoTitleAutomatic.current = false; setSeoTitle(next); }} autoComplete="off" maxLength={70} showCharacterCount helpText="Automatically follows the resource title until you edit this field manually." /><TextField name="seoDescription" label="Meta description" value={seoDescription} onChange={(next) => { seoDescriptionAutomatic.current = false; setSeoDescription(next); }} multiline={4} autoComplete="off" maxLength={165} showCharacterCount helpText="Automatically follows the description until you edit this field manually." /><TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} /></BlockStack></Card>
+        <Card><BlockStack gap="400"><div className="bp-icon-heading"><Icon source={SearchIcon} tone="info" /><BlockStack gap="100"><Text as="h2" variant="headingMd">Search engine listing</Text><Text as="p" tone="subdued">Preview and edit the title, description and Shopify URL.</Text></BlockStack></div><div className="bp-search-preview"><div className="bp-search-preview__site">Your store · {resource.type}</div><div className="bp-search-preview__title">{displaySeoTitle}</div><div className="bp-search-preview__url">/{resource.type === "product" ? "products" : "collections"}/{handle}</div><div className="bp-search-preview__description">{displaySeoDescription}</div></div><TextField name="seoTitle" label="Page title" value={seoTitle} onChange={(next) => { seoTitleAutomatic.current = false; setSeoTitle(next); }} autoComplete="off" maxLength={70} showCharacterCount helpText="Automatically follows the resource title until you edit this field manually." /><TextField name="seoDescription" label="Meta description" value={seoDescription} onChange={(next) => { seoDescriptionAutomatic.current = false; setSeoDescription(next); }} multiline={4} autoComplete="off" maxLength={165} showCharacterCount helpText="Automatically follows the description until you edit this field manually." /><TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} /></BlockStack></Card>
         <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="bodySm" tone="subdued">Every passed and failed check remains visible and updates while you edit.</Text></BlockStack><Badge tone={scoreTone(currentAudit.score)}>{`${currentAudit.score}/100`}</Badge></InlineStack><div className="bp-checklist-groups">{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</div></BlockStack></Card>
       </BlockStack></main><aside className="bp-catalog-editor-sidebar"><BlockStack gap="400">
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="headingXl" fontWeight="bold">{currentAudit.score}<Text as="span" variant="bodySm" tone="subdued">/100</Text></Text></InlineStack><div className="bp-catalog-score-track"><span style={{ width: `${currentAudit.score}%` }} /></div><Text as="p" variant="bodySm" tone="subdued">{savedAt ? `Last analyzed ${new Date(savedAt).toLocaleString()}` : "Calculated from current Shopify content."}</Text></BlockStack></Card>
-        <Card><BlockStack gap="300"><InlineStack gap="200" blockAlign="center"><Icon source={ImageIcon} tone="info" /><Text as="h2" variant="headingMd">Image</Text></InlineStack>{resource.imageUrl ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={imageAlt || resource.title} /></div> : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}<TextField name="imageAlt" label="Image alt text" value={imageAlt} onChange={setImageAlt} autoComplete="off" maxLength={500} helpText="Briefly describe the image for screen readers and image search." /><Button url={adminUrl} target="_blank" fullWidth>Change image in Shopify</Button></BlockStack></Card>
+        <Card><BlockStack gap="300"><div className="bp-icon-heading"><Icon source={ImageIcon} tone="info" /><Text as="h2" variant="headingMd">Image</Text></div>{resource.imageUrl ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={imageAlt || resource.title} /></div> : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}<TextField name="imageAlt" label="Image alt text" value={imageAlt} onChange={setImageAlt} autoComplete="off" maxLength={500} helpText="Briefly describe the image for screen readers and image search." /><Button url={adminUrl} target="_blank" fullWidth>Change image in Shopify</Button></BlockStack></Card>
         <InternalLinkCard allowed={canInternalLinking} planKey={planKey} suggestions={linkSuggestions} onReview={(suggestion) => { setPendingLink(suggestion); setLinkAnchor(suggestion.anchorText); }} />
         <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} settings</Text><Divider />{resource.type === "product" ? <><Select name="status" label="Status" value={status} onChange={setStatus} options={[{ label: "Active", value: "ACTIVE" }, { label: "Draft", value: "DRAFT" }, { label: "Archived", value: "ARCHIVED" }]} /><TextField name="vendor" label="Vendor" value={vendor} onChange={setVendor} autoComplete="off" /><TextField name="productType" label="Product type" value={productType} onChange={setProductType} autoComplete="off" /><TextField name="tags" label="Tags" value={tags} onChange={setTags} autoComplete="off" helpText="Separate tags with commas." /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Variants, pricing, inventory, collection rules and media remain in Shopify to prevent destructive edits.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></Card>
       </BlockStack></aside></div>
@@ -149,7 +163,7 @@ export default function CatalogResourceEditor() {
 }
 
 function EditorMetric({ label, value, icon, tone }: { label: string; value: string; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; tone: "success" | "warning" | "critical" | "info" }) {
-  return <Card><BlockStack gap="150"><InlineStack gap="150" blockAlign="center"><Icon source={icon} tone={tone} /><Text as="p" variant="bodySm" tone="subdued">{label}</Text></InlineStack><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack></Card>;
+  return <Card><BlockStack gap="150"><div className="bp-icon-heading bp-icon-heading--metric"><Icon source={icon} tone={tone} /><Text as="p" variant="bodySm" tone="subdued">{label}</Text></div><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack></Card>;
 }
 
 function FocusKeywordCard({ value, input, setInput, onChange, audit }: { value: string; input: string; setInput: (value: string) => void; onChange: (value: string) => void; audit: ReturnType<typeof auditCatalogResource> }) {
@@ -165,7 +179,7 @@ function FocusKeywordCard({ value, input, setInput, onChange, audit }: { value: 
 function InternalLinkCard({ allowed, planKey, suggestions, onReview }: { allowed: boolean; planKey: string; suggestions: LinkSuggestion[]; onReview: (suggestion: LinkSuggestion) => void }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? suggestions : suggestions.slice(0, 3);
-  return <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><InlineStack gap="200" blockAlign="center"><Icon source={LinkIcon} tone="info" /><Text as="h2" variant="headingMd">Internal link assistant</Text></InlineStack>{allowed && <Badge tone="info">{`${suggestions.length} suggestions`}</Badge>}</InlineStack>{!allowed ? <><Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text><Button url={`/app/pricing?reason=internal_linking&plan=${planKey}`} fullWidth>Upgrade to Pro</Button></> : suggestions.length ? <><Text as="p" variant="bodySm" tone="subdued">Review relevant Shopify articles before inserting a link into this description.</Text><div className="bp-catalog-link-list">{visible.map((suggestion) => <div className="bp-catalog-link-row" key={suggestion.id}><div className="bp-catalog-link-copy"><Text as="p" variant="bodySm" fontWeight="semibold">{suggestion.targetTitle}</Text><Text as="p" variant="bodySm" tone="subdued">Anchor: {suggestion.anchorText}</Text></div><Button size="micro" onClick={() => onReview(suggestion)}>Review</Button></div>)}</div>{suggestions.length > 3 && <Button variant="plain" onClick={() => setExpanded((value) => !value)} icon={expanded ? ChevronUpIcon : ChevronDownIcon}>{expanded ? "Show fewer" : `Show ${suggestions.length - 3} more`}</Button>}</> : <Text as="p" variant="bodySm" tone="subdued">No relevant article suggestion was found for the current title and description.</Text>}</BlockStack></Card>;
+  return <Card><BlockStack gap="300"><div className="bp-card-heading"><div className="bp-icon-heading"><Icon source={LinkIcon} tone="info" /><Text as="h2" variant="headingMd">Internal link assistant</Text></div>{allowed && <Badge tone="info">{`${suggestions.length} suggestions`}</Badge>}</div>{!allowed ? <><Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text><Button url={`/app/pricing?reason=internal_linking&plan=${planKey}`} fullWidth>Upgrade to Pro</Button></> : suggestions.length ? <><Text as="p" variant="bodySm" tone="subdued">Review relevant Shopify articles before inserting a link into this description.</Text><div className="bp-catalog-link-list">{visible.map((suggestion) => <div className="bp-catalog-link-row" key={suggestion.id}><div className="bp-catalog-link-copy"><Text as="p" variant="bodySm" fontWeight="semibold">{suggestion.targetTitle}</Text><Text as="p" variant="bodySm" tone="subdued">Anchor: {suggestion.anchorText}</Text></div><Button size="micro" onClick={() => onReview(suggestion)}>Review</Button></div>)}</div>{suggestions.length > 3 && <Button variant="plain" onClick={() => setExpanded((value) => !value)} icon={expanded ? ChevronUpIcon : ChevronDownIcon}>{expanded ? "Show fewer" : `Show ${suggestions.length - 3} more`}</Button>}</> : <Text as="p" variant="bodySm" tone="subdued">No relevant article suggestion was found for the current title and description.</Text>}</BlockStack></Card>;
 }
 
 function RichTextEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -355,6 +369,16 @@ function field(form: FormData, key: string, max: number) { return String(form.ge
 function scoreTone(score: number): "success" | "warning" | "critical" { return score >= 80 ? "success" : score >= 60 ? "warning" : "critical"; }
 function normalizeResource(node: any, type: CatalogResourceType): CatalogResourceInput { const image = type === "product" ? node.featuredMedia?.preview?.image || {} : node.image || {}; return { id: String(node.id), type, title: String(node.title || ""), handle: String(node.handle || ""), descriptionHtml: String(node.descriptionHtml || ""), updatedAt: String(node.updatedAt || ""), status: String(node.status || ""), seoTitle: String(node.seo?.title || ""), seoDescription: String(node.seo?.description || ""), imageUrl: String(image.url || ""), imageAlt: String(image.altText || ""), imageWidth: Number(image.width || 0), imageHeight: Number(image.height || 0), itemCount: type === "collection" ? Number(node.products?.nodes?.length || 0) : 0, mediaId: type === "product" ? String(node.featuredMedia?.id || "") : "" }; }
 function seoRecord(shop: string, audit: ReturnType<typeof auditCatalogResource>) { return { shop, resourceType: audit.type, resourceId: audit.id, title: audit.title, handle: audit.handle, status: audit.status, seoScore: audit.score, metaTitle: audit.seoTitle, metaDescription: audit.seoDescription, focusKeyword: audit.focusKeyword || "", imageUrl: audit.imageUrl, imageAlt: audit.imageAlt, issues: JSON.stringify(audit.issues), issueCount: audit.issues.length, contentHash: audit.contentHash, sourceUpdatedAt: new Date(), lastAnalyzedAt: new Date() }; }
+function readableServerError(error: any) {
+  if (error?.code === "P2022") return "The catalog SEO database update is missing. Run `npx prisma migrate deploy`, rebuild, and restart the app.";
+  const graphErrors = error?.graphQLErrors || error?.errors?.graphQLErrors;
+  if (Array.isArray(graphErrors) && graphErrors.length) return `Shopify API error: ${graphErrors.map((item: any) => item?.message || String(item)).join("; ")}`;
+  return error?.message && error.message !== "Unexpected Server Error" ? String(error.message) : "The catalog resource could not be loaded. Check the server log entry named 'Catalog SEO editor loader failed'.";
+}
+function expandGraphQLErrors(error: any) {
+  const values = error?.graphQLErrors || error?.errors?.graphQLErrors || [];
+  return Array.isArray(values) ? values.map((item: any) => ({ message: item?.message || String(item), path: item?.path, extensions: item?.extensions })) : [];
+}
 
 async function queryShopify(admin: any, query: string, variables: Record<string, unknown>) {
   try {
@@ -409,8 +433,8 @@ const PRODUCT_UPDATE = `#graphql
   }
 `;
 const COLLECTION_UPDATE = `#graphql
-  mutation UpdateCatalogCollection($collection: CollectionUpdateInput!) {
-    collectionUpdate(collection: $collection) {
+  mutation UpdateCatalogCollection($input: CollectionInput!) {
+    collectionUpdate(input: $input) {
       collection {
         id title handle descriptionHtml updatedAt
         seo { title description }
