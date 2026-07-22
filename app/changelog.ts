@@ -33,6 +33,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "New", text: "Products and collections now have dedicated Shopify-aware SEO editors for content, search listings, URL handles and issue guidance." },
       { type: "Improved", text: "Product and collection editors now include rich-text content editing, live search previews, grouped SEO checks, resource details and an unsaved-changes save bar." },
       { type: "Improved", text: "Product and collection editors now match the Blog Editor with editable image alt text, saved focus keywords, detailed live SEO checks and Pro-level internal-link suggestions." },
+      { type: "Fixed", text: "Catalog rich-text editing now preserves the caret while typing, and SEO issue groups can be expanded or collapsed like the Blog Editor." },
       { type: "Improved", text: "Internal Linking reports are saved per shop and organized into overview, suggestions, issues and topic cluster tabs." },
       { type: "Improved", text: "Merchants can leave SEO Optimizer while a scan runs, avoiding long browser requests and timeouts on large stores." },
       { type: "Fixed", text: "Uninstall and privacy cleanup now includes analytics aggregates, Search Console records, bulk-change history and SEO scan jobs." },

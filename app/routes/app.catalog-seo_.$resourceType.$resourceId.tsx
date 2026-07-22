@@ -9,6 +9,7 @@ import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { auditCatalogResource, type CatalogResourceInput, type CatalogResourceType, type CatalogSeoIssue } from "../catalog-seo";
 import { suggestInternalLinksForDraft, insertApprovedLink, type LinkSuggestion } from "../internal-linking";
+import { PLAN_LIMITS } from "../pricing-plans";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
@@ -21,9 +22,22 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const node = type === "product" ? payload.data?.product : payload.data?.collection;
   if (!node) throw new Response("Resource not found", { status: 404 });
   const resource = normalizeResource(node, type);
-  const saved = await prisma.resourceSEO.findUnique({ where: { shop_resourceType_resourceId: { shop: session.shop, resourceType: type, resourceId: gid } } });
+  let saved;
+  try {
+    saved = await prisma.resourceSEO.findUnique({ where: { shop_resourceType_resourceId: { shop: session.shop, resourceType: type, resourceId: gid } } });
+  } catch (error: any) {
+    if (error?.code === "P2022") throw new Response("The database update for the catalog SEO editor has not been applied. Run `npx prisma migrate deploy` on the server, then restart the app.", { status: 503 });
+    throw error;
+  }
   resource.focusKeyword = saved?.focusKeyword || "";
-  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  let planAccess: Awaited<ReturnType<typeof getActivePlanAndLimits>>;
+  try {
+    planAccess = await getActivePlanAndLimits(billing);
+  } catch (error) {
+    console.error("Catalog SEO editor billing lookup failed; using safe free-plan access", error);
+    planAccess = { limits: PLAN_LIMITS.free, planKey: "free", planName: "" };
+  }
+  const { limits, planKey } = planAccess;
   const linkTargets = limits.canInternalLinking ? await prisma.articleSEO.findMany({ where: { shop: session.shop }, select: { articleId: true, articleTitle: true, articleHandle: true, blogHandle: true }, orderBy: { sourceUpdatedAt: "desc" }, take: 250 }) : [];
   const details = type === "product"
     ? { status: String(node.status || ""), vendor: String(node.vendor || ""), productType: String(node.productType || ""), tags: Array.isArray(node.tags) ? node.tags : [], collectionKind: "", itemCount: 0 }
@@ -214,7 +228,7 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
         {toolbarButton("Insert table", DataTableIcon, () => insertHtml('<table><tbody><tr><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>'))}
         <button type="button" title="HTML view" aria-label="HTML view" className={`bp-editor-icon-button bp-editor-code-button${htmlMode ? " is-active" : ""}`} onClick={() => setHtmlMode((active) => !active)}><Icon source={CodeIcon} tone="base" /></button>
       </div>
-      <div ref={editor} className="bp-editor-canvas" style={{ display: htmlMode ? "none" : "block" }} contentEditable suppressContentEditableWarning role="textbox" aria-label="Resource description" data-placeholder="Write a detailed description..." onInput={emit} onBlur={emit} onKeyUp={saveSelection} onMouseUp={saveSelection} dangerouslySetInnerHTML={{ __html: value }} />
+      <div ref={editor} className="bp-editor-canvas" style={{ display: htmlMode ? "none" : "block" }} contentEditable suppressContentEditableWarning role="textbox" aria-label="Resource description" data-placeholder="Write a detailed description..." onInput={emit} onBlur={emit} onKeyUp={saveSelection} onMouseUp={saveSelection} />
       {htmlMode && <textarea className="bp-editor-html-textarea" value={value} onChange={(event) => onChange(event.target.value)} aria-label="Description HTML" />}
     </div>
     <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Insert link" primaryAction={{ content: "Insert link", onAction: applyLink, disabled: !linkUrl }} secondaryActions={[{ content: "Cancel", onAction: () => setLinkOpen(false) }]}><Modal.Section><BlockStack gap="300"><TextField label="Link to" value={linkUrl} onChange={setLinkUrl} autoComplete="off" placeholder="https://example.com" /><TextField label="Text to display" value={linkText} onChange={setLinkText} autoComplete="off" /></BlockStack></Modal.Section></Modal>
@@ -242,7 +256,8 @@ function checklistGroups(issues: CatalogSeoIssue[], resource: CatalogResourceInp
 function dedupeRows(rows: ChecklistRow[]) { return rows.filter((row, index) => rows.findIndex((candidate) => candidate.label === row.label) === index); }
 function ChecklistGroup({ label, rows }: { label: string; rows: ChecklistRow[] }) {
   const failures = rows.filter((row) => !row.passed).length;
-  return <div className="bp-checklist-group"><InlineStack align="space-between" blockAlign="center"><Text as="h3" fontWeight="semibold">{label}</Text><Badge tone={failures ? "warning" : "success"}>{failures ? `${failures} issues` : "All good"}</Badge></InlineStack><div className="bp-checklist-rows">{rows.map((row) => <div className="bp-checklist-row" key={row.label}><Icon source={row.passed ? CheckCircleIcon : AlertTriangleIcon} tone={row.passed ? "success" : row.impact === "High" ? "critical" : "warning"} /><div><Text as="p" variant="bodySm" fontWeight={row.passed ? "regular" : "semibold"}>{row.label}</Text>{row.fix && <Text as="p" variant="bodySm" tone="subdued">{row.fix}</Text>}</div></div>)}</div></div>;
+  const [open, setOpen] = useState(false);
+  return <div className="bp-checklist-group"><button type="button" className="bp-checklist-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}><InlineStack gap="200" blockAlign="center"><Text as="h3" fontWeight="semibold">{label}</Text><Badge tone={failures ? "warning" : "success"}>{failures ? `${failures} ${failures === 1 ? "issue" : "issues"}` : "All good"}</Badge></InlineStack><Icon source={open ? ChevronUpIcon : ChevronDownIcon} tone="subdued" /></button>{open && <div className="bp-checklist-rows">{rows.map((row) => <div className="bp-checklist-row" key={row.label}><Icon source={row.passed ? CheckCircleIcon : AlertTriangleIcon} tone={row.passed ? "success" : row.impact === "High" ? "critical" : "warning"} /><div><Text as="p" variant="bodySm" fontWeight={row.passed ? "regular" : "semibold"}>{row.label}</Text>{row.fix && <Text as="p" variant="bodySm" tone="subdued">{row.fix}</Text>}</div></div>)}</div>}</div>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) { return <InlineStack align="space-between" gap="300" wrap={false}><Text as="span" variant="bodySm" tone="subdued">{label}</Text><Text as="span" variant="bodySm" fontWeight="semibold" alignment="end">{value}</Text></InlineStack>; }
