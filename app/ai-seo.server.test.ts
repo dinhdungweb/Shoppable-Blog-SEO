@@ -18,7 +18,7 @@ describe("9Router SEO suggestions", () => {
 
   it("calls the OpenAI-compatible endpoint and parses JSON", async () => {
     configure();
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       choices: [{ message: { content: "```json\n{\"metaTitle\":\"Summer Shoes\",\"metaDescription\":\"Shop lightweight summer shoes for everyday comfort.\",\"imageAlt\":\"White summer shoes\"}\n```" } }],
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);

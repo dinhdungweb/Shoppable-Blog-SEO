@@ -81,6 +81,8 @@ import {
   suggestInternalLinksForDraft,
   type LinkSuggestion,
 } from "../internal-linking";
+import { generateAiBlogDraft, isAiWritingMode, type AiWritingMode } from "../ai-blog.server";
+import { isNineRouterConfigured } from "../ai-seo.server";
 
 type SeoIssue = SeoAuditIssue;
 
@@ -194,6 +196,13 @@ const STYLE_OPTIONS = [
   { label: "Featured", value: "featured" },
 ];
 
+const AI_WRITING_MODE_OPTIONS = [
+  { label: "Create a new draft", value: "draft" },
+  { label: "Improve the current article", value: "improve" },
+  { label: "Expand with useful detail", value: "expand" },
+  { label: "Make the article more concise", value: "shorten" },
+];
+
 const DEFAULT_AUTHOR_NAME = "Admin";
 
 const EDITOR_IMAGE_SIZE_OPTIONS = [
@@ -278,6 +287,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       internalLinkCandidates,
       canInternalLinking: limits.canInternalLinking,
       planKey,
+      aiEnabled: isNineRouterConfigured(),
     });
   }
 
@@ -418,6 +428,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     internalLinkCandidates,
     canInternalLinking: limits.canInternalLinking,
     planKey,
+    aiEnabled: isNineRouterConfigured(),
   });
 };
 
@@ -446,12 +457,44 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (
     isNewPost &&
-    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions"].includes(intent)
+    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions", "generate_ai_content"].includes(intent)
   ) {
     return json(
       { success: false, error: "Save this post before using this action." },
       { status: 400 },
     );
+  }
+
+  if (intent === "generate_ai_content") {
+    if (!isNineRouterConfigured()) {
+      return json({ success: false, error: "9Router is not configured on the server." }, { status: 503 });
+    }
+
+    const modeValue = cleanString(formData.get("mode"));
+    if (!isAiWritingMode(modeValue)) {
+      return json({ success: false, error: "Choose a valid AI writing task." }, { status: 400 });
+    }
+
+    const title = cleanString(formData.get("title"));
+    const instruction = cleanString(formData.get("instruction"));
+    if (!title && !instruction) {
+      return json({ success: false, error: "Add a title or instructions for the AI assistant." }, { status: 400 });
+    }
+
+    try {
+      const suggestion = await generateAiBlogDraft({
+        mode: modeValue,
+        title,
+        body: cleanString(formData.get("body")),
+        excerpt: cleanString(formData.get("excerpt")),
+        focusKeyword: cleanString(formData.get("focusKeyword")),
+        instruction,
+      });
+      return json({ success: true, action: "ai_content_generated", suggestion });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "9Router could not generate the article draft.";
+      return json({ success: false, error: message }, { status: 502 });
+    }
   }
 
   if (intent === "update_post") {
@@ -1102,9 +1145,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey } =
+  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey, aiEnabled } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const aiFetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
   const uploadFetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
@@ -1117,6 +1161,9 @@ export default function ArticleDetail() {
     stripHtml(seoData?.metaDescription || article.summary || makeMetaDescription(article.title, article.body || "")),
   );
   const [body, setBody] = useState(article.body || "");
+  const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
+  const [aiWritingMode, setAiWritingMode] = useState<AiWritingMode>(article.body ? "improve" : "draft");
+  const [aiInstruction, setAiInstruction] = useState("");
   const initialMetaTitle = seoData?.metaTitle || article.seoTitle?.value || "";
   const initialMetaDescription = seoData?.metaDescription || article.seoDescription?.value || "";
   const [metaTitle, setMetaTitle] = useState(getInitialMetaTitle(initialMetaTitle, article.title));
@@ -1157,6 +1204,7 @@ export default function ArticleDetail() {
   const imageFetcherData = imageFetcher.data as any;
   const uploadFetcherData = uploadFetcher.data as any;
   const handledFetcherDataRef = useRef<any>(null);
+  const handledAiFetcherDataRef = useRef<any>(null);
   const [focusKeyword, setFocusKeyword] = useState(seoData?.focusKeyword || "");
   const [pendingInternalLink, setPendingInternalLink] = useState<LinkSuggestion | null>(null);
   const [internalLinkAnchor, setInternalLinkAnchor] = useState("");
@@ -1237,6 +1285,7 @@ export default function ArticleDetail() {
   );
   const topProduct = [...embeddedProducts].sort((a, b) => b.clicks - a.clicks)[0] || embeddedProducts[0];
   const isSubmitting = fetcher.state !== "idle";
+  const isAiGenerating = aiFetcher.state !== "idle";
   const activeImage = imageRemoved ? null : featuredImageUrl;
   const normalizedImageQuery = imageSearchQuery.trim().toLowerCase();
   const isLoadingImages =
@@ -1358,6 +1407,38 @@ export default function ArticleDetail() {
       shopify.toast.show("Product display style updated");
     }
   }, [defaultAuthorName, fetcherData, navigate, shopify]);
+
+  useEffect(() => {
+    const data = aiFetcher.data as any;
+    if (!data || handledAiFetcherDataRef.current === data) return;
+    handledAiFetcherDataRef.current = data;
+
+    if (!data.success) {
+      shopify.toast.show(data.error || "AI generation failed.", { isError: true });
+      return;
+    }
+
+    if (data.action !== "ai_content_generated" || !data.suggestion?.bodyHtml) return;
+    const safeBody = sanitizeEditorPasteHtml(
+      data.suggestion.bodyHtml,
+      stripHtml(data.suggestion.bodyHtml),
+    );
+    if (!safeBody) {
+      shopify.toast.show("AI returned an empty article draft.", { isError: true });
+      return;
+    }
+
+    setBody(safeBody);
+    if (data.suggestion.excerpt) setExcerpt(data.suggestion.excerpt);
+    if (data.suggestion.metaTitle) {
+      setMetaTitle(data.suggestion.metaTitle);
+      setMetaTitleTouched(true);
+    }
+    if (data.suggestion.metaDescription) setMetaDescription(data.suggestion.metaDescription);
+    setIsDirty(true);
+    setAiAssistantOpen(false);
+    shopify.toast.show("AI draft added. Review it, then save when ready.");
+  }, [aiFetcher.data, shopify]);
 
   useEffect(() => {
     if (!imageFetcherData) return;
@@ -1623,6 +1704,23 @@ export default function ArticleDetail() {
     focusKeyword,
   ]);
 
+  const openAiAssistant = useCallback(() => {
+    setAiWritingMode(stripHtml(body).trim() ? "improve" : "draft");
+    setAiAssistantOpen(true);
+  }, [body]);
+
+  const handleGenerateAiContent = useCallback(() => {
+    const formData = new FormData();
+    formData.append("intent", "generate_ai_content");
+    formData.append("mode", aiWritingMode);
+    formData.append("title", title);
+    formData.append("body", body);
+    formData.append("excerpt", excerpt);
+    formData.append("focusKeyword", focusKeyword);
+    formData.append("instruction", aiInstruction);
+    aiFetcher.submit(formData, { method: "POST" });
+  }, [aiFetcher, aiInstruction, aiWritingMode, body, excerpt, focusKeyword, title]);
+
   const handleAddProducts = useCallback(async () => {
     if (isNewPost) {
       shopify.toast.show("Save this post before adding products.", { isError: true });
@@ -1783,6 +1881,14 @@ export default function ArticleDetail() {
           </BlockStack>
 
           <InlineStack gap="200" blockAlign="center">
+            <Button
+              icon={MagicIcon}
+              disabled={!aiEnabled}
+              onClick={openAiAssistant}
+              accessibilityLabel={aiEnabled ? "Open AI writing assistant" : "AI writing assistant is not configured"}
+            >
+              {aiEnabled ? "AI assistant" : "AI not configured"}
+            </Button>
             <Button loading={isSubmitting && fetcherData?.action === "seo_analyzed"} onClick={handleRunSeoScan}>
               Run SEO scan
             </Button>
@@ -1864,6 +1970,7 @@ export default function ArticleDetail() {
                   onLinkBridgeReady={(bridge) => {
                     editorLinkBridgeRef.current = bridge;
                   }}
+                  onOpenAiAssistant={aiEnabled ? openAiAssistant : undefined}
                 />
                 
                 <div id="seo-card">
@@ -2086,6 +2193,59 @@ export default function ArticleDetail() {
       )}
 
       <Modal
+        open={aiAssistantOpen}
+        onClose={() => {
+          if (!isAiGenerating) setAiAssistantOpen(false);
+        }}
+        title="AI writing assistant"
+        primaryAction={{
+          content: aiWritingMode === "draft" ? "Generate draft" : "Generate revision",
+          onAction: handleGenerateAiContent,
+          loading: isAiGenerating,
+          disabled: isAiGenerating || (!title.trim() && !aiInstruction.trim()),
+        }}
+        secondaryActions={[{
+          content: "Cancel",
+          onAction: () => setAiAssistantOpen(false),
+          disabled: isAiGenerating,
+        }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Select
+              label="Writing task"
+              options={AI_WRITING_MODE_OPTIONS}
+              value={aiWritingMode}
+              onChange={(value) => setAiWritingMode(value as AiWritingMode)}
+              disabled={isAiGenerating}
+            />
+            <TextField
+              label="Instructions"
+              value={aiInstruction}
+              onChange={setAiInstruction}
+              multiline={4}
+              maxLength={1200}
+              showCharacterCount
+              autoComplete="off"
+              disabled={isAiGenerating}
+              placeholder="Example: Write for first-time buyers, use a practical and friendly tone."
+              helpText="Optional. The assistant also uses the title, focus keyword, excerpt, and current article."
+            />
+            <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm" fontWeight="semibold">
+                  Review before publishing
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  AI replaces the editor draft but does not save it to Shopify. Existing product blocks are preserved, and you can discard the draft if needed.
+                </Text>
+              </BlockStack>
+            </Box>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      <Modal
         open={Boolean(pendingInternalLink)}
         onClose={() => setPendingInternalLink(null)}
         title="Review internal link"
@@ -2263,6 +2423,7 @@ function ShopifyContentEditor({
   onOpenImagePicker,
   onProductBlockInserted,
   onLinkBridgeReady,
+  onOpenAiAssistant,
 }: {
   title: string;
   body: string;
@@ -2274,6 +2435,7 @@ function ShopifyContentEditor({
   onOpenImagePicker: (insertImage: (image: ShopifyImageFile) => void) => void;
   onProductBlockInserted: (blockId: string) => void;
   onLinkBridgeReady: (bridge: EditorLinkBridge) => void;
+  onOpenAiAssistant?: () => void;
 }) {
   return (
     <BlockStack gap="400">
@@ -2300,6 +2462,7 @@ function ShopifyContentEditor({
               onOpenImagePicker={onOpenImagePicker}
               onProductBlockInserted={onProductBlockInserted}
               onLinkBridgeReady={onLinkBridgeReady}
+              onOpenAiAssistant={onOpenAiAssistant}
             />
           </BlockStack>
         </BlockStack>
@@ -2588,6 +2751,7 @@ function RichArticleEditor({
   onOpenImagePicker,
   onProductBlockInserted,
   onLinkBridgeReady,
+  onOpenAiAssistant,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -2597,6 +2761,7 @@ function RichArticleEditor({
   onOpenImagePicker?: (insertImage: (image: ShopifyImageFile) => void) => void;
   onProductBlockInserted?: (blockId: string) => void;
   onLinkBridgeReady?: (bridge: EditorLinkBridge) => void;
+  onOpenAiAssistant?: () => void;
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const lastHtmlRef = useRef("");
@@ -3130,11 +3295,12 @@ function RichArticleEditor({
           <button
             type="button"
             className="bp-editor-icon-button"
-            title="Writing assistant coming soon"
-            disabled
+            title={onOpenAiAssistant ? "Open AI writing assistant" : "AI writing assistant is not configured"}
+            disabled={!onOpenAiAssistant}
             onMouseDown={(event) => event.preventDefault()}
+            onClick={onOpenAiAssistant}
           >
-            <Icon source={MagicIcon} tone="subdued" />
+            <Icon source={MagicIcon} tone={onOpenAiAssistant ? "magic" : "subdued"} />
           </button>
           <span className="bp-editor-separator" />
           <select
