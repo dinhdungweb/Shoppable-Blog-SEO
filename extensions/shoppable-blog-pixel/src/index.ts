@@ -158,7 +158,8 @@ register(({ analytics, browser, init, settings }) => {
     if (productId) {
       // The format is usually gid://shopify/Product/123456789
       const idStr = String(productId).split('/').pop() || "";
-      await sendTrackEvent("add_to_cart", idStr, attribution, String((event as any).id || ""));
+      const deduplicationId = `sbs-atc-${idStr}-${Math.floor(Date.now() / 5000)}`;
+      await sendTrackEvent("add_to_cart", idStr, attribution, deduplicationId);
     }
   });
 

@@ -66,6 +66,7 @@
 <div
   class="bp-app-embed-config"
   data-article-id="{{ sbs_article_id }}"
+  data-product-id="{% if product %}{{ product.id }}{% endif %}"
   data-shop="{{ shop.permanent_domain }}"
   data-app-url="{{ sbs_app_url }}"
   hidden

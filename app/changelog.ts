@@ -69,6 +69,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Shoppable display image ratios now resize only the product image area in both Live preview and the storefront widget, without treating the entire product card as the ratio target." },
       { type: "Fixed", text: "Signed conversion attribution tokens now remain valid for the same seven-day window as the Shopify Web Pixel, so delayed add-to-cart and purchase events are no longer dropped after 24 hours." },
       { type: "Fixed", text: "Web Pixel conversion requests are now awaited, kept alive through cart-drawer and navigation lifecycle changes, and retried once after transient network failures." },
+      { type: "Fixed", text: "Product attribution now survives variant URL changes, with a storefront fallback for custom Shopify cart drawers that do not reliably emit the standard add-to-cart pixel event." },
     ],
   },
   {

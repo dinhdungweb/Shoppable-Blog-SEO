@@ -8,9 +8,12 @@
   const GRID_CONTAINER_SELECTOR = ".bp-grid__container";
   const LOADING_SELECTOR = ".bp-widget__loading";
   const DEFAULT_BLOCK_ID = "default";
+  const STOREFRONT_ATTRIBUTION_KEY = "sbs_storefront_attribution";
+  const ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
   const MARKER_PATTERN = /\[\[SBS_PRODUCTS(?::([a-zA-Z0-9_-]+)(?::([a-zA-Z0-9_-]+))?)?\]\]/g;
 
   function init() {
+    initStorefrontAttribution();
     replaceMarkers();
     loadWidgets();
   }
@@ -307,6 +310,14 @@
   }
 
   function publishAttribution(widget, productId, trackingToken) {
+    saveStorefrontAttribution({
+      shop: widget.dataset.shop || "",
+      articleId: widget.dataset.articleId || "",
+      blockId: cleanBlockId(widget.dataset.blockId),
+      productId: productId || "",
+      trackingToken: trackingToken || "",
+    });
+
     try {
       const analytics = window.Shopify && window.Shopify.analytics;
       if (!analytics || typeof analytics.publish !== "function") return;
@@ -319,6 +330,125 @@
         trackingToken: trackingToken || "",
       });
     } catch (error) {}
+  }
+
+  function initStorefrontAttribution() {
+    const config = document.querySelector(".bp-app-embed-config");
+    if (!config) return;
+
+    captureAttributionFromUrl(config);
+    installCartAddFallback(config);
+  }
+
+  function captureAttributionFromUrl(config) {
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("utm_medium") !== "shoppable_blog") return;
+
+      const articleId = url.searchParams.get("utm_term") || "";
+      const trackingToken = url.searchParams.get("sbs_token") || "";
+      const productId = String(config.dataset.productId || "");
+      if (!articleId || !trackingToken || !productId) return;
+
+      saveStorefrontAttribution({
+        shop: config.dataset.shop || "",
+        articleId,
+        blockId: cleanBlockId(url.searchParams.get("utm_content")),
+        productId,
+        trackingToken,
+      });
+    } catch (error) {}
+  }
+
+  function saveStorefrontAttribution(attribution) {
+    if (!attribution.articleId || !attribution.productId || !attribution.trackingToken) return;
+
+    try {
+      localStorage.setItem(STOREFRONT_ATTRIBUTION_KEY, JSON.stringify({
+        ...attribution,
+        timestamp: Date.now(),
+      }));
+    } catch (error) {}
+  }
+
+  function getStorefrontAttribution(productId) {
+    try {
+      const raw = localStorage.getItem(STOREFRONT_ATTRIBUTION_KEY);
+      if (!raw) return null;
+
+      const attribution = JSON.parse(raw);
+      if (!attribution.timestamp || Date.now() - attribution.timestamp > ATTRIBUTION_WINDOW_MS) {
+        localStorage.removeItem(STOREFRONT_ATTRIBUTION_KEY);
+        return null;
+      }
+
+      if (String(attribution.productId) !== String(productId)) return null;
+      return attribution;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function installCartAddFallback(config) {
+    const productId = String(config.dataset.productId || "");
+    if (!productId || window.__sbsCartTrackingInstalled) return;
+    window.__sbsCartTrackingInstalled = true;
+
+    const recordSuccessfulAdd = () => {
+      const attribution = getStorefrontAttribution(productId);
+      if (!attribution) return;
+
+      trackEvent(
+        config.dataset.appUrl || "/apps/shoppable-blog-seo",
+        attribution.shop || config.dataset.shop || "",
+        attribution.articleId,
+        attribution.blockId,
+        productId,
+        "add_to_cart",
+        attribution.trackingToken,
+        addToCartEventId(productId),
+      );
+    };
+
+    const originalFetch = window.fetch;
+    if (typeof originalFetch === "function") {
+      window.fetch = async function (...args) {
+        const response = await originalFetch.apply(this, args);
+        if (response.ok && isCartAddUrl(requestUrl(args[0]))) recordSuccessfulAdd();
+        return response;
+      };
+    }
+
+    if (window.XMLHttpRequest) {
+      const originalOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        this.__sbsCartAddRequest = String(method || "").toUpperCase() === "POST" && isCartAddUrl(String(url || ""));
+        if (this.__sbsCartAddRequest) {
+          this.addEventListener("load", () => {
+            if (this.status >= 200 && this.status < 300) recordSuccessfulAdd();
+          }, { once: true });
+        }
+        return originalOpen.apply(this, arguments);
+      };
+    }
+  }
+
+  function requestUrl(request) {
+    if (typeof request === "string") return request;
+    return request && typeof request.url === "string" ? request.url : "";
+  }
+
+  function isCartAddUrl(value) {
+    try {
+      const url = new URL(value, window.location.origin);
+      return /\/cart\/add(?:\.js)?\/?$/.test(url.pathname);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function addToCartEventId(productId) {
+    return `sbs-atc-${productId}-${Math.floor(Date.now() / 5000)}`;
   }
 
   function setupCarousel(widget, style, config = {}) {
@@ -575,9 +705,9 @@
     style.textContent = customCss;
   }
 
-  function trackEvent(appUrl, shop, articleId, blockId, productId, eventType, trackingToken) {
+  function trackEvent(appUrl, shop, articleId, blockId, productId, eventType, trackingToken, eventId) {
     try {
-      const sessionId = getSessionId();
+      const sessionId = eventId || getSessionId();
       const params = new URLSearchParams({
         shop,
         articleId,
