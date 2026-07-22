@@ -8,6 +8,7 @@
 .bp-catalog-impact.is-high { background: #d82c0d; }
 .bp-catalog-impact.is-medium { background: #ffc453; }
 .bp-catalog-filters { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(170px, 230px); gap: 12px; align-items: end; }
+.bp-catalog-fix-copy { max-width: 360px; white-space: normal; }
 .bp-catalog-review-issue { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--p-color-border-secondary); border-radius: 10px; background: var(--p-color-bg-surface-secondary); }
 .bp-catalog-score-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--p-color-bg-fill-secondary); }
 .bp-catalog-score-track > span { display: block; height: 100%; border-radius: inherit; background: var(--p-color-bg-fill-success); }

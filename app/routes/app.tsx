@@ -39,6 +39,7 @@ export default function App() {
           Dashboard
         </Link>
         <Link to="/app/blogs">Blog Manager</Link>
+        <Link to="/app/catalog-seo?view=manager&type=product">Catalog Manager</Link>
         <Link to="/app/seo">SEO Optimizer</Link>
         <Link to="/app/performance">Performance</Link>
         <Link to="/app/internal-links">Internal Linking</Link>
