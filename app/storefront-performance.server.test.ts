@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runStorefrontPerformanceScan } from "./storefront-performance.server";
+import { resolveCustomPerformanceUrl, runStorefrontPerformanceScan } from "./storefront-performance.server";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -55,5 +55,12 @@ describe("storefront performance scans", () => {
   it("rejects non-HTTPS scan targets", async () => {
     await expect(runStorefrontPerformanceScan("http://localhost:3000/"))
       .rejects.toThrow("Only public HTTPS storefront URLs can be scanned");
+  });
+
+  it("accepts only custom URLs on the current storefront domain", () => {
+    expect(resolveCustomPerformanceUrl("/products/ring?variant=1#details", "https://shop.example.com/"))
+      .toBe("https://shop.example.com/products/ring?variant=1");
+    expect(() => resolveCustomPerformanceUrl("https://other.example.com/products/ring", "https://shop.example.com/"))
+      .toThrow("this Shopify storefront domain");
   });
 });

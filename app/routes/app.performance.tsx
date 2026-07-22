@@ -3,14 +3,15 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, InlineGrid, InlineStack, Page, Text } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, InlineGrid, InlineStack, Page, Text, TextField } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { AlertTriangleIcon, AppsIcon, BlogIcon, ChartVerticalIcon, CheckCircleIcon, ChevronDownIcon, CodeIcon, CollectionIcon, DesktopIcon, GaugeIcon, HomeIcon, ImageIcon, MobileIcon, ProductIcon, SearchIcon } from "@shopify/polaris-icons";
+import { AlertTriangleIcon, AppsIcon, ChartVerticalIcon, CheckCircleIcon, ChevronDownIcon, CodeIcon, DesktopIcon, GaugeIcon, HomeIcon, ImageIcon, MobileIcon, SearchIcon } from "@shopify/polaris-icons";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import performanceStyles from "../styles/performance.css?url";
 import {
   discoverPerformanceTargets,
+  resolveCustomPerformanceUrl,
   runStorefrontPerformanceScan,
 } from "../storefront-performance.server";
 import {
@@ -37,10 +38,14 @@ type SavedScan = {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
-  const [targets, saved] = await Promise.all([
+  const [discovered, saved] = await Promise.all([
     discoverPerformanceTargets(admin),
     prisma.storefrontPerformanceScan.findMany({ where: { shop: session.shop }, orderBy: { scannedAt: "desc" } }),
   ]);
+  const savedOther = saved.find((scan) => scan.pageType === "other");
+  const targets = discovered.map((target) => target.type === "other" && savedOther
+    ? { ...target, url: savedOther.pageUrl, available: true }
+    : target);
   return json({
     targets,
     scans: saved.map((scan) => ({
@@ -69,7 +74,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     // Resolve the URL again on the server. Never trust a client-provided scan URL.
     const targets = await discoverPerformanceTargets(admin);
-    const target = targets.find((item) => item.type === pageType);
+    const homepage = targets.find((item) => item.type === "homepage");
+    const target = pageType === "other" && homepage?.url
+      ? { type: "other" as const, title: "Other page", url: resolveCustomPerformanceUrl(String(formData.get("customUrl") || ""), homepage.url), available: true }
+      : targets.find((item) => item.type === pageType);
     if (!target?.available) return json({ error: `No published ${labelFor(pageType).toLowerCase()} is available to scan.` }, { status: 404 });
     const existing = await prisma.storefrontPerformanceScan.findUnique({ where: { shop_pageType: { shop: session.shop, pageType } }, select: { status: true, updatedAt: true } });
     const stillRunning = existing?.status === "running" && Date.now() - existing.updatedAt.getTime() < 3 * 60 * 1000;
@@ -85,9 +93,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
     void completePerformanceScan(session.shop, pageType, target);
-    return json({ success: true, queued: true, pageType }, { status: 202 });
+    return json({ success: true, queued: true, pageType, pageUrl: target.url }, { status: 202 });
   } catch (error) {
     console.error("Storefront performance scan failed", error instanceof Error ? error.message : String(error));
+    if (error instanceof Error && /Shopify storefront domain/.test(error.message)) {
+      return json({ error: error.message }, { status: 400 });
+    }
     const message = error instanceof Error && /quota|api key|daily limit/i.test(error.message)
       ? "Google PageSpeed quota is unavailable. Configure GOOGLE_PAGESPEED_API_KEY or try again later."
       : "The storefront could not be scanned. Confirm it is public and try again.";
@@ -137,25 +148,31 @@ export default function PerformancePage() {
     const firstSaved = initial.scans[0]?.pageType as PerformancePageType | undefined;
     return firstSaved && PERFORMANCE_PAGE_TYPES.includes(firstSaved) ? firstSaved : "homepage";
   });
+  const [customUrl, setCustomUrl] = useState(() => initial.targets.find((item) => item.type === "other")?.url || "");
   const [device, setDevice] = useState<"mobile" | "desktop">("mobile");
-  const response = fetcher.data as { success?: boolean; queued?: boolean; pageType?: PerformancePageType; error?: string } | undefined;
+  const response = fetcher.data as { success?: boolean; queued?: boolean; pageType?: PerformancePageType; pageUrl?: string; error?: string } | undefined;
 
   useEffect(() => {
     if (!response || handled.current === response) return;
     handled.current = response;
-    if (response.success) shopify.toast.show(`${labelFor(response.pageType || selected)} scan started`);
+    if (response.success) {
+      if (response.pageType === "other" && response.pageUrl) setCustomUrl(response.pageUrl);
+      shopify.toast.show(`${labelFor(response.pageType || selected)} scan started`);
+    }
     if (response.error) shopify.toast.show(response.error, { isError: true });
   }, [response, selected, shopify]);
 
   const savedByType = useMemo(() => new Map(initial.scans.map((scan) => [scan.pageType, scan as SavedScan])), [initial.scans]);
-  const target = initial.targets.find((item) => item.type === selected) as PerformanceTarget | undefined;
-  const saved = savedByType.get(selected);
+  const baseTarget = initial.targets.find((item) => item.type === selected) as PerformanceTarget | undefined;
+  const target = selected === "other" ? { type: "other" as const, title: "Other page", url: customUrl.trim(), available: Boolean(customUrl.trim()) } : baseTarget;
+  const storedScan = savedByType.get(selected);
+  const saved = selected === "other" && storedScan?.pageUrl !== customUrl.trim() ? undefined : storedScan;
   const report = saved?.report || null;
   const scannedAt = saved?.scannedAt;
   const scanning = fetcher.state !== "idle" || saved?.status === "running";
   const activeDevice = report ? normalizeDeviceReport(report[device], report.seoScore) : null;
   const overall = activeDevice ? Math.round(Object.values(activeDevice.categories).reduce((sum, value) => sum + value, 0) / 4) : 0;
-  const scan = () => fetcher.submit({ intent: "scan", pageType: selected }, { method: "post" });
+  const scan = () => fetcher.submit({ intent: "scan", pageType: selected, customUrl: selected === "other" ? customUrl : "" }, { method: "post" });
 
   useEffect(() => {
     if (!initial.scans.some((scan) => scan.status === "running")) return;
@@ -178,7 +195,12 @@ export default function PerformancePage() {
         <Box padding="400" background="bg-surface-secondary">
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd">Page types</Text>
-            {initial.targets.map((item) => <PageTypeButton key={item.type} target={item} selected={selected === item.type} scan={savedByType.get(item.type)} onSelect={() => setSelected(item.type)} />)}
+            {initial.targets.map((item) => {
+              const displayTarget = item.type === "other" ? { ...item, url: customUrl.trim(), available: Boolean(customUrl.trim()) } : item;
+              const itemScan = savedByType.get(item.type);
+              const matchingScan = item.type === "other" && itemScan?.pageUrl !== customUrl.trim() ? undefined : itemScan;
+              return <PageTypeButton key={item.type} target={displayTarget} selected={selected === item.type} scan={matchingScan} onSelect={() => setSelected(item.type)} />;
+            })}
           </BlockStack>
         </Box>
         <Box padding="500">
@@ -187,6 +209,7 @@ export default function PerformancePage() {
               <BlockStack gap="100"><Text as="h2" variant="headingLg">{target?.title || labelFor(selected)}</Text><Text as="p" variant="bodySm" tone="subdued">{target?.url || "No published page found"}</Text></BlockStack>
               {report && <Badge tone={scoreTone(overall)}>{`${overall}/100 overall`}</Badge>}
             </InlineStack>
+            {selected === "other" && <Card><BlockStack gap="200"><Text as="h3" variant="headingMd">Page URL</Text><TextField label="Shopify storefront URL" labelHidden value={customUrl} onChange={setCustomUrl} placeholder="https://your-store.com/products/example" autoComplete="off" helpText="Enter any product, collection, article or Shopify page URL on this storefront." /></BlockStack></Card>}
             {!target?.available ? <Banner tone="warning" title={`${labelFor(selected)} unavailable`}><p>Publish at least one matching resource in Shopify before scanning this page type.</p></Banner> : !report || !activeDevice ? <Card><BlockStack gap="300" inlineAlign="center"><Text as="h3" variant="headingMd">No saved report yet</Text><Text as="p" tone="subdued">Run a read-only PageSpeed scan for this storefront URL.</Text><Button variant="primary" loading={scanning} onClick={scan}>Run scan</Button></BlockStack></Card> : <>
               <div className="bp-device-tabs" role="tablist" aria-label="Report device"><button type="button" className={device === "mobile" ? "is-active" : ""} onClick={() => setDevice("mobile")}><Icon source={MobileIcon} /> Mobile</button><button type="button" className={device === "desktop" ? "is-active" : ""} onClick={() => setDevice("desktop")}><Icon source={DesktopIcon} /> Desktop</button></div>
               <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
@@ -210,7 +233,7 @@ export default function PerformancePage() {
 }
 
 function PageTypeButton({ target, selected, scan, onSelect }: { target: PerformanceTarget; selected: boolean; scan?: SavedScan; onSelect: () => void }) {
-  const PageIcon = ({ homepage: HomeIcon, product: ProductIcon, collection: CollectionIcon, blog: BlogIcon } as const)[target.type];
+  const PageIcon = ({ homepage: HomeIcon, other: SearchIcon } as const)[target.type];
   return <button type="button" onClick={onSelect} className={`bp-performance-page-button${selected ? " is-selected" : ""}`}>
     <InlineStack gap="200" blockAlign="center" wrap={false}><span className="bp-page-type-icon"><Icon source={PageIcon} /></span><div className="bp-page-type-copy"><BlockStack gap="100"><InlineStack align="space-between"><Text as="span" fontWeight="semibold">{labelFor(target.type)}</Text>{scan?.report && <Badge tone={scoreTone(scan.seoScore)}>{String(scan.seoScore)}</Badge>}</InlineStack><Text as="span" variant="bodySm" tone="subdued">{target.available ? scan ? target.title : "Not scanned" : "Unavailable"}</Text></BlockStack></div></InlineStack>
   </button>;
@@ -278,7 +301,7 @@ function metricName(label: string) {
 }
 
 function labelFor(type: PerformancePageType) {
-  return ({ homepage: "Homepage", product: "Product page", collection: "Collection page", blog: "Blog page" } as const)[type];
+  return ({ homepage: "Homepage", other: "Other page" } as const)[type];
 }
 
 function scoreTone(score: number): "success" | "warning" | "critical" {

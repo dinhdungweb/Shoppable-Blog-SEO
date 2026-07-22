@@ -74,6 +74,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Performance reports surface Core Web Vitals lab metrics and prioritized Lighthouse opportunities without rescanning pages every time the app opens." },
       { type: "Fixed", text: "Storefront Performance scans now run in the background and update automatically instead of holding the embedded app request open until Nginx returns a 504 timeout." },
       { type: "Improved", text: "Storefront Performance now includes full Lighthouse category scores, real-user Core Web Vitals, page screenshots, lab metrics, grouped diagnostics, expandable audit details and passed checks in a more visual Shopify-native report." },
+      { type: "Improved", text: "Storefront Performance now keeps Homepage as the automatic target and replaces fixed product, collection and blog targets with one saved Other page URL chosen by the merchant." },
     ],
   },
   {

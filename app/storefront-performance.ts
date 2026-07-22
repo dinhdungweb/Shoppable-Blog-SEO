@@ -1,4 +1,4 @@
-export const PERFORMANCE_PAGE_TYPES = ["homepage", "product", "collection", "blog"] as const;
+export const PERFORMANCE_PAGE_TYPES = ["homepage", "other"] as const;
 export type PerformancePageType = typeof PERFORMANCE_PAGE_TYPES[number];
 
 export type PerformanceTarget = {

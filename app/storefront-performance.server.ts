@@ -2,22 +2,13 @@ import type { PerformancePageType, PerformanceTarget, StorefrontPerformanceRepor
 
 const LABELS: Record<PerformancePageType, string> = {
   homepage: "Homepage",
-  product: "Product page",
-  collection: "Collection page",
-  blog: "Blog page",
+  other: "Other page",
 };
 
 export async function discoverPerformanceTargets(admin: any): Promise<PerformanceTarget[]> {
   const response = await admin.graphql(`#graphql
     query StorefrontPerformanceTargets {
       shop { primaryDomain { url } }
-      products(first: 1, query: "status:active", sortKey: UPDATED_AT, reverse: true) {
-        nodes { title handle onlineStoreUrl }
-      }
-      collections(first: 1, sortKey: UPDATED_AT, reverse: true) {
-        nodes { title handle }
-      }
-      blogs(first: 1) { nodes { title handle } }
     }
   `);
   const payload: any = await response.json();
@@ -25,16 +16,21 @@ export async function discoverPerformanceTargets(admin: any): Promise<Performanc
 
   const data = payload.data || {};
   const origin = normalizeOrigin(data.shop?.primaryDomain?.url);
-  const product = data.products?.nodes?.[0];
-  const collection = data.collections?.nodes?.[0];
-  const blog = data.blogs?.nodes?.[0];
 
   return [
     target("homepage", LABELS.homepage, origin ? `${origin}/` : ""),
-    target("product", product?.title || LABELS.product, product?.onlineStoreUrl || (origin && product?.handle ? `${origin}/products/${product.handle}` : "")),
-    target("collection", collection?.title || LABELS.collection, origin && collection?.handle ? `${origin}/collections/${collection.handle}` : ""),
-    target("blog", blog?.title || LABELS.blog, origin && blog?.handle ? `${origin}/blogs/${blog.handle}` : ""),
+    target("other", LABELS.other, ""),
   ];
+}
+
+export function resolveCustomPerformanceUrl(value: string, storefrontUrl: string) {
+  const storefront = new URL(storefrontUrl);
+  const candidate = new URL(value.trim(), storefront.origin);
+  if (candidate.protocol !== "https:" || candidate.hostname !== storefront.hostname || candidate.port) {
+    throw new Error("Enter an HTTPS URL from this Shopify storefront domain.");
+  }
+  candidate.hash = "";
+  return candidate.toString();
 }
 
 export async function runStorefrontPerformanceScan(targetUrl: string): Promise<StorefrontPerformanceReport> {
