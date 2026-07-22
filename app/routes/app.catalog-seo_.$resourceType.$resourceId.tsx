@@ -88,10 +88,14 @@ export default function CatalogResourceEditor() {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [searchParams] = useSearchParams();
-  const [title, setTitle] = useState(resource.title);
+  const initialSeoTitle = resource.seoTitle.trim() || resource.title;
+  const initialSeoDescription = resource.seoDescription.trim() || stripHtml(resource.descriptionHtml).slice(0, 165);
+  const [title, setTitleState] = useState(resource.title);
   const [descriptionHtml, setDescriptionHtml] = useState(resource.descriptionHtml);
-  const [seoTitle, setSeoTitle] = useState(resource.seoTitle);
-  const [seoDescription, setSeoDescription] = useState(resource.seoDescription);
+  const [seoTitle, setSeoTitle] = useState(initialSeoTitle);
+  const [seoDescription, setSeoDescription] = useState(initialSeoDescription);
+  const seoTitleAutomatic = useRef(!resource.seoTitle.trim());
+  const seoDescriptionAutomatic = useRef(!resource.seoDescription.trim());
   const [handle, setHandle] = useState(resource.handle);
   const [status, setStatus] = useState(details.status || "ACTIVE");
   const [vendor, setVendor] = useState(details.vendor);
@@ -104,11 +108,13 @@ export default function CatalogResourceEditor() {
   const [linkAnchor, setLinkAnchor] = useState("");
   const currentAudit = useMemo(() => auditCatalogResource({ ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword }), [resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword]);
   const typeLabel = resource.type === "product" ? "Product" : "Collection";
-  const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== resource.seoTitle || seoDescription !== resource.seoDescription || handle !== resource.handle || imageAlt !== resource.imageAlt || focusKeyword !== (resource.focusKeyword || "") || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
+  const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== initialSeoTitle || seoDescription !== initialSeoDescription || handle !== resource.handle || imageAlt !== resource.imageAlt || focusKeyword !== (resource.focusKeyword || "") || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
   const wordCount = stripHtml(descriptionHtml).split(/\s+/).filter(Boolean).length;
   const displaySeoTitle = seoTitle.trim() || title.trim() || `Untitled ${typeLabel.toLowerCase()}`;
   const displaySeoDescription = seoDescription.trim() || stripHtml(descriptionHtml).slice(0, 165) || `Add a description for this ${typeLabel.toLowerCase()}.`;
-  const reset = () => { setTitle(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(resource.seoTitle); setSeoDescription(resource.seoDescription); setHandle(resource.handle); setStatus(details.status || "ACTIVE"); setVendor(details.vendor); setProductType(details.productType); setTags(details.tags.join(", ")); setImageAlt(resource.imageAlt); setFocusKeyword(resource.focusKeyword || ""); };
+  const setTitle = (next: string) => { setTitleState(next); if (seoTitleAutomatic.current) setSeoTitle(next.slice(0, 70)); };
+  const setDescription = (next: string) => { setDescriptionHtml(next); if (seoDescriptionAutomatic.current) setSeoDescription(stripHtml(next).slice(0, 165)); };
+  const reset = () => { setTitleState(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(initialSeoTitle); setSeoDescription(initialSeoDescription); seoTitleAutomatic.current = !resource.seoTitle.trim(); seoDescriptionAutomatic.current = !resource.seoDescription.trim(); setHandle(resource.handle); setStatus(details.status || "ACTIVE"); setVendor(details.vendor); setProductType(details.productType); setTags(details.tags.join(", ")); setImageAlt(resource.imageAlt); setFocusKeyword(resource.focusKeyword || ""); };
   const groups = checklistGroups(currentAudit.issues, { ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword });
   const linkSuggestions = useMemo(() => canInternalLinking ? suggestInternalLinksForDraft({ id: resource.id, title, handle, blogHandle: resource.type === "product" ? "products" : "collections", body: descriptionHtml }, linkTargets.map((item) => ({ id: item.articleId, title: item.articleTitle, handle: item.articleHandle, blogHandle: item.blogHandle, body: "" })), 8) : [], [canInternalLinking, descriptionHtml, handle, linkTargets, resource.id, resource.type, title]);
   return <Page fullWidth backAction={{ content: `${typeLabel} SEO`, url: `/app/catalog-seo?type=${resource.type}` }}>
@@ -126,13 +132,13 @@ export default function CatalogResourceEditor() {
         <EditorMetric label={resource.type === "product" ? "Resource" : "Products"} value={resource.type === "product" ? "Product" : String(details.itemCount)} icon={resource.type === "product" ? ProductIcon : CollectionIcon} tone="info" />
       </InlineGrid>
       <div className="bp-catalog-editor-main"><main className="bp-catalog-editor-content"><BlockStack gap="400">
-        <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">{typeLabel} content</Text><Text as="p" variant="bodySm" tone="subdued">Write useful storefront copy for shoppers, not search engines alone.</Text></BlockStack><Badge>{`${wordCount} words`}</Badge></InlineStack><TextField name="title" label="Title" value={title} onChange={setTitle} autoComplete="off" maxLength={255} showCharacterCount /><BlockStack gap="200"><Text as="h3" fontWeight="semibold">Description</Text><RichTextEditor value={descriptionHtml} onChange={setDescriptionHtml} /></BlockStack></BlockStack></Card>
-        <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">Search engine listing</Text><Text as="p" tone="subdued">Preview and edit the title, description and Shopify URL.</Text></BlockStack><Icon source={SearchIcon} tone="info" /></InlineStack><div className="bp-search-preview"><div className="bp-search-preview__site">Your store · {resource.type}</div><div className="bp-search-preview__title">{displaySeoTitle}</div><div className="bp-search-preview__url">/{resource.type === "product" ? "products" : "collections"}/{handle}</div><div className="bp-search-preview__description">{displaySeoDescription}</div></div><TextField name="seoTitle" label="Page title" value={seoTitle} onChange={setSeoTitle} autoComplete="off" maxLength={70} showCharacterCount helpText="Leave blank to let Shopify use the resource title." /><TextField name="seoDescription" label="Meta description" value={seoDescription} onChange={setSeoDescription} multiline={4} autoComplete="off" maxLength={165} showCharacterCount helpText="Leave blank to let Shopify derive a description from the content." /><TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} /></BlockStack></Card>
+        <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">{typeLabel} content</Text><Text as="p" variant="bodySm" tone="subdued">Write useful storefront copy for shoppers, not search engines alone.</Text></BlockStack><Badge>{`${wordCount} words`}</Badge></InlineStack><TextField name="title" label="Title" value={title} onChange={setTitle} autoComplete="off" maxLength={255} showCharacterCount /><BlockStack gap="200"><Text as="h3" fontWeight="semibold">Description</Text><RichTextEditor value={descriptionHtml} onChange={setDescription} /></BlockStack></BlockStack></Card>
+        <Card><BlockStack gap="400"><InlineStack gap="200" blockAlign="center"><Icon source={SearchIcon} tone="info" /><BlockStack gap="100"><Text as="h2" variant="headingMd">Search engine listing</Text><Text as="p" tone="subdued">Preview and edit the title, description and Shopify URL.</Text></BlockStack></InlineStack><div className="bp-search-preview"><div className="bp-search-preview__site">Your store · {resource.type}</div><div className="bp-search-preview__title">{displaySeoTitle}</div><div className="bp-search-preview__url">/{resource.type === "product" ? "products" : "collections"}/{handle}</div><div className="bp-search-preview__description">{displaySeoDescription}</div></div><TextField name="seoTitle" label="Page title" value={seoTitle} onChange={(next) => { seoTitleAutomatic.current = false; setSeoTitle(next); }} autoComplete="off" maxLength={70} showCharacterCount helpText="Automatically follows the resource title until you edit this field manually." /><TextField name="seoDescription" label="Meta description" value={seoDescription} onChange={(next) => { seoDescriptionAutomatic.current = false; setSeoDescription(next); }} multiline={4} autoComplete="off" maxLength={165} showCharacterCount helpText="Automatically follows the description until you edit this field manually." /><TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} /></BlockStack></Card>
         <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
-        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="bodySm" tone="subdued">Every passed and failed check remains visible and updates while you edit.</Text></BlockStack><Badge tone={scoreTone(currentAudit.score)}>{`${currentAudit.score}/100`}</Badge></InlineStack>{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</BlockStack></Card>
+        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="bodySm" tone="subdued">Every passed and failed check remains visible and updates while you edit.</Text></BlockStack><Badge tone={scoreTone(currentAudit.score)}>{`${currentAudit.score}/100`}</Badge></InlineStack><div className="bp-checklist-groups">{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</div></BlockStack></Card>
       </BlockStack></main><aside className="bp-catalog-editor-sidebar"><BlockStack gap="400">
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="headingXl" fontWeight="bold">{currentAudit.score}<Text as="span" variant="bodySm" tone="subdued">/100</Text></Text></InlineStack><div className="bp-catalog-score-track"><span style={{ width: `${currentAudit.score}%` }} /></div><Text as="p" variant="bodySm" tone="subdued">{savedAt ? `Last analyzed ${new Date(savedAt).toLocaleString()}` : "Calculated from current Shopify content."}</Text></BlockStack></Card>
-        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Image</Text><Icon source={ImageIcon} tone="info" /></InlineStack>{resource.imageUrl ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={imageAlt || resource.title} /></div> : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}<TextField name="imageAlt" label="Image alt text" value={imageAlt} onChange={setImageAlt} autoComplete="off" maxLength={500} helpText="Briefly describe the image for screen readers and image search." /><Button url={adminUrl} target="_blank" fullWidth>Change image in Shopify</Button></BlockStack></Card>
+        <Card><BlockStack gap="300"><InlineStack gap="200" blockAlign="center"><Icon source={ImageIcon} tone="info" /><Text as="h2" variant="headingMd">Image</Text></InlineStack>{resource.imageUrl ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={imageAlt || resource.title} /></div> : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}<TextField name="imageAlt" label="Image alt text" value={imageAlt} onChange={setImageAlt} autoComplete="off" maxLength={500} helpText="Briefly describe the image for screen readers and image search." /><Button url={adminUrl} target="_blank" fullWidth>Change image in Shopify</Button></BlockStack></Card>
         <InternalLinkCard allowed={canInternalLinking} planKey={planKey} suggestions={linkSuggestions} onReview={(suggestion) => { setPendingLink(suggestion); setLinkAnchor(suggestion.anchorText); }} />
         <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} settings</Text><Divider />{resource.type === "product" ? <><Select name="status" label="Status" value={status} onChange={setStatus} options={[{ label: "Active", value: "ACTIVE" }, { label: "Draft", value: "DRAFT" }, { label: "Archived", value: "ARCHIVED" }]} /><TextField name="vendor" label="Vendor" value={vendor} onChange={setVendor} autoComplete="off" /><TextField name="productType" label="Product type" value={productType} onChange={setProductType} autoComplete="off" /><TextField name="tags" label="Tags" value={tags} onChange={setTags} autoComplete="off" helpText="Separate tags with commas." /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Variants, pricing, inventory, collection rules and media remain in Shopify to prevent destructive edits.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></Card>
       </BlockStack></aside></div>
@@ -143,7 +149,7 @@ export default function CatalogResourceEditor() {
 }
 
 function EditorMetric({ label, value, icon, tone }: { label: string; value: string; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; tone: "success" | "warning" | "critical" | "info" }) {
-  return <Card><InlineStack align="space-between" blockAlign="start" wrap={false}><BlockStack gap="150"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack><Icon source={icon} tone={tone} /></InlineStack></Card>;
+  return <Card><BlockStack gap="150"><InlineStack gap="150" blockAlign="center"><Icon source={icon} tone={tone} /><Text as="p" variant="bodySm" tone="subdued">{label}</Text></InlineStack><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack></Card>;
 }
 
 function FocusKeywordCard({ value, input, setInput, onChange, audit }: { value: string; input: string; setInput: (value: string) => void; onChange: (value: string) => void; audit: ReturnType<typeof auditCatalogResource> }) {
@@ -170,6 +176,7 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [linkText, setLinkText] = useState("");
+  const activeLink = useRef<HTMLAnchorElement | null>(null);
   const [imageOpen, setImageOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
   const [imageAlt, setImageAlt] = useState("");
@@ -198,13 +205,42 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
     emit();
   };
   const insertHtml = (html: string) => command("insertHTML", html);
-  const openLink = () => { saveSelection(); setLinkText(window.getSelection()?.toString() || ""); setLinkOpen(true); };
+  const openLink = () => {
+    saveSelection();
+    const range = selection.current;
+    const node = range?.startContainer;
+    const element = node instanceof HTMLElement ? node : node?.parentElement;
+    const anchor = element?.closest("a");
+    activeLink.current = anchor && editor.current?.contains(anchor) ? anchor : null;
+    setLinkUrl(activeLink.current?.getAttribute("href") || "");
+    setLinkText(activeLink.current?.textContent || window.getSelection()?.toString() || "");
+    setLinkOpen(true);
+  };
   const applyLink = () => {
     if (!/^https?:\/\//i.test(linkUrl) && !linkUrl.startsWith("/")) return;
+    if (activeLink.current) {
+      activeLink.current.setAttribute("href", linkUrl);
+      if (linkText.trim()) activeLink.current.textContent = linkText.trim();
+      emit();
+      activeLink.current = null;
+      setLinkOpen(false); setLinkUrl(""); setLinkText("");
+      return;
+    }
     restoreSelection();
     if (linkText) insertHtml(`<a href="${escapeHtml(linkUrl)}">${escapeHtml(linkText)}</a>`); else command("createLink", linkUrl);
     setLinkOpen(false); setLinkUrl(""); setLinkText("");
   };
+  const removeLink = () => {
+    const anchor = activeLink.current;
+    if (!anchor) return;
+    const parent = anchor.parentNode;
+    while (anchor.firstChild) parent?.insertBefore(anchor.firstChild, anchor);
+    parent?.removeChild(anchor);
+    activeLink.current = null;
+    emit();
+    setLinkOpen(false); setLinkUrl(""); setLinkText("");
+  };
+  const closeLink = () => { activeLink.current = null; setLinkOpen(false); setLinkUrl(""); setLinkText(""); };
   const applyImage = () => { if (!/^https?:\/\//i.test(imageUrl)) return; restoreSelection(); insertHtml(`<p><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageAlt)}" style="max-width:100%;height:auto"></p>`); setImageOpen(false); setImageUrl(""); setImageAlt(""); };
   const applyVideo = () => { const embed = videoEmbed(videoUrl); if (!embed) return; restoreSelection(); insertHtml(embed); setVideoOpen(false); setVideoUrl(""); };
   const toolbarButton = (label: string, icon: any, action: () => void) => <button type="button" title={label} aria-label={label} className="bp-editor-icon-button" onMouseDown={(event) => { event.preventDefault(); saveSelection(); }} onClick={action}><Icon source={icon} tone="base" /></button>;
@@ -228,10 +264,10 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
         {toolbarButton("Insert table", DataTableIcon, () => insertHtml('<table><tbody><tr><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>'))}
         <button type="button" title="HTML view" aria-label="HTML view" className={`bp-editor-icon-button bp-editor-code-button${htmlMode ? " is-active" : ""}`} onClick={() => setHtmlMode((active) => !active)}><Icon source={CodeIcon} tone="base" /></button>
       </div>
-      <div ref={editor} className="bp-editor-canvas" style={{ display: htmlMode ? "none" : "block" }} contentEditable suppressContentEditableWarning role="textbox" aria-label="Resource description" data-placeholder="Write a detailed description..." onInput={emit} onBlur={emit} onKeyUp={saveSelection} onMouseUp={saveSelection} />
+      <div ref={editor} className="bp-editor-canvas" style={{ display: htmlMode ? "none" : "block" }} contentEditable suppressContentEditableWarning role="textbox" aria-label="Resource description" data-placeholder="Write a detailed description..." onInput={emit} onBlur={emit} onKeyUp={saveSelection} onMouseUp={saveSelection} onClick={(event) => { if ((event.target as HTMLElement).closest("a")) event.preventDefault(); }} />
       {htmlMode && <textarea className="bp-editor-html-textarea" value={value} onChange={(event) => onChange(event.target.value)} aria-label="Description HTML" />}
     </div>
-    <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Insert link" primaryAction={{ content: "Insert link", onAction: applyLink, disabled: !linkUrl }} secondaryActions={[{ content: "Cancel", onAction: () => setLinkOpen(false) }]}><Modal.Section><BlockStack gap="300"><TextField label="Link to" value={linkUrl} onChange={setLinkUrl} autoComplete="off" placeholder="https://example.com" /><TextField label="Text to display" value={linkText} onChange={setLinkText} autoComplete="off" /></BlockStack></Modal.Section></Modal>
+    <Modal open={linkOpen} onClose={closeLink} title={activeLink.current ? "Edit link" : "Insert link"} primaryAction={{ content: activeLink.current ? "Apply" : "Insert link", onAction: applyLink, disabled: !linkUrl }} secondaryActions={activeLink.current ? [{ content: "Remove link", onAction: removeLink, destructive: true }, { content: "Cancel", onAction: closeLink }] : [{ content: "Cancel", onAction: closeLink }]}><Modal.Section><BlockStack gap="300"><TextField label="Link to" value={linkUrl} onChange={setLinkUrl} autoComplete="off" placeholder="https://example.com" /><TextField label="Text to display" value={linkText} onChange={setLinkText} autoComplete="off" /></BlockStack></Modal.Section></Modal>
     <Modal open={imageOpen} onClose={() => setImageOpen(false)} title="Insert image" primaryAction={{ content: "Insert image", onAction: applyImage, disabled: !imageUrl }} secondaryActions={[{ content: "Cancel", onAction: () => setImageOpen(false) }]}><Modal.Section><BlockStack gap="300"><TextField label="Image URL" value={imageUrl} onChange={setImageUrl} autoComplete="off" placeholder="https://cdn.shopify.com/..." /><TextField label="Alt text" value={imageAlt} onChange={setImageAlt} autoComplete="off" helpText="Describe the image for accessibility and image search." /></BlockStack></Modal.Section></Modal>
     <Modal open={videoOpen} onClose={() => setVideoOpen(false)} title="Insert video" primaryAction={{ content: "Insert video", onAction: applyVideo, disabled: !videoEmbed(videoUrl) }} secondaryActions={[{ content: "Cancel", onAction: () => setVideoOpen(false) }]}><Modal.Section><TextField label="YouTube, Vimeo or video URL" value={videoUrl} onChange={setVideoUrl} autoComplete="off" placeholder="https://www.youtube.com/watch?v=..." /></Modal.Section></Modal>
   </>;
@@ -239,17 +275,49 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
 
 type ChecklistRow = { label: string; passed: boolean; fix?: string; impact?: CatalogSeoIssue["impact"] };
 function checklistGroups(issues: CatalogSeoIssue[], resource: CatalogResourceInput) {
-  const failed = (types: string[]) => issues.filter((issue) => types.includes(issue.type)).map((issue): ChecklistRow => ({ label: issue.label, passed: false, fix: issue.fix, impact: issue.impact }));
-  const text = stripHtml(resource.descriptionHtml);
-  const words = text.split(/\s+/).filter(Boolean).length;
-  const effectiveTitle = resource.seoTitle.trim() || resource.title.trim();
-  const effectiveDescription = resource.seoDescription.trim() || text.slice(0, 160).trim();
+  const issueRow = (entry: CatalogSeoIssue): ChecklistRow => ({ label: entry.label, passed: false, fix: entry.fix, impact: entry.impact });
+  const check = (types: string[], passedLabel: string): ChecklistRow[] => {
+    const matches = issues.filter((entry) => types.includes(entry.type));
+    return matches.length ? matches.map(issueRow) : [{ label: passedLabel, passed: true }];
+  };
+  const hasKeyword = Boolean((resource.focusKeyword || "").trim());
+  const hasImage = Boolean(resource.imageUrl);
   return [
-    { label: "Search appearance", rows: [...failed(["missing_seo_title", "long_seo_title", "short_seo_title", "missing_meta_description", "short_meta_description", "long_meta_description", "missing_handle", "long_handle"]), ...(effectiveTitle.length >= 20 && effectiveTitle.length <= 70 ? [{ label: "SEO title length is suitable", passed: true }] : []), ...(effectiveDescription.length >= 70 && effectiveDescription.length <= 165 ? [{ label: "Meta description length is suitable", passed: true }] : []), ...(resource.handle.length > 0 && resource.handle.length <= 80 ? [{ label: "URL handle is concise", passed: true }] : [])] },
-    { label: "Content quality", rows: [...failed(["missing_description", "thin_description"]), ...(words >= (resource.type === "product" ? 40 : 30) ? [{ label: "Description has useful depth", passed: true }] : [])] },
-    { label: "Focus keyword", rows: [...failed(["missing_focus_keyword", "keyword_missing_title", "keyword_missing_description", "keyword_missing_content"]), ...((resource.focusKeyword || "").trim() && !issues.some((issue) => issue.type === "missing_focus_keyword" || issue.type.startsWith("keyword_")) ? [{ label: "Focus keyword is used across the important page elements", passed: true }] : [])] },
-    { label: "Image SEO", rows: [...failed(["missing_featured_image", "missing_image_alt", "small_image"]), ...(resource.imageUrl ? [{ label: "Featured image is available", passed: true }] : []), ...(resource.imageAlt ? [{ label: "Featured image has alt text", passed: true }] : [])] },
-    ...(resource.type === "collection" ? [{ label: "Merchandising", rows: [...failed(["empty_collection"]), ...(resource.itemCount > 0 ? [{ label: "Collection contains products", passed: true }] : [])] }] : []),
+    { label: "Search appearance", rows: [
+      ...check(["missing_seo_title", "long_seo_title", "short_seo_title"], "SEO title length is suitable"),
+      ...check(["missing_meta_description", "short_meta_description", "long_meta_description"], "Meta description length is suitable"),
+      ...check(["missing_handle", "long_handle"], "URL handle is concise"),
+      ...check(["unclean_handle"], "URL uses lowercase words and hyphens"),
+    ] },
+    { label: "Title readability", rows: [
+      ...check(["title_word_count"], "SEO title has a scannable word count"),
+      ...check(["title_all_caps"], "SEO title uses natural capitalization"),
+      ...check(["title_repeated_words"], "SEO title does not repeat terms"),
+    ] },
+    { label: "Content quality", rows: [
+      ...check(["missing_description", "thin_description"], "Description meets the minimum useful length"),
+      ...check(["limited_content_depth"], "Description provides useful shopper detail"),
+      ...check(["missing_subheadings"], "Description uses useful subheadings"),
+      ...check(["missing_internal_link"], "Description includes a contextual link"),
+    ] },
+    { label: "Content readability", rows: [
+      ...check(["long_paragraph"], "Paragraphs are easy to scan on mobile"),
+    ] },
+    { label: "Focus keyword", rows: hasKeyword ? [
+      ...check(["keyword_missing_title"], "Focus keyword appears in the SEO title"),
+      ...check(["keyword_missing_description"], "Focus keyword appears in the meta description"),
+      ...check(["keyword_missing_content"], "Focus keyword appears in the description"),
+      ...check(["keyword_missing_url"], "Focus keyword appears in the URL"),
+      ...check(["keyword_missing_heading"], "Focus keyword is used in a relevant heading"),
+      ...check(["keyword_missing_image_alt"], "Image alt text supports the focus topic"),
+    ] : issues.filter((entry) => entry.type === "missing_focus_keyword").map(issueRow) },
+    { label: "Image SEO", rows: hasImage ? [
+      ...check(["missing_image_alt"], "Featured image has descriptive alt text"),
+      ...check(["long_image_alt"], "Image alt text is concise"),
+      ...check(["small_image"], "Image resolution is suitable"),
+      ...check(["generic_image_filename"], "Image filename is descriptive"),
+    ] : issues.filter((entry) => entry.type === "missing_featured_image").map(issueRow) },
+    ...(resource.type === "collection" ? [{ label: "Merchandising", rows: check(["empty_collection"], "Collection contains products") }] : []),
   ].map((group) => ({ ...group, rows: dedupeRows(group.rows as ChecklistRow[]) }));
 }
 

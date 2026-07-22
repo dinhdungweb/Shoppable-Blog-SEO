@@ -3,7 +3,7 @@ import { applyCatalogDuplicateIssues, auditCatalogResource, type CatalogResource
 
 const base: CatalogResourceInput = {
   id: "gid://shopify/Product/1", type: "product", title: "Silver ring", handle: "silver-ring",
-  descriptionHtml: `<p>Silver ring ${"useful product details ".repeat(20)}</p>`, updatedAt: "2026-07-22T00:00:00Z", status: "ACTIVE",
+  descriptionHtml: `<h2>Silver ring details</h2><p>Silver ring ${"useful product details ".repeat(15)}</p><p>${"Materials sizing and care guidance ".repeat(10)} <a href="/collections/rings">Explore rings</a>.</p>`, updatedAt: "2026-07-22T00:00:00Z", status: "ACTIVE",
   seoTitle: "Silver ring for everyday wear", seoDescription: "Explore a handcrafted silver ring with practical sizing details, materials, care guidance and secure delivery from our Shopify store.",
   imageUrl: "https://cdn.shopify.com/ring.jpg", imageAlt: "Handcrafted silver ring", imageWidth: 1200, imageHeight: 1200, itemCount: 0,
   focusKeyword: "silver ring",
@@ -12,8 +12,8 @@ const base: CatalogResourceInput = {
 describe("catalog SEO audit", () => {
   it("scores complete Shopify products without false errors", () => {
     const audit = auditCatalogResource(base);
+    expect(audit.issues).toEqual([]);
     expect(audit.score).toBe(100);
-    expect(audit.issues).toHaveLength(0);
   });
 
   it("finds actionable collection issues", () => {
