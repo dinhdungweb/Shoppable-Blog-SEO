@@ -82,6 +82,11 @@ import {
   type LinkSuggestion,
 } from "../internal-linking";
 import { generateAiBlogDraft, isAiWritingMode, type AiWritingMode } from "../ai-blog.server";
+import {
+  generateAiProductRecommendations,
+  rankCatalogProductsForArticle,
+  type AiCatalogProduct,
+} from "../ai-product-placement.server";
 import { isNineRouterConfigured } from "../ai-seo.server";
 
 type SeoIssue = SeoAuditIssue;
@@ -816,6 +821,100 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
   }
 
+  if (intent === "recommend_ai_products") {
+    if (!isNineRouterConfigured()) {
+      return json({ success: false, error: "9Router is not configured on the server." }, { status: 503 });
+    }
+
+    const catalogResponse = await admin.graphql(
+      `#graphql
+      query AiProductPlacementCatalog {
+        products(first: 100, query: "status:active", sortKey: UPDATED_AT, reverse: true) {
+          nodes {
+            id
+            title
+            handle
+            description
+            productType
+            vendor
+            tags
+            featuredMedia {
+              preview {
+                image {
+                  url
+                  altText
+                }
+              }
+            }
+            variants(first: 1) {
+              nodes {
+                price
+              }
+            }
+          }
+        }
+      }`,
+    );
+    const catalogResult: any = await catalogResponse.json();
+    if (catalogResult.errors?.length) {
+      return json({ success: false, error: catalogResult.errors[0].message }, { status: 502 });
+    }
+
+    const linkedProducts = await prisma.articleProduct.findMany({
+      where: { shop, articleId, isActive: true },
+      select: { productId: true },
+    });
+    const linkedProductIds = new Set(linkedProducts.map((product) => product.productId));
+    const catalog: AiCatalogProduct[] = (catalogResult.data?.products?.nodes || [])
+      .filter((product: any) => product?.id && !linkedProductIds.has(product.id))
+      .map((product: any) => ({
+        id: product.id,
+        title: cleanString(product.title),
+        handle: cleanString(product.handle),
+        description: cleanString(product.description),
+        productType: cleanString(product.productType),
+        vendor: cleanString(product.vendor),
+        tags: Array.isArray(product.tags) ? product.tags.map((tag: unknown) => typeof tag === "string" ? tag : "").filter(Boolean) : [],
+        imageUrl: cleanString(product.featuredMedia?.preview?.image?.url),
+        imageAlt: cleanString(product.featuredMedia?.preview?.image?.altText),
+        price: cleanString(product.variants?.nodes?.[0]?.price) || "0",
+      }));
+
+    if (!catalog.length) {
+      return json({ success: false, error: "No unlinked active products are available in this shop." }, { status: 400 });
+    }
+
+    const articleTitle = cleanString(formData.get("title"));
+    const articleBody = cleanString(formData.get("body"));
+    const focusKeyword = cleanString(formData.get("focusKeyword"));
+    const candidates = rankCatalogProductsForArticle(catalog, {
+      title: articleTitle,
+      body: articleBody,
+      focusKeyword,
+    });
+
+    try {
+      const recommendations = await generateAiProductRecommendations({
+        articleTitle,
+        articleBody,
+        focusKeyword,
+        products: candidates,
+      });
+      const productMap = new Map(candidates.map((product) => [product.id, product]));
+      return json({
+        success: true,
+        action: "ai_product_recommendations",
+        recommendations: recommendations.map((recommendation) => ({
+          ...recommendation,
+          product: productMap.get(recommendation.productId),
+        })).filter((recommendation) => Boolean(recommendation.product)),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "9Router could not recommend products.";
+      return json({ success: false, error: message }, { status: 502 });
+    }
+  }
+
   if (intent === "add_products") {
     const products = JSON.parse(cleanString(formData.get("products")) || "[]");
     const articleTitle = cleanString(formData.get("articleTitle"));
@@ -1149,6 +1248,7 @@ export default function ArticleDetail() {
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const aiFetcher = useFetcher<typeof action>();
+  const productAiFetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
   const uploadFetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
@@ -1164,6 +1264,9 @@ export default function ArticleDetail() {
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [aiWritingMode, setAiWritingMode] = useState<AiWritingMode>(article.body ? "improve" : "draft");
   const [aiInstruction, setAiInstruction] = useState("");
+  const [aiProductModalOpen, setAiProductModalOpen] = useState(false);
+  const [aiProductRecommendations, setAiProductRecommendations] = useState<any[]>([]);
+  const [selectedAiProductIds, setSelectedAiProductIds] = useState<string[]>([]);
   const initialMetaTitle = seoData?.metaTitle || article.seoTitle?.value || "";
   const initialMetaDescription = seoData?.metaDescription || article.seoDescription?.value || "";
   const [metaTitle, setMetaTitle] = useState(getInitialMetaTitle(initialMetaTitle, article.title));
@@ -1205,6 +1308,7 @@ export default function ArticleDetail() {
   const uploadFetcherData = uploadFetcher.data as any;
   const handledFetcherDataRef = useRef<any>(null);
   const handledAiFetcherDataRef = useRef<any>(null);
+  const handledProductAiFetcherDataRef = useRef<any>(null);
   const [focusKeyword, setFocusKeyword] = useState(seoData?.focusKeyword || "");
   const [pendingInternalLink, setPendingInternalLink] = useState<LinkSuggestion | null>(null);
   const [internalLinkAnchor, setInternalLinkAnchor] = useState("");
@@ -1286,6 +1390,7 @@ export default function ArticleDetail() {
   const topProduct = [...embeddedProducts].sort((a, b) => b.clicks - a.clicks)[0] || embeddedProducts[0];
   const isSubmitting = fetcher.state !== "idle";
   const isAiGenerating = aiFetcher.state !== "idle";
+  const isAiProductLoading = productAiFetcher.state !== "idle";
   const activeImage = imageRemoved ? null : featuredImageUrl;
   const normalizedImageQuery = imageSearchQuery.trim().toLowerCase();
   const isLoadingImages =
@@ -1439,6 +1544,22 @@ export default function ArticleDetail() {
     setAiAssistantOpen(false);
     shopify.toast.show("AI draft added. Review it, then save when ready.");
   }, [aiFetcher.data, shopify]);
+
+  useEffect(() => {
+    const data = productAiFetcher.data as any;
+    if (!data || handledProductAiFetcherDataRef.current === data) return;
+    handledProductAiFetcherDataRef.current = data;
+
+    if (!data.success) {
+      shopify.toast.show(data.error || "AI product recommendations failed.", { isError: true });
+      return;
+    }
+    if (data.action !== "ai_product_recommendations" || !Array.isArray(data.recommendations)) return;
+
+    setAiProductRecommendations(data.recommendations);
+    setSelectedAiProductIds(data.recommendations.map((item: any) => item.productId));
+    setAiProductModalOpen(true);
+  }, [productAiFetcher.data, shopify]);
 
   useEffect(() => {
     if (!imageFetcherData) return;
@@ -1720,6 +1841,45 @@ export default function ArticleDetail() {
     formData.append("instruction", aiInstruction);
     aiFetcher.submit(formData, { method: "POST" });
   }, [aiFetcher, aiInstruction, aiWritingMode, body, excerpt, focusKeyword, title]);
+
+  const handleSuggestAiProducts = useCallback(() => {
+    if (isNewPost) {
+      shopify.toast.show("Save this post before requesting product suggestions.", { isError: true });
+      return;
+    }
+    const formData = new FormData();
+    formData.append("intent", "recommend_ai_products");
+    formData.append("title", title);
+    formData.append("body", body);
+    formData.append("focusKeyword", focusKeyword);
+    productAiFetcher.submit(formData, { method: "POST" });
+  }, [body, focusKeyword, isNewPost, productAiFetcher, shopify, title]);
+
+  const handleApplyAiProducts = useCallback(() => {
+    const products = aiProductRecommendations
+      .filter((recommendation) => selectedAiProductIds.includes(recommendation.productId))
+      .map((recommendation) => ({
+        id: recommendation.product.id,
+        title: recommendation.product.title,
+        handle: recommendation.product.handle,
+        featuredImage: {
+          url: recommendation.product.imageUrl,
+          altText: recommendation.product.imageAlt,
+        },
+        variants: [{ price: recommendation.product.price }],
+      }));
+    if (!products.length) return;
+
+    const formData = new FormData();
+    formData.append("intent", "add_products");
+    formData.append("products", JSON.stringify(products));
+    formData.append("articleTitle", title);
+    formData.append("articleHandle", handle);
+    formData.append("blogId", article.blog.id);
+    formData.append("blockId", selectedProductBlock?.id || DEFAULT_PRODUCT_BLOCK_ID);
+    fetcher.submit(formData, { method: "POST" });
+    setAiProductModalOpen(false);
+  }, [aiProductRecommendations, article.blog.id, fetcher, handle, selectedAiProductIds, selectedProductBlock?.id, title]);
 
   const handleAddProducts = useCallback(async () => {
     if (isNewPost) {
@@ -2065,6 +2225,10 @@ export default function ArticleDetail() {
                 selectedBlockId={selectedProductBlock?.id || DEFAULT_PRODUCT_BLOCK_ID}
                 onBlockChange={setSelectedProductBlockId}
                 onAddProducts={handleAddProducts}
+                aiEnabled={aiEnabled}
+                aiDisabled={isNewPost}
+                aiLoading={isAiProductLoading}
+                onSuggestProducts={handleSuggestAiProducts}
                 onMoveProduct={handleMoveProduct}
                 onRemoveProduct={handleRemoveProduct}
                 onOpenStyleModal={openStyleModal}
@@ -2241,6 +2405,59 @@ export default function ArticleDetail() {
                 </Text>
               </BlockStack>
             </Box>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      <Modal
+        open={aiProductModalOpen}
+        onClose={() => setAiProductModalOpen(false)}
+        title="AI product suggestions"
+        primaryAction={{
+          content: `Add selected (${selectedAiProductIds.length})`,
+          onAction: handleApplyAiProducts,
+          disabled: selectedAiProductIds.length === 0,
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setAiProductModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Text as="p" variant="bodyMd" tone="subdued">
+              Review the catalog matches and choose which products to add to {selectedProductBlock?.label || "this product block"}.
+            </Text>
+            {aiProductRecommendations.map((recommendation) => {
+              const product = recommendation.product;
+              const checked = selectedAiProductIds.includes(recommendation.productId);
+              return (
+                <Card key={recommendation.productId} padding="300">
+                  <InlineStack gap="300" blockAlign="start" wrap={false}>
+                    <Checkbox
+                      label={`Select ${product.title}`}
+                      labelHidden
+                      checked={checked}
+                      onChange={(nextChecked) => {
+                        setSelectedAiProductIds((current) => nextChecked
+                          ? [...new Set([...current, recommendation.productId])]
+                          : current.filter((id) => id !== recommendation.productId));
+                      }}
+                    />
+                    <Thumbnail source={product.imageUrl || ImageIcon} alt={product.imageAlt || product.title} size="small" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <BlockStack gap="100">
+                        <InlineStack align="space-between" gap="200" wrap={false}>
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">{product.title}</Text>
+                          <Text as="span" variant="bodySm" tone="subdued">{formatProductPrice(product.price)}</Text>
+                        </InlineStack>
+                        <Text as="p" variant="bodySm">{recommendation.reason}</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Suggested placement: {recommendation.placementHint}
+                        </Text>
+                      </BlockStack>
+                    </div>
+                  </InlineStack>
+                </Card>
+              );
+            })}
           </BlockStack>
         </Modal.Section>
       </Modal>
@@ -3727,6 +3944,10 @@ function ProductsPanel({
   selectedBlockId,
   onBlockChange,
   onAddProducts,
+  aiEnabled,
+  aiDisabled,
+  aiLoading,
+  onSuggestProducts,
   onMoveProduct,
   onRemoveProduct,
   onOpenStyleModal,
@@ -3736,6 +3957,10 @@ function ProductsPanel({
   selectedBlockId: string;
   onBlockChange: (blockId: string) => void;
   onAddProducts: () => void;
+  aiEnabled: boolean;
+  aiDisabled: boolean;
+  aiLoading: boolean;
+  onSuggestProducts: () => void;
   onMoveProduct: (index: number, direction: "up" | "down") => void;
   onRemoveProduct: (recordId: string) => void;
   onOpenStyleModal: (recordId: string, style: string) => void;
@@ -3781,9 +4006,19 @@ function ProductsPanel({
             Products shown by the selected shortcode in this article.
           </Text>
         </BlockStack>
-        <Button variant="primary" icon={ProductIcon} onClick={onAddProducts}>
-          Add product
-        </Button>
+        <ButtonGroup>
+          <Button
+            icon={MagicIcon}
+            disabled={!aiEnabled || aiDisabled}
+            loading={aiLoading}
+            onClick={onSuggestProducts}
+          >
+            {!aiEnabled ? "AI not configured" : aiDisabled ? "Save post to use AI" : "Suggest with AI"}
+          </Button>
+          <Button variant="primary" icon={ProductIcon} onClick={onAddProducts}>
+            Add product
+          </Button>
+        </ButtonGroup>
       </InlineStack>
 
       <Card padding="400">
