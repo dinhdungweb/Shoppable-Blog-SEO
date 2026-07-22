@@ -83,6 +83,11 @@ import {
 } from "../internal-linking";
 import { generateAiBlogDraft, isAiWritingMode, type AiWritingMode } from "../ai-blog.server";
 import {
+  generateAiSeoFix,
+  type AiSeoFixField,
+  type AiSeoFixSuggestion,
+} from "../ai-seo-fix.server";
+import {
   generateAiProductRecommendations,
   rankCatalogProductsForArticle,
   type AiCatalogProduct,
@@ -90,6 +95,16 @@ import {
 import { isNineRouterConfigured } from "../ai-seo.server";
 
 type SeoIssue = SeoAuditIssue;
+
+type SeoFixSnapshot = {
+  body: string;
+  excerpt: string;
+  metaTitle: string;
+  metaTitleTouched: boolean;
+  metaDescription: string;
+  featuredImageAlt: string;
+  isDirty: boolean;
+};
 
 type SeoTocAuditOptions = {
   canUseTableOfContents: boolean;
@@ -462,7 +477,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (
     isNewPost &&
-    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions", "generate_ai_content"].includes(intent)
+    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions", "generate_ai_content", "generate_ai_seo_fix"].includes(intent)
   ) {
     return json(
       { success: false, error: "Save this post before using this action." },
@@ -498,6 +513,35 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ success: true, action: "ai_content_generated", suggestion });
     } catch (error) {
       const message = error instanceof Error ? error.message : "9Router could not generate the article draft.";
+      return json({ success: false, error: message }, { status: 502 });
+    }
+  }
+
+  if (intent === "generate_ai_seo_fix") {
+    if (!isNineRouterConfigured()) {
+      return json({ success: false, error: "9Router is not configured on the server." }, { status: 503 });
+    }
+
+    const issues = parseSeoFixIssues(cleanString(formData.get("issues")));
+    if (!issues.length) {
+      return json({ success: false, error: "Choose at least one SEO issue to fix." }, { status: 400 });
+    }
+
+    try {
+      const suggestion = await generateAiSeoFix({
+        issues,
+        title: cleanString(formData.get("title")),
+        body: cleanString(formData.get("body")),
+        excerpt: cleanString(formData.get("excerpt")),
+        metaTitle: cleanString(formData.get("metaTitle")),
+        metaDescription: cleanString(formData.get("metaDescription")),
+        featuredImageAlt: cleanString(formData.get("featuredImageAlt")),
+        hasFeaturedImage: formData.get("hasFeaturedImage") === "true",
+        focusKeyword: cleanString(formData.get("focusKeyword")),
+      });
+      return json({ success: true, action: "ai_seo_fix_generated", suggestion });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "9Router could not generate SEO fixes.";
       return json({ success: false, error: message }, { status: 502 });
     }
   }
@@ -1248,6 +1292,7 @@ export default function ArticleDetail() {
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const aiFetcher = useFetcher<typeof action>();
+  const seoFixFetcher = useFetcher<typeof action>();
   const productAiFetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
   const uploadFetcher = useFetcher<typeof action>();
@@ -1264,6 +1309,11 @@ export default function ArticleDetail() {
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [aiWritingMode, setAiWritingMode] = useState<AiWritingMode>(article.body ? "improve" : "draft");
   const [aiInstruction, setAiInstruction] = useState("");
+  const [seoFixReviewOpen, setSeoFixReviewOpen] = useState(false);
+  const [seoFixSuggestion, setSeoFixSuggestion] = useState<AiSeoFixSuggestion | null>(null);
+  const [selectedSeoFixFields, setSelectedSeoFixFields] = useState<AiSeoFixField[]>([]);
+  const [seoFixBase, setSeoFixBase] = useState<SeoFixSnapshot | null>(null);
+  const [seoFixUndo, setSeoFixUndo] = useState<SeoFixSnapshot | null>(null);
   const [aiProductModalOpen, setAiProductModalOpen] = useState(false);
   const [aiProductRecommendations, setAiProductRecommendations] = useState<any[]>([]);
   const [selectedAiProductIds, setSelectedAiProductIds] = useState<string[]>([]);
@@ -1308,6 +1358,7 @@ export default function ArticleDetail() {
   const uploadFetcherData = uploadFetcher.data as any;
   const handledFetcherDataRef = useRef<any>(null);
   const handledAiFetcherDataRef = useRef<any>(null);
+  const handledSeoFixFetcherDataRef = useRef<any>(null);
   const handledProductAiFetcherDataRef = useRef<any>(null);
   const [focusKeyword, setFocusKeyword] = useState(seoData?.focusKeyword || "");
   const [pendingInternalLink, setPendingInternalLink] = useState<LinkSuggestion | null>(null);
@@ -1390,6 +1441,7 @@ export default function ArticleDetail() {
   const topProduct = [...embeddedProducts].sort((a, b) => b.clicks - a.clicks)[0] || embeddedProducts[0];
   const isSubmitting = fetcher.state !== "idle";
   const isAiGenerating = aiFetcher.state !== "idle";
+  const isSeoFixGenerating = seoFixFetcher.state !== "idle";
   const isAiProductLoading = productAiFetcher.state !== "idle";
   const activeImage = imageRemoved ? null : featuredImageUrl;
   const normalizedImageQuery = imageSearchQuery.trim().toLowerCase();
@@ -1544,6 +1596,23 @@ export default function ArticleDetail() {
     setAiAssistantOpen(false);
     shopify.toast.show("AI draft added. Review it, then save when ready.");
   }, [aiFetcher.data, shopify]);
+
+  useEffect(() => {
+    const data = seoFixFetcher.data as any;
+    if (!data || handledSeoFixFetcherDataRef.current === data) return;
+    handledSeoFixFetcherDataRef.current = data;
+
+    if (!data.success) {
+      shopify.toast.show(data.error || "AI SEO Fix Copilot failed.", { isError: true });
+      return;
+    }
+    if (data.action !== "ai_seo_fix_generated" || !data.suggestion) return;
+
+    const suggestion = data.suggestion as AiSeoFixSuggestion;
+    setSeoFixSuggestion(suggestion);
+    setSelectedSeoFixFields(suggestion.changes.map((change) => change.field));
+    setSeoFixReviewOpen(true);
+  }, [seoFixFetcher.data, shopify]);
 
   useEffect(() => {
     const data = productAiFetcher.data as any;
@@ -1824,6 +1893,98 @@ export default function ArticleDetail() {
     title,
     focusKeyword,
   ]);
+
+  const handleGenerateSeoFix = useCallback((issuesToFix: SeoIssue[]) => {
+    if (!aiEnabled) {
+      shopify.toast.show("Configure 9Router before using SEO Fix Copilot.", { isError: true });
+      return;
+    }
+    const actionableIssues = issuesToFix.filter((issue) => issue.severity !== "good");
+    if (!actionableIssues.length) {
+      shopify.toast.show("No SEO issues need fixing.");
+      return;
+    }
+
+    setSeoFixBase({ body, excerpt, metaTitle: effectiveMetaTitle, metaTitleTouched, metaDescription, featuredImageAlt, isDirty });
+
+    const formData = new FormData();
+    formData.append("intent", "generate_ai_seo_fix");
+    formData.append("issues", JSON.stringify(actionableIssues));
+    formData.append("title", title);
+    formData.append("body", body);
+    formData.append("excerpt", excerpt);
+    formData.append("metaTitle", effectiveMetaTitle);
+    formData.append("metaDescription", metaDescription || excerpt);
+    formData.append("featuredImageAlt", featuredImageAlt);
+    formData.append("hasFeaturedImage", activeImage ? "true" : "false");
+    formData.append("focusKeyword", focusKeyword);
+    seoFixFetcher.submit(formData, { method: "POST" });
+  }, [activeImage, aiEnabled, body, effectiveMetaTitle, excerpt, featuredImageAlt, focusKeyword, isDirty, metaDescription, metaTitleTouched, seoFixFetcher, shopify, title]);
+
+  const handleApplySeoFix = useCallback(() => {
+    if (!seoFixSuggestion || !seoFixBase || !selectedSeoFixFields.length) return;
+    const selected = new Set(selectedSeoFixFields);
+    const currentValues: Record<AiSeoFixField, string> = { body, excerpt, metaTitle: effectiveMetaTitle, metaDescription, featuredImageAlt };
+    const baseValues: Record<AiSeoFixField, string> = {
+      body: seoFixBase.body,
+      excerpt: seoFixBase.excerpt,
+      metaTitle: seoFixBase.metaTitle,
+      metaDescription: seoFixBase.metaDescription,
+      featuredImageAlt: seoFixBase.featuredImageAlt,
+    };
+    if (seoFixSuggestion.changes.some((change) => selected.has(change.field) && currentValues[change.field] !== baseValues[change.field])) {
+      shopify.toast.show("The draft changed while Copilot was working. Close this preview and run the fix again.", { isError: true });
+      return;
+    }
+    const snapshot: SeoFixSnapshot = {
+      body,
+      excerpt,
+      metaTitle,
+      metaTitleTouched,
+      metaDescription,
+      featuredImageAlt,
+      isDirty,
+    };
+
+    for (const change of seoFixSuggestion.changes) {
+      if (!selected.has(change.field)) continue;
+      if (change.field === "body") {
+        const safeBody = sanitizeEditorPasteHtml(change.after, stripHtml(change.after));
+        if (!safeBody) {
+          shopify.toast.show("AI returned an empty article body.", { isError: true });
+          return;
+        }
+        setBody(safeBody);
+      } else if (change.field === "excerpt") {
+        setExcerpt(change.after);
+      } else if (change.field === "metaTitle") {
+        setMetaTitle(change.after);
+        setMetaTitleTouched(true);
+      } else if (change.field === "metaDescription") {
+        setMetaDescription(change.after);
+      } else if (change.field === "featuredImageAlt") {
+        setFeaturedImageAlt(change.after);
+      }
+    }
+
+    setSeoFixUndo(snapshot);
+    setIsDirty(true);
+    setSeoFixReviewOpen(false);
+    shopify.toast.show("AI SEO fixes added to the draft. Review the updated score, then save when ready.");
+  }, [body, effectiveMetaTitle, excerpt, featuredImageAlt, isDirty, metaDescription, metaTitle, metaTitleTouched, selectedSeoFixFields, seoFixBase, seoFixSuggestion, shopify]);
+
+  const handleUndoSeoFix = useCallback(() => {
+    if (!seoFixUndo) return;
+    setBody(seoFixUndo.body);
+    setExcerpt(seoFixUndo.excerpt);
+    setMetaTitle(seoFixUndo.metaTitle);
+    setMetaTitleTouched(seoFixUndo.metaTitleTouched);
+    setMetaDescription(seoFixUndo.metaDescription);
+    setFeaturedImageAlt(seoFixUndo.featuredImageAlt);
+    setIsDirty(seoFixUndo.isDirty);
+    setSeoFixUndo(null);
+    shopify.toast.show("AI SEO changes undone.");
+  }, [seoFixUndo, shopify]);
 
   const openAiAssistant = useCallback(() => {
     setAiWritingMode(stripHtml(body).trim() ? "improve" : "draft");
@@ -2210,10 +2371,26 @@ export default function ArticleDetail() {
                   keywordScores={keywordScores}
                 />
                 
+                {seoFixUndo && (
+                  <Card padding="300">
+                    <InlineStack align="space-between" blockAlign="center" gap="300">
+                      <BlockStack gap="050">
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">AI SEO fixes are in this draft</Text>
+                        <Text as="span" variant="bodySm" tone="subdued">Nothing is published until you save the post.</Text>
+                      </BlockStack>
+                      <Button size="micro" onClick={handleUndoSeoFix}>Undo AI changes</Button>
+                    </InlineStack>
+                  </Card>
+                )}
+
                 <RecommendationsCard
                   issues={seoIssues.filter((i: any) => i.severity !== 'good')}
                   onApplyAll={handleApplySeoSuggestions}
                   onManageProducts={() => setSelectedTab(1)}
+                  aiEnabled={aiEnabled}
+                  aiLoading={isSeoFixGenerating}
+                  onFixIssue={(issue) => handleGenerateSeoFix([issue])}
+                  onFixAll={() => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"))}
                 />
               </BlockStack>
             )}
@@ -2405,6 +2582,77 @@ export default function ArticleDetail() {
                 </Text>
               </BlockStack>
             </Box>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      <Modal
+        open={seoFixReviewOpen}
+        onClose={() => setSeoFixReviewOpen(false)}
+        title="Review AI SEO fixes"
+        primaryAction={{
+          content: `Apply selected (${selectedSeoFixFields.length})`,
+          onAction: handleApplySeoFix,
+          disabled: selectedSeoFixFields.length === 0,
+        }}
+        secondaryActions={[{ content: "Close", onAction: () => setSeoFixReviewOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+              <BlockStack gap="100">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">Copilot summary</Text>
+                <Text as="p" variant="bodySm">{seoFixSuggestion?.summary || "Review each suggested change below."}</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Selected changes update only this local draft. Saving to Shopify remains a separate action.</Text>
+              </BlockStack>
+            </Box>
+
+            {seoFixSuggestion?.changes.map((change) => (
+              <Card key={change.field} padding="300">
+                <BlockStack gap="300">
+                  <Checkbox
+                    label={`Apply ${seoFixFieldLabel(change.field)}`}
+                    checked={selectedSeoFixFields.includes(change.field)}
+                    onChange={(checked) => setSelectedSeoFixFields((current) => checked
+                      ? [...new Set([...current, change.field])]
+                      : current.filter((field) => field !== change.field))}
+                  />
+                  <Text as="p" variant="bodySm">{change.explanation}</Text>
+                  <InlineStack gap="100">
+                    {change.issueTypes.map((type) => <Badge key={type} tone="info">{seoIssueLabel(type, seoIssues)}</Badge>)}
+                  </InlineStack>
+                  <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+                    <SeoFixPreview
+                      label="Before"
+                      field={change.field}
+                      value={seoFixBase ? seoFixSnapshotValue(seoFixBase, change.field) : ""}
+                    />
+                    <SeoFixPreview label="After" field={change.field} value={change.after} changed />
+                  </InlineGrid>
+                </BlockStack>
+              </Card>
+            ))}
+
+            {seoFixSuggestion && seoFixSuggestion.changes.length === 0 && (
+              <Text as="p" variant="bodyMd" tone="subdued">These selected issues need merchant input, so Copilot did not alter the draft.</Text>
+            )}
+
+            {Boolean(seoFixSuggestion?.manualActions.length) && (
+              <BlockStack gap="300">
+                <Divider />
+                <Text as="h3" variant="headingMd">Manual actions</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Copilot will not invent evidence, links, images, or credentials. Complete these items yourself.</Text>
+                {seoFixSuggestion?.manualActions.map((item) => (
+                  <Card key={item.issueType} padding="300">
+                    <BlockStack gap="100">
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">{seoIssueLabel(item.issueType, seoIssues)}</Text>
+                      {item.explanation && <Text as="p" variant="bodySm" tone="subdued">{item.explanation}</Text>}
+                      <Text as="p" variant="bodySm">{item.action}</Text>
+                    </BlockStack>
+                  </Card>
+                ))}
+              </BlockStack>
+            )}
           </BlockStack>
         </Modal.Section>
       </Modal>
@@ -4430,57 +4678,132 @@ function RecommendationsCard({
   issues,
   onApplyAll,
   onManageProducts,
+  aiEnabled,
+  aiLoading,
+  onFixIssue,
+  onFixAll,
 }: {
   issues: SeoIssue[];
   onApplyAll: () => void;
   onManageProducts: () => void;
+  aiEnabled: boolean;
+  aiLoading: boolean;
+  onFixIssue: (issue: SeoIssue) => void;
+  onFixAll: () => void;
 }) {
-  const recommendations =
-    issues.length > 0
-      ? issues.slice(0, 3)
-      : [
-          {
-            type: "monitor",
-            label: "Monitor performance",
-            message: "Keep tracking product clicks and SEO health.",
-            severity: "info",
-            impact: "Low",
-            effort: "Low",
-          } as SeoIssue,
-        ];
+  const recommendations = issues;
 
   return (
     <Card padding="400">
       <BlockStack gap="400">
-        <Text as="h3" variant="headingMd" fontWeight="bold">
-          Recommended actions
-        </Text>
+        <InlineStack align="space-between" blockAlign="center" gap="200">
+          <BlockStack gap="050">
+            <Text as="h3" variant="headingMd" fontWeight="bold">SEO Fix Copilot</Text>
+            <Text as="p" variant="bodySm" tone="subdued">Review every AI change before adding it to your draft.</Text>
+          </BlockStack>
+          {aiEnabled ? <Badge tone="magic">AI ready</Badge> : <Badge>9Router required</Badge>}
+        </InlineStack>
         <BlockStack gap="300">
+          {!recommendations.length && (
+            <Box background="bg-surface-success" padding="300" borderRadius="300">
+              <Text as="p" variant="bodyMd">No current SEO issues need a Copilot fix. Keep monitoring the post after publishing.</Text>
+            </Box>
+          )}
           {recommendations.map((issue) => (
-            <InlineStack key={issue.type} gap="300" align="start" wrap={false}>
-              <span className="bp-action-icon">
-                <Icon source={issue.type === "products" ? LinkIcon : SearchIcon} tone={issue.type === "products" ? "magic" : "base"} />
-              </span>
-              <BlockStack gap="150">
-                <Text as="span" variant="bodyMd">
-                  {issue.message}
-                </Text>
-                <InlineStack gap="200">
-                  <Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>
-                    {`${issue.impact} impact`}
-                  </Badge>
-                  <Badge tone={issue.effort === "Low" ? "success" : "warning"}>{`${issue.effort} effort`}</Badge>
+            <Card key={issue.type} padding="300">
+              <InlineStack gap="300" align="space-between" blockAlign="center" wrap={false}>
+                <InlineStack gap="300" align="start" wrap={false}>
+                  <span className="bp-action-icon">
+                    <Icon source={issue.type === "products" ? LinkIcon : SearchIcon} tone={issue.type === "products" ? "magic" : "base"} />
+                  </span>
+                  <BlockStack gap="150">
+                    <Text as="span" variant="bodyMd" fontWeight="semibold">{issue.label}</Text>
+                    <Text as="span" variant="bodySm">{issue.message}</Text>
+                    <InlineStack gap="200">
+                      <Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>
+                        {`${issue.impact || "Low"} impact`}
+                      </Badge>
+                      <Badge tone={issue.effort === "Low" ? "success" : "warning"}>{`${issue.effort || "Low"} effort`}</Badge>
+                    </InlineStack>
+                  </BlockStack>
                 </InlineStack>
-              </BlockStack>
-            </InlineStack>
+                <Button
+                  size="micro"
+                  icon={issue.type === "products" ? LinkIcon : MagicIcon}
+                  onClick={() => issue.type === "products" ? onManageProducts() : onFixIssue(issue)}
+                  disabled={aiLoading || (!aiEnabled && issue.type !== "products")}
+                >
+                  {issue.type === "products" ? "Manage" : "Fix with AI"}
+                </Button>
+              </InlineStack>
+            </Card>
           ))}
         </BlockStack>
-        <Button fullWidth onClick={issues.some((issue) => issue.type === "products") ? onManageProducts : onApplyAll}>
-          Apply all suggestions
-        </Button>
+        <ButtonGroup fullWidth>
+          <Button fullWidth onClick={onApplyAll} disabled={aiLoading}>Apply basic metadata</Button>
+          <Button fullWidth variant="primary" icon={MagicIcon} onClick={onFixAll} loading={aiLoading} disabled={!aiEnabled || !issues.length}>
+            Fix all with AI
+          </Button>
+        </ButtonGroup>
       </BlockStack>
     </Card>
   );
+}
+
+function SeoFixPreview({
+  label,
+  field,
+  value,
+  changed = false,
+}: {
+  label: string;
+  field: AiSeoFixField;
+  value: string;
+  changed?: boolean;
+}) {
+  const plainValue = field === "body" ? stripHtml(value) : value;
+  const preview = plainValue.length > 700 ? `${plainValue.slice(0, 700).trim()}…` : plainValue;
+  const wordCount = field === "body" ? plainValue.split(/\s+/).filter(Boolean).length : 0;
+  return (
+    <Box
+      background={changed ? "bg-surface-success" : "bg-surface-secondary"}
+      padding="300"
+      borderRadius="300"
+    >
+      <BlockStack gap="150">
+        <InlineStack align="space-between" gap="200">
+          <Text as="span" variant="bodySm" fontWeight="semibold">{label}</Text>
+          {field === "body" && <Badge>{`${wordCount} words`}</Badge>}
+        </InlineStack>
+        <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "220px", overflowY: "auto" }}>
+          <Text as="p" variant="bodySm" tone={preview ? undefined : "subdued"}>{preview || "Empty"}</Text>
+        </div>
+      </BlockStack>
+    </Box>
+  );
+}
+
+function seoFixFieldLabel(field: AiSeoFixField) {
+  const labels: Record<AiSeoFixField, string> = {
+    body: "article content",
+    excerpt: "excerpt",
+    metaTitle: "meta title",
+    metaDescription: "meta description",
+    featuredImageAlt: "featured image alt text",
+  };
+  return labels[field];
+}
+
+function seoFixSnapshotValue(snapshot: SeoFixSnapshot, field: AiSeoFixField) {
+  if (field === "body") return snapshot.body;
+  if (field === "excerpt") return snapshot.excerpt;
+  if (field === "metaTitle") return snapshot.metaTitle;
+  if (field === "metaDescription") return snapshot.metaDescription;
+  return snapshot.featuredImageAlt;
+}
+
+function seoIssueLabel(type: string, issues: SeoIssue[]) {
+  return issues.find((issue) => issue.type === type)?.label || type.replace(/_/g, " ");
 }
 
 function ProductsSummaryCard({
@@ -5127,6 +5450,33 @@ function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function parseSeoFixIssues(value: string): SeoIssue[] {
+  if (!value || value.length > 30_000) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, 30).flatMap((item): SeoIssue[] => {
+      if (!item || typeof item !== "object") return [];
+      const issue = item as Record<string, unknown>;
+      const type = typeof issue.type === "string" ? issue.type.slice(0, 100) : "";
+      const severity = issue.severity;
+      if (!type || !["info", "warning", "critical"].includes(String(severity))) return [];
+      return [{
+        type,
+        label: typeof issue.label === "string" ? issue.label.slice(0, 200) : type,
+        message: typeof issue.message === "string" ? issue.message.slice(0, 1_000) : "",
+        severity: severity as SeoIssue["severity"],
+        category: typeof issue.category === "string" ? issue.category as SeoIssue["category"] : undefined,
+        impact: ["Low", "Medium", "High"].includes(String(issue.impact)) ? issue.impact as SeoIssue["impact"] : undefined,
+        effort: ["Low", "Medium", "High"].includes(String(issue.effort)) ? issue.effort as SeoIssue["effort"] : undefined,
+        fix: typeof issue.fix === "string" ? issue.fix.slice(0, 1_000) : undefined,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
 async function getSeoTocAuditOptions(shop: string, canContentNavigation: boolean): Promise<SeoTocAuditOptions> {
   const config = await prisma.shopConfig.findUnique({ where: { shop } });
   const contentNavConfig = normalizeContentNavConfig(config);
@@ -5543,7 +5893,10 @@ function sanitizeEditorPasteNode(node: Node): Node | null {
     target.setAttribute("href", href);
     if (/^https?:\/\//i.test(href)) {
       target.setAttribute("target", "_blank");
-      target.setAttribute("rel", "noopener noreferrer");
+      const safeRel = (source.getAttribute("rel") || "")
+        .split(/\s+/)
+        .filter((token) => ["nofollow", "sponsored", "ugc", "noopener", "noreferrer"].includes(token.toLowerCase()));
+      target.setAttribute("rel", [...new Set([...safeRel, "noopener", "noreferrer"])].join(" "));
     }
   }
 
@@ -5552,7 +5905,13 @@ function sanitizeEditorPasteNode(node: Node): Node | null {
     if (!src) return null;
     target.setAttribute("src", src);
     const alt = source.getAttribute("alt") || source.getAttribute("title") || "";
-    if (alt) target.setAttribute("alt", alt);
+    if (source.hasAttribute("alt") || alt) target.setAttribute("alt", alt);
+    for (const dimension of ["width", "height"] as const) {
+      const value = source.getAttribute(dimension) || "";
+      if (/^\d{1,5}$/.test(value)) target.setAttribute(dimension, value);
+    }
+    const loading = source.getAttribute("loading");
+    if (loading === "lazy" || loading === "eager") target.setAttribute("loading", loading);
   }
 
   if (targetTag === "table") {
