@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, isRouteErrorResponse, useActionData, useLoaderData, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
-import { Badge, Banner, BlockStack, Button, Card, Divider, Icon, InlineGrid, InlineStack, Layout, Page, Text, TextField } from "@shopify/polaris";
-import { AlertTriangleIcon, CheckCircleIcon, CollectionIcon, ImageIcon, ProductIcon, SearchIcon } from "@shopify/polaris-icons";
+import { Badge, Banner, BlockStack, Button, Card, Divider, Icon, InlineGrid, InlineStack, Layout, Modal, Page, Select, Text, TextField } from "@shopify/polaris";
+import { AlertTriangleIcon, CheckCircleIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
@@ -37,9 +37,14 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const descriptionHtml = field(form, "descriptionHtml", 100_000);
   const seoTitle = field(form, "seoTitle", 255);
   const seoDescription = field(form, "seoDescription", 500);
+  const status = ["ACTIVE", "DRAFT", "ARCHIVED"].includes(field(form, "status", 20)) ? field(form, "status", 20) : "ACTIVE";
+  const vendor = field(form, "vendor", 255);
+  const productType = field(form, "productType", 255);
+  const tags = field(form, "tags", 5_000).split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 250);
   if (!title) return json({ error: "Title is required." }, { status: 400 });
   const variableKey = type === "product" ? "product" : "collection";
-  const response = await admin.graphql(type === "product" ? PRODUCT_UPDATE : COLLECTION_UPDATE, { variables: { [variableKey]: { id: gid, title, handle, descriptionHtml, seo: { title: seoTitle || null, description: seoDescription || null } } } });
+  const input = { id: gid, title, handle, descriptionHtml, seo: { title: seoTitle || null, description: seoDescription || null }, ...(type === "product" ? { status, vendor, productType, tags } : {}) };
+  const response = await admin.graphql(type === "product" ? PRODUCT_UPDATE : COLLECTION_UPDATE, { variables: { [variableKey]: input } });
   const payload: any = await response.json();
   const result = type === "product" ? payload.data?.productUpdate : payload.data?.collectionUpdate;
   const errors = [...(payload.errors || []), ...(result?.userErrors || [])].map((item: any) => item.message).filter(Boolean);
@@ -60,13 +65,17 @@ export default function CatalogResourceEditor() {
   const [seoTitle, setSeoTitle] = useState(resource.seoTitle);
   const [seoDescription, setSeoDescription] = useState(resource.seoDescription);
   const [handle, setHandle] = useState(resource.handle);
+  const [status, setStatus] = useState(details.status || "ACTIVE");
+  const [vendor, setVendor] = useState(details.vendor);
+  const [productType, setProductType] = useState(details.productType);
+  const [tags, setTags] = useState(details.tags.join(", "));
   const currentAudit = useMemo(() => auditCatalogResource({ ...resource, title, descriptionHtml, seoTitle, seoDescription, handle }), [resource, title, descriptionHtml, seoTitle, seoDescription, handle]);
   const typeLabel = resource.type === "product" ? "Product" : "Collection";
-  const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== resource.seoTitle || seoDescription !== resource.seoDescription || handle !== resource.handle;
+  const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== resource.seoTitle || seoDescription !== resource.seoDescription || handle !== resource.handle || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
   const wordCount = stripHtml(descriptionHtml).split(/\s+/).filter(Boolean).length;
   const displaySeoTitle = seoTitle.trim() || title.trim() || `Untitled ${typeLabel.toLowerCase()}`;
   const displaySeoDescription = seoDescription.trim() || stripHtml(descriptionHtml).slice(0, 165) || `Add a description for this ${typeLabel.toLowerCase()}.`;
-  const reset = () => { setTitle(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(resource.seoTitle); setSeoDescription(resource.seoDescription); setHandle(resource.handle); };
+  const reset = () => { setTitle(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(resource.seoTitle); setSeoDescription(resource.seoDescription); setHandle(resource.handle); setStatus(details.status || "ACTIVE"); setVendor(details.vendor); setProductType(details.productType); setTags(details.tags.join(", ")); };
   const groups = checklistGroups(currentAudit.issues, resource);
   return <Page fullWidth backAction={{ content: `${typeLabel} SEO`, url: `/app/catalog-seo?type=${resource.type}` }}>
     <TitleBar title={`Edit ${typeLabel.toLowerCase()}`}><button variant="primary" type="submit" form="catalog-resource-form" disabled={!dirty}>Save changes</button></TitleBar>
@@ -88,7 +97,7 @@ export default function CatalogResourceEditor() {
       </BlockStack></Layout.Section><Layout.Section variant="oneThird"><BlockStack gap="400">
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="headingXl" fontWeight="bold">{currentAudit.score}<Text as="span" variant="bodySm" tone="subdued">/100</Text></Text></InlineStack><div className="bp-catalog-score-track"><span style={{ width: `${currentAudit.score}%` }} /></div><Text as="p" variant="bodySm" tone="subdued">{savedAt ? `Last analyzed ${new Date(savedAt).toLocaleString()}` : "Calculated from current Shopify content."}</Text></BlockStack></Card>
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Featured image</Text><Icon source={ImageIcon} tone="info" /></InlineStack>{resource.imageUrl ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={resource.imageAlt || resource.title} /></div> : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}<Text as="p" variant="bodySm" tone={resource.imageAlt ? "subdued" : "critical"}>{resource.imageAlt || "Image alt text is missing."}</Text><Button url={adminUrl} target="_blank" fullWidth>{resource.imageAlt ? "Manage image in Shopify" : "Add alt text in Shopify"}</Button></BlockStack></Card>
-        <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} details</Text><Divider />{resource.type === "product" ? <><Detail label="Status" value={details.status || "—"} /><Detail label="Vendor" value={details.vendor || "Not set"} /><Detail label="Product type" value={details.productType || "Not set"} /><Detail label="Tags" value={details.tags.length ? details.tags.slice(0, 5).join(", ") : "None"} /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Manage inventory, variants, rules and media safely in Shopify Admin.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></Card>
+        <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} settings</Text><Divider />{resource.type === "product" ? <><Select name="status" label="Status" value={status} onChange={setStatus} options={[{ label: "Active", value: "ACTIVE" }, { label: "Draft", value: "DRAFT" }, { label: "Archived", value: "ARCHIVED" }]} /><TextField name="vendor" label="Vendor" value={vendor} onChange={setVendor} autoComplete="off" /><TextField name="productType" label="Product type" value={productType} onChange={setProductType} autoComplete="off" /><TextField name="tags" label="Tags" value={tags} onChange={setTags} autoComplete="off" helpText="Separate tags with commas." /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Variants, pricing, inventory, collection rules and media remain in Shopify to prevent destructive edits.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></Card>
       </BlockStack></Layout.Section></Layout>
       {dirty && <div className="bp-editor-savebar"><InlineStack align="space-between" blockAlign="center" gap="300"><Text as="p" fontWeight="semibold">You have unsaved changes</Text><InlineStack gap="200"><Button onClick={reset}>Discard</Button><Button variant="primary" submit loading={navigation.state === "submitting"}>Save changes</Button></InlineStack></InlineStack></div>}
     </BlockStack></Form>
@@ -101,25 +110,77 @@ function EditorMetric({ label, value, icon, tone }: { label: string; value: stri
 
 function RichTextEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const editor = useRef<HTMLDivElement>(null);
+  const selection = useRef<Range | null>(null);
+  const [htmlMode, setHtmlMode] = useState(false);
+  const [block, setBlock] = useState("p");
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkText, setLinkText] = useState("");
+  const [imageOpen, setImageOpen] = useState(false);
+  const [imageUrl, setImageUrl] = useState("");
+  const [imageAlt, setImageAlt] = useState("");
+  const [videoOpen, setVideoOpen] = useState(false);
+  const [videoUrl, setVideoUrl] = useState("");
   useEffect(() => {
     if (editor.current && document.activeElement !== editor.current && editor.current.innerHTML !== value) editor.current.innerHTML = value;
   }, [value]);
+  const saveSelection = () => {
+    const active = window.getSelection();
+    if (!editor.current || !active || !active.rangeCount) return;
+    const range = active.getRangeAt(0);
+    if (editor.current.contains(range.commonAncestorContainer)) selection.current = range.cloneRange();
+  };
+  const restoreSelection = () => {
+    const active = window.getSelection();
+    if (!active || !selection.current) return;
+    active.removeAllRanges();
+    active.addRange(selection.current);
+  };
+  const emit = () => { if (editor.current) onChange(editor.current.innerHTML); };
   const command = (name: string, commandValue?: string) => {
     editor.current?.focus();
+    restoreSelection();
     document.execCommand(name, false, commandValue);
-    if (editor.current) onChange(editor.current.innerHTML);
+    emit();
   };
-  return <div className="bp-rich-editor">
-    <div className="bp-rich-editor__toolbar" role="toolbar" aria-label="Description formatting">
-      <button type="button" onClick={() => command("bold")} aria-label="Bold"><strong>B</strong></button>
-      <button type="button" onClick={() => command("italic")} aria-label="Italic"><em>I</em></button>
-      <button type="button" onClick={() => command("formatBlock", "h2")} aria-label="Heading">H2</button>
-      <button type="button" onClick={() => command("insertUnorderedList")} aria-label="Bulleted list">• List</button>
-      <button type="button" onClick={() => { const url = window.prompt("Link URL"); if (url) command("createLink", url); }} aria-label="Insert link">Link</button>
-      <button type="button" onClick={() => command("removeFormat")} aria-label="Clear formatting">Clear</button>
+  const insertHtml = (html: string) => command("insertHTML", html);
+  const openLink = () => { saveSelection(); setLinkText(window.getSelection()?.toString() || ""); setLinkOpen(true); };
+  const applyLink = () => {
+    if (!/^https?:\/\//i.test(linkUrl) && !linkUrl.startsWith("/")) return;
+    restoreSelection();
+    if (linkText) insertHtml(`<a href="${escapeHtml(linkUrl)}">${escapeHtml(linkText)}</a>`); else command("createLink", linkUrl);
+    setLinkOpen(false); setLinkUrl(""); setLinkText("");
+  };
+  const applyImage = () => { if (!/^https?:\/\//i.test(imageUrl)) return; restoreSelection(); insertHtml(`<p><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageAlt)}" style="max-width:100%;height:auto"></p>`); setImageOpen(false); setImageUrl(""); setImageAlt(""); };
+  const applyVideo = () => { const embed = videoEmbed(videoUrl); if (!embed) return; restoreSelection(); insertHtml(embed); setVideoOpen(false); setVideoUrl(""); };
+  const toolbarButton = (label: string, icon: any, action: () => void) => <button type="button" title={label} aria-label={label} className="bp-editor-icon-button" onMouseDown={(event) => { event.preventDefault(); saveSelection(); }} onClick={action}><Icon source={icon} tone="base" /></button>;
+  return <>
+    <div className="bp-rich-editor">
+      <div className="bp-editor-toolbar" role="toolbar" aria-label="Description formatting">
+        <Select label="Text style" labelHidden options={[{ label: "Paragraph", value: "p" }, { label: "Heading 2", value: "h2" }, { label: "Heading 3", value: "h3" }, { label: "Quote", value: "blockquote" }]} value={block} onChange={(next) => { setBlock(next); command("formatBlock", next); }} />
+        <span className="bp-editor-separator" />
+        {toolbarButton("Bold", TextBoldIcon, () => command("bold"))}
+        {toolbarButton("Italic", TextItalicIcon, () => command("italic"))}
+        {toolbarButton("Underline", TextUnderlineIcon, () => command("underline"))}
+        <span className="bp-editor-separator" />
+        {toolbarButton("Align left", TextAlignLeftIcon, () => command("justifyLeft"))}
+        {toolbarButton("Align center", TextAlignCenterIcon, () => command("justifyCenter"))}
+        {toolbarButton("Align right", TextAlignRightIcon, () => command("justifyRight"))}
+        {toolbarButton("Bulleted list", ListBulletedIcon, () => command("insertUnorderedList"))}
+        <span className="bp-editor-separator" />
+        {toolbarButton("Insert link", LinkIcon, openLink)}
+        {toolbarButton("Insert image", ImageIcon, () => { saveSelection(); setImageOpen(true); })}
+        {toolbarButton("Insert video", PlayCircleIcon, () => { saveSelection(); setVideoOpen(true); })}
+        {toolbarButton("Insert table", DataTableIcon, () => insertHtml('<table><tbody><tr><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>'))}
+        <button type="button" title="HTML view" aria-label="HTML view" className={`bp-editor-icon-button bp-editor-code-button${htmlMode ? " is-active" : ""}`} onClick={() => setHtmlMode((active) => !active)}><Icon source={CodeIcon} tone="base" /></button>
+      </div>
+      <div ref={editor} className="bp-editor-canvas" style={{ display: htmlMode ? "none" : "block" }} contentEditable suppressContentEditableWarning role="textbox" aria-label="Resource description" data-placeholder="Write a detailed description..." onInput={emit} onBlur={emit} onKeyUp={saveSelection} onMouseUp={saveSelection} dangerouslySetInnerHTML={{ __html: value }} />
+      {htmlMode && <textarea className="bp-editor-html-textarea" value={value} onChange={(event) => onChange(event.target.value)} aria-label="Description HTML" />}
     </div>
-    <div ref={editor} className="bp-rich-editor__content" contentEditable suppressContentEditableWarning onInput={(event) => onChange(event.currentTarget.innerHTML)} dangerouslySetInnerHTML={{ __html: value }} />
-  </div>;
+    <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Insert link" primaryAction={{ content: "Insert link", onAction: applyLink, disabled: !linkUrl }} secondaryActions={[{ content: "Cancel", onAction: () => setLinkOpen(false) }]}><Modal.Section><BlockStack gap="300"><TextField label="Link to" value={linkUrl} onChange={setLinkUrl} autoComplete="off" placeholder="https://example.com" /><TextField label="Text to display" value={linkText} onChange={setLinkText} autoComplete="off" /></BlockStack></Modal.Section></Modal>
+    <Modal open={imageOpen} onClose={() => setImageOpen(false)} title="Insert image" primaryAction={{ content: "Insert image", onAction: applyImage, disabled: !imageUrl }} secondaryActions={[{ content: "Cancel", onAction: () => setImageOpen(false) }]}><Modal.Section><BlockStack gap="300"><TextField label="Image URL" value={imageUrl} onChange={setImageUrl} autoComplete="off" placeholder="https://cdn.shopify.com/..." /><TextField label="Alt text" value={imageAlt} onChange={setImageAlt} autoComplete="off" helpText="Describe the image for accessibility and image search." /></BlockStack></Modal.Section></Modal>
+    <Modal open={videoOpen} onClose={() => setVideoOpen(false)} title="Insert video" primaryAction={{ content: "Insert video", onAction: applyVideo, disabled: !videoEmbed(videoUrl) }} secondaryActions={[{ content: "Cancel", onAction: () => setVideoOpen(false) }]}><Modal.Section><TextField label="YouTube, Vimeo or video URL" value={videoUrl} onChange={setVideoUrl} autoComplete="off" placeholder="https://www.youtube.com/watch?v=..." /></Modal.Section></Modal>
+  </>;
 }
 
 type ChecklistRow = { label: string; passed: boolean; fix?: string; impact?: CatalogSeoIssue["impact"] };
@@ -153,6 +214,18 @@ export function ErrorBoundary() {
 
 function resourceType(value?: string): CatalogResourceType { if (value === "product" || value === "collection") return value; throw new Response("Not found", { status: 404 }); }
 function stripHtml(value: string) { return value.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/\s+/g, " ").trim(); }
+function escapeHtml(value: string) { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function videoEmbed(value: string) {
+  const input = value.trim();
+  if (!input) return "";
+  try {
+    const url = new URL(input);
+    const youtubeId = url.hostname.includes("youtu.be") ? url.pathname.slice(1) : url.hostname.includes("youtube.com") ? url.searchParams.get("v") || url.pathname.split("/").pop() : "";
+    if (youtubeId) return `<div class="bp-editor-video"><iframe src="https://www.youtube.com/embed/${escapeHtml(youtubeId)}" title="Embedded video" allowfullscreen></iframe></div><p><br></p>`;
+    if (url.hostname.includes("vimeo.com")) return `<div class="bp-editor-video"><iframe src="https://player.vimeo.com/video/${escapeHtml(url.pathname.split("/").filter(Boolean).pop() || "")}" title="Embedded video" allowfullscreen></iframe></div><p><br></p>`;
+    return `<p><a href="${escapeHtml(input)}">${escapeHtml(input)}</a></p>`;
+  } catch { return ""; }
+}
 function shopifyGid(type: CatalogResourceType, id?: string) { if (!id || !/^\d+$/.test(id)) throw new Response("Not found", { status: 404 }); return `gid://shopify/${type === "product" ? "Product" : "Collection"}/${id}`; }
 function field(form: FormData, key: string, max: number) { return String(form.get(key) || "").trim().slice(0, max); }
 function scoreTone(score: number): "success" | "warning" | "critical" { return score >= 80 ? "success" : score >= 60 ? "warning" : "critical"; }
