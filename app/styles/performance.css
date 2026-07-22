@@ -155,19 +155,24 @@
 .bp-audit-filters button.is-active { color: #fff; border-color: #303030; background: #303030; }
 .bp-audit-group + .bp-audit-group { border-top: 1px solid var(--p-color-border); }
 .bp-audit-row { border-bottom: 1px solid var(--p-color-border-secondary); }
-.bp-audit-row summary { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto 20px; gap: 10px; align-items: center; padding: 13px 20px; cursor: pointer; list-style: none; }
+.bp-audit-row summary { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(0, auto) 24px; gap: 10px; align-items: center; min-height: 48px; padding: 10px 20px; cursor: pointer; list-style: none; }
 .bp-audit-row summary::-webkit-details-marker { display: none; }
 .bp-audit-row[open] { background: var(--p-color-bg-surface-secondary); }
-.bp-audit-title { font-weight: 600; }
-.bp-audit-value { color: #c43125; font-size: 12px; }
-.bp-audit-chevron { text-align: center; transition: transform 160ms ease; }
+.bp-audit-status, .bp-audit-chevron { display: grid; width: 24px; height: 24px; place-items: center; align-self: center; }
+.bp-audit-status .Polaris-Icon, .bp-audit-chevron .Polaris-Icon { margin: 0; }
+.bp-audit-title { align-self: center; font-weight: 600; line-height: 20px; }
+.bp-audit-value { grid-column: 3; align-self: center; color: #c43125; font-size: 12px; line-height: 18px; text-align: right; white-space: nowrap; }
+.bp-audit-chevron { grid-column: 4; color: var(--p-color-icon-secondary); transition: transform 160ms ease; }
 .bp-audit-row[open] .bp-audit-chevron { transform: rotate(180deg); }
 .bp-audit-content { padding: 0 54px 16px; }
 .bp-audit-content ul { margin: 10px 0; padding-left: 18px; color: var(--p-color-text-secondary); overflow-wrap: anywhere; }
 .bp-passed-toggle { display: flex; width: 100%; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border: 0; background: transparent; font-weight: 600; }
 .bp-passed-toggle span { margin-left: auto; color: var(--p-color-text-info); font-weight: 500; }
 .bp-passed-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; padding: 12px 8px 4px; }
-.bp-passed-grid > div { display: flex; align-items: center; gap: 7px; }
+.bp-passed-grid > div { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
+.bp-passed-icon { display: grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; margin: 0 !important; color: var(--p-color-icon-success); }
+.bp-passed-icon .Polaris-Icon { width: 16px; height: 16px; margin: 0; }
+.bp-passed-toggle > .bp-passed-icon { margin: 0 !important; }
 
 @media (max-width: 767px) {
   .bp-performance-layout {
@@ -175,6 +180,7 @@
   }
   .bp-performance-hero .Polaris-InlineStack { align-items: flex-start; }
   .bp-lab-layout, .bp-lab-metrics, .bp-passed-grid { grid-template-columns: 1fr; }
-  .bp-audit-row summary { grid-template-columns: 24px minmax(0, 1fr) 18px; }
-  .bp-audit-value { grid-column: 2; }
+  .bp-audit-row summary { grid-template-columns: 24px minmax(0, 1fr) 24px; }
+  .bp-audit-value { grid-column: 2; text-align: left; }
+  .bp-audit-chevron { grid-column: 3; grid-row: 1 / span 2; }
 }
