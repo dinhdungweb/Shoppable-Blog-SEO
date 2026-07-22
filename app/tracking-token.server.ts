@@ -8,7 +8,9 @@ export type TrackingTokenPayload = {
   exp: number;
 };
 
-const TOKEN_LIFETIME_SECONDS = 60 * 60 * 24;
+// Keep signed attribution valid for the same seven-day window used by the
+// Shopify Web Pixel. A shorter token lifetime silently dropped delayed carts.
+export const TRACKING_ATTRIBUTION_WINDOW_SECONDS = 60 * 60 * 24 * 7;
 
 function secret() {
   const value = process.env.SHOPIFY_API_SECRET;
@@ -27,7 +29,7 @@ function signature(encodedPayload: string) {
 export function createTrackingToken(payload: Omit<TrackingTokenPayload, "exp">) {
   const encodedPayload = encode(JSON.stringify({
     ...payload,
-    exp: Math.floor(Date.now() / 1000) + TOKEN_LIFETIME_SECONDS,
+    exp: Math.floor(Date.now() / 1000) + TRACKING_ATTRIBUTION_WINDOW_SECONDS,
   }));
   return `${encodedPayload}.${signature(encodedPayload)}`;
 }

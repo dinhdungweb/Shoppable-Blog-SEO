@@ -50,27 +50,43 @@ register(({ analytics, browser, init, settings }) => {
     }
   }
 
-  function sendTrackEvent(eventType: string, productId: string, attribution: any, eventId?: string) {
+  async function sendTrackEvent(eventType: string, productId: string, attribution: any, eventId?: string) {
     const shop = getCanonicalShop();
     const articleId = normalizeArticleId(attribution.articleId);
-    if (!shop || !articleId || !productId || !attribution.trackingToken) return;
+    if (!shop || !articleId || !productId || !attribution.trackingToken) return false;
     
-    // Using fetch POST
-    fetch(TRACK_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        shop: shop,
-        articleId,
-        blockId: cleanBlockId(attribution.blockId),
-        productId: productId,
-        eventType: eventType,
-        sessionId: String(eventId || ""),
-        token: attribution.trackingToken,
-      })
-    }).catch(() => {});
+    const requestBody = JSON.stringify({
+      shop,
+      articleId,
+      blockId: cleanBlockId(attribution.blockId),
+      productId,
+      eventType,
+      sessionId: String(eventId || ""),
+      token: attribution.trackingToken,
+    });
+
+    // App pixels run in a sandbox. Await the request and keep it alive so
+    // cart-drawer or navigation lifecycle changes do not cancel conversions.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(TRACK_API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: requestBody,
+          keepalive: true,
+        });
+        if (response.ok) return true;
+
+        // Authentication and validation failures are deterministic.
+        if (response.status >= 400 && response.status < 500) return false;
+      } catch (e) {
+        // Retry once for a transient network or sandbox lifecycle failure.
+      }
+    }
+
+    return false;
   }
 
   function getCanonicalShop() {
@@ -142,7 +158,7 @@ register(({ analytics, browser, init, settings }) => {
     if (productId) {
       // The format is usually gid://shopify/Product/123456789
       const idStr = String(productId).split('/').pop() || "";
-      sendTrackEvent("add_to_cart", idStr, attribution, String((event as any).id || ""));
+      await sendTrackEvent("add_to_cart", idStr, attribution, String((event as any).id || ""));
     }
   });
 
@@ -162,7 +178,7 @@ register(({ analytics, browser, init, settings }) => {
         // Avoid sending duplicate events if the same product is in the cart multiple times
         if (!processedProductIds.has(idStr)) {
           processedProductIds.add(idStr);
-          sendTrackEvent("purchase", idStr, attribution, String((event as any).id || ""));
+          await sendTrackEvent("purchase", idStr, attribution, String((event as any).id || ""));
         }
       }
     }

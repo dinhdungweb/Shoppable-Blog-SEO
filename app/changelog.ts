@@ -67,6 +67,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Legacy display and content-navigation settings URLs now redirect to the single canonical Settings workspace." },
       { type: "Improved", text: "Internal Linking Assistant is now available on Pro and Growth plans, with server-side access enforcement and an upgrade path for Free stores." },
       { type: "Fixed", text: "Shoppable display image ratios now resize only the product image area in both Live preview and the storefront widget, without treating the entire product card as the ratio target." },
+      { type: "Fixed", text: "Signed conversion attribution tokens now remain valid for the same seven-day window as the Shopify Web Pixel, so delayed add-to-cart and purchase events are no longer dropped after 24 hours." },
+      { type: "Fixed", text: "Web Pixel conversion requests are now awaited, kept alive through cart-drawer and navigation lifecycle changes, and retried once after transient network failures." },
     ],
   },
   {

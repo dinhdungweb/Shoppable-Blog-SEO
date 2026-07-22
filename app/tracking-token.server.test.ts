@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTrackingToken, verifyTrackingToken } from "./tracking-token.server";
 
 describe("tracking tokens", () => {
@@ -9,6 +9,7 @@ describe("tracking tokens", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     process.env.SHOPIFY_API_SECRET = previousSecret;
   });
 
@@ -31,5 +32,22 @@ describe("tracking tokens", () => {
     });
     expect(verifyTrackingToken(`${token.slice(0, -1)}x`)).toBeNull();
     expect(verifyTrackingToken("not-a-token")).toBeNull();
+  });
+
+  it("matches the Web Pixel seven-day attribution window", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
+    const token = createTrackingToken({
+      shop: "demo.myshopify.com",
+      articleId: "gid://shopify/Article/1",
+      productId: "gid://shopify/Product/2",
+      blockId: "default",
+    });
+
+    vi.setSystemTime(new Date("2026-07-28T23:59:59.000Z"));
+    expect(verifyTrackingToken(token)).not.toBeNull();
+
+    vi.setSystemTime(new Date("2026-07-29T00:00:01.000Z"));
+    expect(verifyTrackingToken(token)).toBeNull();
   });
 });
