@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, isRouteErrorResponse, useActionData, useLoaderData, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
-import { Badge, Banner, BlockStack, Button, Card, Divider, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Button, Card, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField, Toast } from "@shopify/polaris";
 import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
@@ -31,6 +31,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw error;
   }
   resource.focusKeyword = saved?.focusKeyword || "";
+  const liveAudit = auditCatalogResource(resource);
+  if (!saved || saved.seoScore !== liveAudit.score || saved.issueCount !== liveAudit.issues.length || saved.contentHash !== liveAudit.contentHash) {
+    saved = await prisma.resourceSEO.upsert({
+      where: { shop_resourceType_resourceId: { shop: session.shop, resourceType: type, resourceId: gid } },
+      create: seoRecord(session.shop, liveAudit),
+      update: seoRecord(session.shop, liveAudit),
+    });
+  }
   let planAccess: Awaited<ReturnType<typeof getActivePlanAndLimits>>;
   try {
     planAccess = await getActivePlanAndLimits(billing);
@@ -43,7 +51,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const details = type === "product"
     ? { status: String(node.status || ""), vendor: String(node.vendor || ""), productType: String(node.productType || ""), tags: Array.isArray(node.tags) ? node.tags : [], collectionKind: "", itemCount: 0 }
     : { status: "", vendor: "", productType: "", tags: [], collectionKind: node.ruleSet ? "Automated" : "Manual", itemCount: Number(node.productsCount?.count || 0) };
-  return json({ resource, details, audit: auditCatalogResource(resource), savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}`, canInternalLinking: limits.canInternalLinking, planKey, linkTargets });
+  return json({ resource, details, audit: liveAudit, savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}`, canInternalLinking: limits.canInternalLinking, planKey, linkTargets });
   } catch (error: any) {
     if (error instanceof Response) throw error;
     const message = readableServerError(error);
@@ -101,7 +109,9 @@ export default function CatalogResourceEditor() {
   const { resource, details, savedAt, adminUrl, canInternalLinking, planKey, linkTargets } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const savedToastShown = useRef(false);
+  const [savedToastActive, setSavedToastActive] = useState(false);
   const initialSeoTitle = resource.seoTitle.trim() || resource.title;
   const initialSeoDescription = resource.seoDescription.trim() || stripHtml(resource.descriptionHtml).slice(0, 165);
   const [title, setTitleState] = useState(resource.title);
@@ -120,6 +130,14 @@ export default function CatalogResourceEditor() {
   const [imageAlt, setImageAlt] = useState(resource.imageAlt);
   const [pendingLink, setPendingLink] = useState<LinkSuggestion | null>(null);
   const [linkAnchor, setLinkAnchor] = useState("");
+  useEffect(() => {
+    if (searchParams.get("saved") !== "1" || savedToastShown.current) return;
+    savedToastShown.current = true;
+    setSavedToastActive(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("saved");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const currentAudit = useMemo(() => auditCatalogResource({ ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword }), [resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword]);
   const typeLabel = resource.type === "product" ? "Product" : "Collection";
   const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== initialSeoTitle || seoDescription !== initialSeoDescription || handle !== resource.handle || imageAlt !== resource.imageAlt || focusKeyword !== (resource.focusKeyword || "") || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
@@ -131,14 +149,13 @@ export default function CatalogResourceEditor() {
   const reset = () => { setTitleState(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(initialSeoTitle); setSeoDescription(initialSeoDescription); seoTitleAutomatic.current = !resource.seoTitle.trim(); seoDescriptionAutomatic.current = !resource.seoDescription.trim(); setHandle(resource.handle); setStatus(details.status || "ACTIVE"); setVendor(details.vendor); setProductType(details.productType); setTags(details.tags.join(", ")); setImageAlt(resource.imageAlt); setFocusKeyword(resource.focusKeyword || ""); };
   const groups = checklistGroups(currentAudit.issues, { ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword });
   const linkSuggestions = useMemo(() => canInternalLinking ? suggestInternalLinksForDraft({ id: resource.id, title, handle, blogHandle: resource.type === "product" ? "products" : "collections", body: descriptionHtml }, linkTargets.map((item) => ({ id: item.articleId, title: item.articleTitle, handle: item.articleHandle, blogHandle: item.blogHandle, body: "" })), 8) : [], [canInternalLinking, descriptionHtml, handle, linkTargets, resource.id, resource.type, title]);
-  return <Page fullWidth backAction={{ content: `${typeLabel} SEO`, url: `/app/catalog-seo?type=${resource.type}` }}>
+  return <Frame><Page fullWidth backAction={{ content: `${typeLabel} SEO`, url: `/app/catalog-seo?type=${resource.type}` }}>
     <TitleBar title={`Edit ${typeLabel.toLowerCase()}`}><button variant="primary" type="submit" form="catalog-resource-form" disabled={!dirty}>Save changes</button></TitleBar>
     <div className="bp-catalog-editor-shell"><Form method="post" id="catalog-resource-form"><BlockStack gap="500">
       <input type="hidden" name="descriptionHtml" value={descriptionHtml} />
       <input type="hidden" name="focusKeyword" value={focusKeyword} /><input type="hidden" name="originalImageAlt" value={resource.imageAlt} /><input type="hidden" name="imageUrl" value={resource.imageUrl} /><input type="hidden" name="mediaId" value={(resource as any).mediaId || ""} />
-      <InlineStack align="space-between" blockAlign="center" gap="300"><BlockStack gap="100"><InlineStack gap="200" blockAlign="center"><Text as="h1" variant="headingXl" fontWeight="bold">{title || resource.title}</Text><Badge tone={resource.type === "product" && details.status === "ACTIVE" ? "success" : "info"}>{resource.type === "product" ? details.status || typeLabel : typeLabel}</Badge></InlineStack><Text as="p" tone="subdued">Improve storefront content, search appearance and image signals without leaving the app.</Text></BlockStack><InlineStack gap="200"><Button url={adminUrl} target="_blank">Open in Shopify</Button><Button variant="primary" submit loading={navigation.state === "submitting"} disabled={!dirty}>Save changes</Button></InlineStack></InlineStack>
+      <InlineStack align="space-between" blockAlign="center" gap="300"><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">{title || resource.title}</Text><Text as="p" tone="subdued">Improve storefront content, search appearance and image signals without leaving the app.</Text></BlockStack><InlineStack gap="200"><Button url={adminUrl} target="_blank">Open in Shopify</Button><Button variant="primary" submit loading={navigation.state === "submitting"} disabled={!dirty}>Save changes</Button></InlineStack></InlineStack>
       {actionData?.error && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
-      {searchParams.get("saved") === "1" && <Banner tone="success" title={`${typeLabel} updated`}><p>The Shopify content and saved SEO report are now up to date.</p></Banner>}
       <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="300">
         <EditorMetric label="SEO score" value={`${currentAudit.score}/100`} icon={CheckCircleIcon} tone={scoreTone(currentAudit.score)} />
         <EditorMetric label="Open issues" value={String(currentAudit.issues.length)} icon={AlertTriangleIcon} tone={currentAudit.issues.length ? "warning" : "success"} />
@@ -159,7 +176,7 @@ export default function CatalogResourceEditor() {
       {dirty && <div className="bp-editor-savebar"><InlineStack align="space-between" blockAlign="center" gap="300"><Text as="p" fontWeight="semibold">You have unsaved changes</Text><InlineStack gap="200"><Button onClick={reset}>Discard</Button><Button variant="primary" submit loading={navigation.state === "submitting"}>Save changes</Button></InlineStack></InlineStack></div>}
     </BlockStack></Form></div>
     <Modal open={Boolean(pendingLink)} onClose={() => setPendingLink(null)} title="Review internal link" primaryAction={{ content: "Insert link", onAction: () => { if (!pendingLink) return; setDescriptionHtml(insertApprovedLink(descriptionHtml, linkAnchor.trim() || pendingLink.anchorText, pendingLink.targetUrl).body); setPendingLink(null); } }} secondaryActions={[{ content: "Cancel", onAction: () => setPendingLink(null) }]}><Modal.Section><BlockStack gap="300"><Text as="p">Link to <strong>{pendingLink?.targetTitle}</strong></Text><TextField label="Anchor text" value={linkAnchor} onChange={setLinkAnchor} autoComplete="off" /><Text as="p" variant="bodySm" tone="subdued">The link is inserted into the description only after you approve and save this resource.</Text></BlockStack></Modal.Section></Modal>
-  </Page>;
+  </Page>{savedToastActive && <Toast content={`${typeLabel} updated successfully`} onDismiss={() => setSavedToastActive(false)} duration={4000} />}</Frame>;
 }
 
 function EditorMetric({ label, value, icon, tone }: { label: string; value: string; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; tone: "success" | "warning" | "critical" | "info" }) {
