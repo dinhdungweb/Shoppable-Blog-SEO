@@ -70,6 +70,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Signed conversion attribution tokens now remain valid for the same seven-day window as the Shopify Web Pixel, so delayed add-to-cart and purchase events are no longer dropped after 24 hours." },
       { type: "Fixed", text: "Web Pixel conversion requests are now awaited, kept alive through cart-drawer and navigation lifecycle changes, and retried once after transient network failures." },
       { type: "Fixed", text: "Product attribution now survives variant URL changes, with a storefront fallback for custom Shopify cart drawers that do not reliably emit the standard add-to-cart pixel event." },
+      { type: "New", text: "Storefront Performance compares saved Lighthouse SEO, mobile speed and desktop speed reports for representative Shopify homepage, product, collection and blog pages." },
+      { type: "Improved", text: "Performance reports surface Core Web Vitals lab metrics and prioritized Lighthouse opportunities without rescanning pages every time the app opens." },
     ],
   },
   {

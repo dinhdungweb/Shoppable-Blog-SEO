@@ -312,6 +312,24 @@ model ContentDecayAnalysis {
   updatedAt  DateTime @updatedAt
 }
 
+model StorefrontPerformanceScan {
+  id           String   @id @default(cuid())
+  shop         String
+  pageType     String
+  pageTitle    String
+  pageUrl      String
+  seoScore     Int
+  mobileScore  Int
+  desktopScore Int
+  report       Json
+  scannedAt    DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([shop, pageType])
+  @@index([shop, scannedAt])
+}
+
 model SeoBulkChange {
   id                    String    @id @default(cuid())
   batchId               String
