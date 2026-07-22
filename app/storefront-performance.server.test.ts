@@ -12,14 +12,25 @@ describe("storefront performance scans", () => {
       const url = new URL(String(input));
       const mobile = url.searchParams.get("strategy") === "mobile";
       return new Response(JSON.stringify({
+        loadingExperience: {
+          overall_category: "AVERAGE",
+          metrics: {
+            LARGEST_CONTENTFUL_PAINT_MS: { percentile: 3100, category: "AVERAGE" },
+            INTERACTION_TO_NEXT_PAINT: { percentile: 180, category: "FAST" },
+            CUMULATIVE_LAYOUT_SHIFT_SCORE: { percentile: 16, category: "AVERAGE" },
+          },
+        },
         lighthouseResult: {
           requestedUrl: "https://shop.example.com/",
           finalUrl: "https://shop.example.com/",
           runWarnings: [],
           categories: {
-            performance: { score: mobile ? 0.61 : 0.88 },
-            seo: { score: mobile ? 0.92 : 0.94 },
+            performance: { title: "Performance", score: mobile ? 0.61 : 0.88, auditRefs: [{ id: "largest-contentful-paint", group: "metrics" }] },
+            accessibility: { title: "Accessibility", score: 0.87, auditRefs: [] },
+            "best-practices": { title: "Best Practices", score: 0.73, auditRefs: [] },
+            seo: { title: "SEO", score: mobile ? 0.92 : 0.94, auditRefs: [] },
           },
+          categoryGroups: { metrics: { title: "Metrics" } },
           audits: {
             "largest-contentful-paint": { id: "largest-contentful-paint", title: "Largest Contentful Paint", description: "Improve the hero image.", displayValue: "3.1 s", score: 0.55, scoreDisplayMode: "numeric" },
           },
@@ -35,6 +46,9 @@ describe("storefront performance scans", () => {
     expect(report.seoScore).toBe(93);
     expect(report.mobile.metrics.LCP).toBe("3.1 s");
     expect(report.mobile.opportunities[0]?.id).toBe("largest-contentful-paint");
+    expect(report.mobile.categories.accessibility).toBe(87);
+    expect(report.mobile.fieldData.metrics).toEqual(expect.arrayContaining([expect.objectContaining({ label: "LCP", value: "3.1 s" })]));
+    expect(report.mobile.fieldData.assessment).toBe("failed");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

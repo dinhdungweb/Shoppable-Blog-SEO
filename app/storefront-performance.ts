@@ -14,16 +14,45 @@ export type PerformanceAudit = {
   description: string;
   displayValue: string;
   score: number | null;
+  category: string;
+  group: string;
+  details: string[];
+};
+
+export type CategoryScores = {
+  performance: number;
+  accessibility: number;
+  bestPractices: number;
+  seo: number;
+};
+
+export type FieldMetric = {
+  label: string;
+  value: string;
+  rating: "good" | "needs-improvement" | "poor";
+};
+
+export type FieldData = {
+  available: boolean;
+  scope: "url" | "origin" | "none";
+  assessment: "passed" | "failed" | "unknown";
+  metrics: FieldMetric[];
 };
 
 export type DeviceReport = {
   score: number;
+  categories: CategoryScores;
   metrics: Record<string, string>;
   opportunities: PerformanceAudit[];
+  passedAudits: PerformanceAudit[];
+  fieldData: FieldData;
+  screenshot: string;
+  lighthouseVersion: string;
+  fetchTime: string;
 };
 
 export type StorefrontPerformanceReport = {
-  version: 1;
+  version: 2;
   url: string;
   fetchedUrl: string;
   seoScore: number;

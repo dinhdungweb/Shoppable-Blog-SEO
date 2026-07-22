@@ -3,8 +3,9 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, InlineGrid, InlineStack, Page, ProgressBar, Text } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, InlineGrid, InlineStack, Page, Text } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { AlertTriangleIcon, AppsIcon, BlogIcon, ChartVerticalIcon, CheckCircleIcon, CodeIcon, CollectionIcon, DesktopIcon, GaugeIcon, HomeIcon, ImageIcon, MobileIcon, ProductIcon, SearchIcon } from "@shopify/polaris-icons";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import performanceStyles from "../styles/performance.css?url";
@@ -136,6 +137,7 @@ export default function PerformancePage() {
     const firstSaved = initial.scans[0]?.pageType as PerformancePageType | undefined;
     return firstSaved && PERFORMANCE_PAGE_TYPES.includes(firstSaved) ? firstSaved : "homepage";
   });
+  const [device, setDevice] = useState<"mobile" | "desktop">("mobile");
   const response = fetcher.data as { success?: boolean; queued?: boolean; pageType?: PerformancePageType; error?: string } | undefined;
 
   useEffect(() => {
@@ -151,7 +153,8 @@ export default function PerformancePage() {
   const report = saved?.report || null;
   const scannedAt = saved?.scannedAt;
   const scanning = fetcher.state !== "idle" || saved?.status === "running";
-  const overall = report ? Math.round((report.seoScore + report.mobile.score + report.desktop.score) / 3) : 0;
+  const activeDevice = report ? normalizeDeviceReport(report[device], report.seoScore) : null;
+  const overall = activeDevice ? Math.round(Object.values(activeDevice.categories).reduce((sum, value) => sum + value, 0) / 4) : 0;
   const scan = () => fetcher.submit({ intent: "scan", pageType: selected }, { method: "post" });
 
   useEffect(() => {
@@ -163,10 +166,9 @@ export default function PerformancePage() {
   return <Page fullWidth>
     <TitleBar title="Storefront Performance"><button variant="primary" disabled={scanning || !target?.available} onClick={scan}>{scanning ? "Scanning..." : report ? "Recheck page" : "Run scan"}</button></TitleBar>
     <BlockStack gap="500">
-      <InlineStack align="space-between" blockAlign="end">
-        <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Storefront Performance</Text><Text as="p" tone="subdued">Compare Lighthouse SEO and speed for representative Shopify storefront pages.</Text></BlockStack>
+      <div className="bp-performance-hero"><InlineStack align="space-between" blockAlign="center" gap="400"><InlineStack gap="300" blockAlign="center"><div className="bp-performance-hero-icon"><Icon source={GaugeIcon} tone="base" /></div><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Storefront Performance</Text><Text as="p" tone="subdued">Lighthouse and real-user Core Web Vitals for your Shopify storefront.</Text></BlockStack></InlineStack>
         <Button variant="primary" loading={scanning} disabled={!target?.available} onClick={scan}>{report ? "Recheck page" : "Run scan"}</Button>
-      </InlineStack>
+      </InlineStack></div>
       {!initial.hasApiKey && <Banner tone="info" title="Using shared PageSpeed quota"><p>Add GOOGLE_PAGESPEED_API_KEY on the server for reliable recurring scans. Saved reports remain available if Google temporarily limits new requests.</p></Banner>}
       {response?.error && <Banner tone="critical"><p>{response.error}</p></Banner>}
       {saved?.status === "failed" && <Banner tone="critical" title="Performance scan failed"><p>{saved.error || "The storefront could not be scanned. Please try again."}</p></Banner>}
@@ -185,19 +187,19 @@ export default function PerformancePage() {
               <BlockStack gap="100"><Text as="h2" variant="headingLg">{target?.title || labelFor(selected)}</Text><Text as="p" variant="bodySm" tone="subdued">{target?.url || "No published page found"}</Text></BlockStack>
               {report && <Badge tone={scoreTone(overall)}>{`${overall}/100 overall`}</Badge>}
             </InlineStack>
-            {!target?.available ? <Banner tone="warning" title={`${labelFor(selected)} unavailable`}><p>Publish at least one matching resource in Shopify before scanning this page type.</p></Banner> : !report ? <Card><BlockStack gap="300" inlineAlign="center"><Text as="h3" variant="headingMd">No saved report yet</Text><Text as="p" tone="subdued">Run a read-only PageSpeed scan for this storefront URL.</Text><Button variant="primary" loading={scanning} onClick={scan}>Run scan</Button></BlockStack></Card> : <>
-              <ProgressBar progress={overall} tone={overall >= 90 ? "success" : overall >= 50 ? "highlight" : "critical"} size="small" />
-              <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
-                <ScoreCard title="SEO health" score={report.seoScore} subtitle="Lighthouse SEO" />
-                <ScoreCard title="Mobile speed" score={report.mobile.score} subtitle="Simulated mobile" />
-                <ScoreCard title="Desktop speed" score={report.desktop.score} subtitle="Simulated desktop" />
+            {!target?.available ? <Banner tone="warning" title={`${labelFor(selected)} unavailable`}><p>Publish at least one matching resource in Shopify before scanning this page type.</p></Banner> : !report || !activeDevice ? <Card><BlockStack gap="300" inlineAlign="center"><Text as="h3" variant="headingMd">No saved report yet</Text><Text as="p" tone="subdued">Run a read-only PageSpeed scan for this storefront URL.</Text><Button variant="primary" loading={scanning} onClick={scan}>Run scan</Button></BlockStack></Card> : <>
+              <div className="bp-device-tabs" role="tablist" aria-label="Report device"><button type="button" className={device === "mobile" ? "is-active" : ""} onClick={() => setDevice("mobile")}><Icon source={MobileIcon} /> Mobile</button><button type="button" className={device === "desktop" ? "is-active" : ""} onClick={() => setDevice("desktop")}><Icon source={DesktopIcon} /> Desktop</button></div>
+              <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
+                <ScoreCard title="Performance" score={activeDevice.categories.performance} icon={GaugeIcon} />
+                <ScoreCard title="Accessibility" score={activeDevice.categories.accessibility} icon={AppsIcon} />
+                <ScoreCard title="Best practices" score={activeDevice.categories.bestPractices} icon={CheckCircleIcon} />
+                <ScoreCard title="SEO" score={activeDevice.categories.seo} icon={SearchIcon} />
               </InlineGrid>
-              <Text as="p" variant="bodySm" tone="subdued">Last scanned {formatDate(scannedAt)}. Scores can vary slightly between runs because Lighthouse uses a simulated test environment.</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Captured {formatDate(activeDevice.fetchTime || scannedAt)} with Lighthouse {activeDevice.lighthouseVersion || "PageSpeed"}. Lab scores can vary between runs.</Text>
               {report.warnings.length > 0 && <Banner tone="warning" title="Scan warnings"><BlockStack gap="100">{report.warnings.map((warning) => <p key={warning}>{warning}</p>)}</BlockStack></Banner>}
-              <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
-                <DeviceDetails title="Mobile report" report={report.mobile} />
-                <DeviceDetails title="Desktop report" report={report.desktop} />
-              </InlineGrid>
+              <FieldDataCard fieldData={activeDevice.fieldData} />
+              <LabDataCard report={activeDevice} device={device} />
+              <AuditReport audits={activeDevice.opportunities} passed={activeDevice.passedAudits} />
               <InlineStack align="end"><Button url={`https://pagespeed.web.dev/analysis?url=${encodeURIComponent(report.url)}`} target="_blank">Open full PageSpeed report</Button></InlineStack>
             </>}
           </BlockStack>
@@ -208,17 +210,71 @@ export default function PerformancePage() {
 }
 
 function PageTypeButton({ target, selected, scan, onSelect }: { target: PerformanceTarget; selected: boolean; scan?: SavedScan; onSelect: () => void }) {
+  const PageIcon = ({ homepage: HomeIcon, product: ProductIcon, collection: CollectionIcon, blog: BlogIcon } as const)[target.type];
   return <button type="button" onClick={onSelect} className={`bp-performance-page-button${selected ? " is-selected" : ""}`}>
-    <BlockStack gap="100"><InlineStack align="space-between"><Text as="span" fontWeight="semibold">{labelFor(target.type)}</Text>{scan && <Badge tone={scoreTone(scan.seoScore)}>{String(scan.seoScore)}</Badge>}</InlineStack><Text as="span" variant="bodySm" tone="subdued">{target.available ? scan ? target.title : "Not scanned" : "Unavailable"}</Text></BlockStack>
+    <InlineStack gap="200" blockAlign="center" wrap={false}><span className="bp-page-type-icon"><Icon source={PageIcon} /></span><div className="bp-page-type-copy"><BlockStack gap="100"><InlineStack align="space-between"><Text as="span" fontWeight="semibold">{labelFor(target.type)}</Text>{scan?.report && <Badge tone={scoreTone(scan.seoScore)}>{String(scan.seoScore)}</Badge>}</InlineStack><Text as="span" variant="bodySm" tone="subdued">{target.available ? scan ? target.title : "Not scanned" : "Unavailable"}</Text></BlockStack></div></InlineStack>
   </button>;
 }
 
-function ScoreCard({ title, score, subtitle }: { title: string; score: number; subtitle: string }) {
-  return <Card><BlockStack gap="200" inlineAlign="center"><Text as="h3" variant="headingMd">{title}</Text><div style={{ width: 112, height: 112, borderRadius: "50%", display: "grid", placeItems: "center", background: `conic-gradient(${scoreColor(score)} ${score * 3.6}deg, var(--p-color-bg-surface-secondary) 0)`, padding: 9 }}><div style={{ width: "100%", height: "100%", borderRadius: "50%", background: "var(--p-color-bg-surface)", display: "grid", placeItems: "center" }}><Text as="span" variant="heading2xl" fontWeight="bold">{score}</Text></div></div><Text as="p" variant="bodySm" tone="subdued">{subtitle}</Text></BlockStack></Card>;
+function ScoreCard({ title, score, icon }: { title: string; score: number; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>> }) {
+  return <div className="bp-score-card"><div className="bp-score-card-heading"><Icon source={icon} /><Text as="h3" variant="bodyMd" fontWeight="semibold">{title}</Text></div><div className="bp-score-ring" style={{ background: `conic-gradient(${scoreColor(score)} ${score * 3.6}deg, var(--p-color-bg-surface-secondary) 0)` }}><div><Text as="span" variant="heading2xl" fontWeight="bold">{score}</Text></div></div><span className={`bp-score-label ${scoreClass(score)}`}>{score >= 90 ? "Good" : score >= 50 ? "Needs improvement" : "Poor"}</span></div>;
 }
 
-function DeviceDetails({ title, report }: { title: string; report: StorefrontPerformanceReport["mobile"] }) {
-  return <Card><BlockStack gap="300"><InlineStack align="space-between"><Text as="h3" variant="headingMd">{title}</Text><Badge tone={scoreTone(report.score)}>{`${report.score}/100`}</Badge></InlineStack><Divider /><InlineGrid columns={2} gap="200">{Object.entries(report.metrics).map(([label, value]) => <Box key={label} padding="200" background="bg-surface-secondary" borderRadius="200"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><Text as="p" fontWeight="semibold">{value}</Text></Box>)}</InlineGrid><Divider /><Text as="h4" variant="headingSm">Top opportunities</Text>{report.opportunities.length ? <BlockStack gap="200">{report.opportunities.slice(0, 5).map((item) => <div key={item.id}><InlineStack align="space-between" gap="200" wrap={false}><Text as="p" variant="bodySm" fontWeight="semibold">{item.title}</Text>{item.displayValue && <Badge>{item.displayValue}</Badge>}</InlineStack>{item.description && <Text as="p" variant="bodySm" tone="subdued">{item.description}</Text>}</div>)}</BlockStack> : <Text as="p" variant="bodySm" tone="success">No major Lighthouse opportunities found.</Text>}</BlockStack></Card>;
+function FieldDataCard({ fieldData }: { fieldData: StorefrontPerformanceReport["mobile"]["fieldData"] }) {
+  return <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><InlineStack gap="200" blockAlign="center"><span className="bp-section-icon is-blue"><Icon source={ChartIcon} /></span><BlockStack gap="050"><Text as="h3" variant="headingMd">Real-user experience</Text><Text as="p" variant="bodySm" tone="subdued">Chrome UX Report · latest 28-day collection period</Text></BlockStack></InlineStack>{fieldData.available && <Badge tone={fieldData.assessment === "passed" ? "success" : fieldData.assessment === "failed" ? "critical" : "info"}>{fieldData.assessment === "passed" ? "Core Web Vitals passed" : fieldData.assessment === "failed" ? "Core Web Vitals failed" : "Limited data"}</Badge>}</InlineStack>{!fieldData.available ? <Banner tone="info"><p>Chrome does not have enough real-user samples for this page or origin yet. Lighthouse lab data is still available below.</p></Banner> : <><Text as="p" variant="bodySm" tone="subdued">Showing data for {fieldData.scope === "url" ? "this URL" : "the storefront origin"}.</Text><div className="bp-field-metrics">{fieldData.metrics.map((metric) => <div className="bp-field-metric" key={metric.label}><span className={`bp-metric-dot ${metric.rating}`} /><Text as="p" fontWeight="semibold">{metric.label}</Text><Text as="p" variant="headingLg" fontWeight="bold">{metric.value}</Text><div className={`bp-metric-track ${metric.rating}`}><span /></div></div>)}</div></>}</BlockStack></Card>;
+}
+
+const ChartIcon = ChartVerticalIcon;
+
+function LabDataCard({ report, device }: { report: ReturnType<typeof normalizeDeviceReport>; device: "mobile" | "desktop" }) {
+  return <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><InlineStack gap="200" blockAlign="center"><span className="bp-section-icon is-purple"><Icon source={GaugeIcon} /></span><BlockStack gap="050"><Text as="h3" variant="headingMd">Diagnose performance issues</Text><Text as="p" variant="bodySm" tone="subdued">Emulated {device} test powered by Lighthouse</Text></BlockStack></InlineStack><Badge tone={scoreTone(report.categories.performance)}>{`${report.categories.performance}/100`}</Badge></InlineStack><div className="bp-lab-layout"><div className="bp-lab-score"><ScoreCard title="Performance" score={report.categories.performance} icon={GaugeIcon} /></div>{report.screenshot ? <div className="bp-page-screenshot"><img src={report.screenshot} alt={`Final ${device} screenshot of the tested storefront page`} /></div> : <div className="bp-page-screenshot is-empty"><Icon source={ImageIcon} /><Text as="p" tone="subdued">Screenshot unavailable</Text></div>}</div><Divider /><div className="bp-lab-metrics">{Object.entries(report.metrics).map(([label, value]) => <div className="bp-lab-metric" key={label}><span className="bp-metric-status" /><BlockStack gap="050"><Text as="p" variant="bodySm" tone="subdued">{metricName(label)}</Text><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack></div>)}</div></BlockStack></Card>;
+}
+
+function AuditReport({ audits, passed }: { audits: StorefrontPerformanceReport["mobile"]["opportunities"]; passed: StorefrontPerformanceReport["mobile"]["passedAudits"] }) {
+  const categories = ["All", ...new Set(audits.map((audit) => audit.category.split(",")[0]))];
+  const [category, setCategory] = useState("All");
+  const [showPassed, setShowPassed] = useState(false);
+  const visible = category === "All" ? audits : audits.filter((audit) => audit.category.includes(category));
+  const grouped = groupAudits(visible);
+  return <Card padding="0"><Box padding="400"><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><InlineStack gap="200" blockAlign="center"><span className="bp-section-icon is-orange"><Icon source={CodeIcon} /></span><BlockStack gap="050"><Text as="h3" variant="headingMd">Lighthouse audits</Text><Text as="p" variant="bodySm" tone="subdued">Review opportunities and diagnostics, then verify changes with a new scan.</Text></BlockStack></InlineStack><Badge tone={visible.length ? "warning" : "success"}>{`${visible.length} to review`}</Badge></InlineStack><div className="bp-audit-filters">{categories.map((item) => <button type="button" key={item} className={category === item ? "is-active" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div></BlockStack></Box><Divider />{visible.length ? Object.entries(grouped).map(([group, items]) => <div className="bp-audit-group" key={group}><Box paddingBlockStart="300" paddingInlineStart="400" paddingInlineEnd="400"><Text as="h4" variant="headingSm">{group}</Text></Box>{items.map((audit) => <AuditRow key={audit.id} audit={audit} />)}</div>) : <Box padding="500"><InlineStack gap="200" align="center"><Icon source={CheckCircleIcon} tone="success" /><Text as="p" tone="success">No audits need attention in this category.</Text></InlineStack></Box>}<Divider /><Box padding="300"><button type="button" className="bp-passed-toggle" onClick={() => setShowPassed((value) => !value)}><Icon source={CheckCircleIcon} tone="success" /> Passed audits ({passed.length}) <span>{showPassed ? "Hide" : "Show"}</span></button>{showPassed && <div className="bp-passed-grid">{passed.map((audit) => <div key={audit.id}><Icon source={CheckCircleIcon} tone="success" /><Text as="span" variant="bodySm">{audit.title}</Text></div>)}</div>}</Box></Card>;
+}
+
+function AuditRow({ audit }: { audit: StorefrontPerformanceReport["mobile"]["opportunities"][number] }) {
+  return <details className="bp-audit-row"><summary><span className="bp-audit-status"><Icon source={audit.score !== null && audit.score < 0.5 ? AlertTriangleIcon : CodeIcon} tone={audit.score !== null && audit.score < 0.5 ? "critical" : "caution"} /></span><span className="bp-audit-title">{audit.title}</span>{audit.displayValue && <span className="bp-audit-value">{audit.displayValue}</span>}<span className="bp-audit-chevron">⌄</span></summary><div className="bp-audit-content"><Text as="p" variant="bodySm" tone="subdued">{audit.description || "Review this Lighthouse finding on the tested storefront page."}</Text>{audit.details.length > 0 && <ul>{audit.details.map((detail, index) => <li key={`${audit.id}-${index}`}>{detail}</li>)}</ul>}<Badge>{audit.category}</Badge></div></details>;
+}
+
+function groupAudits(audits: StorefrontPerformanceReport["mobile"]["opportunities"]) {
+  return audits.reduce<Record<string, typeof audits>>((groups, audit) => {
+    const group = audit.group || "Other audits";
+    (groups[group] ||= []).push(audit);
+    return groups;
+  }, {});
+}
+
+function normalizeDeviceReport(report: StorefrontPerformanceReport["mobile"], fallbackSeo: number) {
+  return {
+    ...report,
+    categories: report.categories || { performance: report.score || 0, accessibility: 0, bestPractices: 0, seo: fallbackSeo || 0 },
+    opportunities: (report.opportunities || []).map(normalizeAudit),
+    passedAudits: (report.passedAudits || []).map(normalizeAudit),
+    fieldData: report.fieldData || { available: false, scope: "none" as const, assessment: "unknown" as const, metrics: [] },
+    screenshot: report.screenshot || "",
+    lighthouseVersion: report.lighthouseVersion || "",
+    fetchTime: report.fetchTime || "",
+  };
+}
+
+function normalizeAudit(audit: StorefrontPerformanceReport["mobile"]["opportunities"][number]) {
+  return {
+    ...audit,
+    category: audit.category || "Performance",
+    group: audit.group || "Opportunities",
+    details: audit.details || [],
+  };
+}
+
+function metricName(label: string) {
+  return ({ FCP: "First Contentful Paint", LCP: "Largest Contentful Paint", TBT: "Total Blocking Time", CLS: "Cumulative Layout Shift", "Speed Index": "Speed Index" } as Record<string, string>)[label] || label;
 }
 
 function labelFor(type: PerformancePageType) {
@@ -231,6 +287,10 @@ function scoreTone(score: number): "success" | "warning" | "critical" {
 
 function scoreColor(score: number) {
   return score >= 90 ? "#00a86b" : score >= 50 ? "#f5a623" : "#d82c0d";
+}
+
+function scoreClass(score: number) {
+  return score >= 90 ? "good" : score >= 50 ? "needs-improvement" : "poor";
 }
 
 function formatDate(value?: string) {
