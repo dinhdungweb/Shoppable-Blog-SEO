@@ -103,7 +103,47 @@ async function queryShopify(admin: any, query: string, variables: Record<string,
   }
 }
 
-const PRODUCT_QUERY = `#graphql query CatalogSeoProduct($id: ID!) { product(id: $id) { id title handle descriptionHtml updatedAt status seo { title description } featuredMedia { preview { image { url altText width height } } } } }`;
-const COLLECTION_QUERY = `#graphql query CatalogSeoCollection($id: ID!) { collection(id: $id) { id title handle descriptionHtml updatedAt seo { title description } image { url altText width height } products(first: 1) { nodes { id } } } }`;
-const PRODUCT_UPDATE = `#graphql mutation UpdateCatalogProduct($product: ProductUpdateInput!) { productUpdate(product: $product) { product { id title handle descriptionHtml updatedAt status seo { title description } featuredMedia { preview { image { url altText width height } } } } userErrors { field message } } }`;
-const COLLECTION_UPDATE = `#graphql mutation UpdateCatalogCollection($collection: CollectionUpdateInput!) { collectionUpdate(collection: $collection) { collection { id title handle descriptionHtml updatedAt seo { title description } image { url altText width height } products(first: 1) { nodes { id } } } userErrors { field message } } }`;
+const PRODUCT_QUERY = `#graphql
+  query CatalogSeoProduct($id: ID!) {
+    product(id: $id) {
+      id title handle descriptionHtml updatedAt status
+      seo { title description }
+      featuredMedia { preview { image { url altText width height } } }
+    }
+  }
+`;
+const COLLECTION_QUERY = `#graphql
+  query CatalogSeoCollection($id: ID!) {
+    collection(id: $id) {
+      id title handle descriptionHtml updatedAt
+      seo { title description }
+      image { url altText width height }
+      products(first: 1) { nodes { id } }
+    }
+  }
+`;
+const PRODUCT_UPDATE = `#graphql
+  mutation UpdateCatalogProduct($product: ProductUpdateInput!) {
+    productUpdate(product: $product) {
+      product {
+        id title handle descriptionHtml updatedAt status
+        seo { title description }
+        featuredMedia { preview { image { url altText width height } } }
+      }
+      userErrors { field message }
+    }
+  }
+`;
+const COLLECTION_UPDATE = `#graphql
+  mutation UpdateCatalogCollection($collection: CollectionUpdateInput!) {
+    collectionUpdate(collection: $collection) {
+      collection {
+        id title handle descriptionHtml updatedAt
+        seo { title description }
+        image { url altText width height }
+        products(first: 1) { nodes { id } }
+      }
+      userErrors { field message }
+    }
+  }
+`;
