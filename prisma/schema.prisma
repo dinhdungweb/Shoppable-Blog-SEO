@@ -184,6 +184,7 @@ model ResourceSEO {
   seoScore        Int       @default(0)
   metaTitle       String    @default("")
   metaDescription String    @default("")
+  focusKeyword    String    @default("")
   imageUrl        String    @default("")
   imageAlt        String    @default("")
   issues          String?

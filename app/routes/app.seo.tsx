@@ -440,7 +440,7 @@ async function runSeoScan({
         auditVersion: true,
       },
     }),
-    prisma.resourceSEO.findMany({ where: { shop }, select: { resourceId: true, resourceType: true, contentHash: true, sourceUpdatedAt: true } }),
+    prisma.resourceSEO.findMany({ where: { shop }, select: { resourceId: true, resourceType: true, contentHash: true, sourceUpdatedAt: true, focusKeyword: true } }),
     fetchShopDomains(admin, shop),
   ]);
   await report({ phase: "Analyzing SEO", progress: 30, totalPosts: articles.length });
@@ -577,10 +577,13 @@ async function runSeoScan({
   }
 
   await report({ phase: "Analyzing product and collection SEO", progress: 96, totalPosts: articles.length + catalogResources.length, processedPosts: articles.length, analyzedPosts: analyzedCount });
-  const catalogAudits = catalogResources.map(auditCatalogResource);
+  const storedResourceMap = new Map(resourceSeoRows.map((row) => [`${row.resourceType}:${row.resourceId}`, row]));
+  const catalogAudits = catalogResources.map((resource) => auditCatalogResource({
+    ...resource,
+    focusKeyword: storedResourceMap.get(`${resource.type}:${resource.id}`)?.focusKeyword || "",
+  }));
   applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "product"));
   applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "collection"));
-  const storedResourceMap = new Map(resourceSeoRows.map((row) => [`${row.resourceType}:${row.resourceId}`, row]));
   analyzedCount += catalogAudits.filter((audit) => {
     const stored = storedResourceMap.get(`${audit.type}:${audit.id}`);
     return !stored || stored.contentHash !== audit.contentHash || !datesEqual(stored.sourceUpdatedAt, audit.updatedAt ? new Date(audit.updatedAt) : null);

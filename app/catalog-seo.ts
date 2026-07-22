@@ -15,6 +15,8 @@ export type CatalogResourceInput = {
   imageWidth: number;
   imageHeight: number;
   itemCount: number;
+  focusKeyword?: string;
+  mediaId?: string;
 };
 
 export type CatalogSeoIssue = {
@@ -41,6 +43,7 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
   const seoTitle = resource.seoTitle.trim() || resource.title.trim();
   // Shopify uses the resource description as the search-description fallback when no custom SEO value is saved.
   const seoDescription = resource.seoDescription.trim() || text.slice(0, 160).trim();
+  const focusKeyword = (resource.focusKeyword || "").trim().toLowerCase();
   let score = 100;
   const add = (penalty: number, issue: CatalogSeoIssue) => { score -= penalty; issues.push(issue); };
 
@@ -69,6 +72,17 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
 
   if (resource.type === "collection" && resource.itemCount === 0) {
     add(12, issue("empty_collection", "Collection has no products", "High", "Medium", "Add relevant products or remove the empty collection from storefront navigation."));
+  }
+
+  if (!focusKeyword) {
+    add(8, issue("missing_focus_keyword", "Focus keyword is not configured", "Medium", "Low", "Add a primary search phrase to evaluate this page against its intended topic."));
+  } else {
+    const titleText = seoTitle.toLowerCase();
+    const descriptionText = seoDescription.toLowerCase();
+    const bodyText = text.toLowerCase();
+    if (!titleText.includes(focusKeyword)) add(5, issue("keyword_missing_title", "Focus keyword is missing from the SEO title", "Medium", "Low", "Use the focus keyword naturally in the SEO title."));
+    if (!descriptionText.includes(focusKeyword)) add(3, issue("keyword_missing_description", "Focus keyword is missing from the meta description", "Low", "Low", "Use the focus keyword naturally in the meta description."));
+    if (!bodyText.includes(focusKeyword)) add(5, issue("keyword_missing_content", "Focus keyword is missing from the description", "Medium", "Medium", `Explain the ${resource.type} using the focus keyword naturally.`));
   }
 
   return {
@@ -111,6 +125,7 @@ export function getCatalogContentHash(resource: CatalogResourceInput) {
     status: resource.status, seoTitle: resource.seoTitle, seoDescription: resource.seoDescription,
     imageUrl: resource.imageUrl, imageAlt: resource.imageAlt, imageWidth: resource.imageWidth,
     imageHeight: resource.imageHeight, itemCount: resource.itemCount,
+    focusKeyword: resource.focusKeyword || "",
   });
   // A fast deterministic fingerprint is sufficient here; this value only detects changed content.
   let hash = 2166136261;

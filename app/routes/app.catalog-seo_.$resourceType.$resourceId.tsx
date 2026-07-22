@@ -2,18 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, isRouteErrorResponse, useActionData, useLoaderData, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
-import { Badge, Banner, BlockStack, Button, Card, Divider, Icon, InlineGrid, InlineStack, Layout, Modal, Page, Select, Text, TextField } from "@shopify/polaris";
-import { AlertTriangleIcon, CheckCircleIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
+import { Badge, Banner, BlockStack, Button, Card, Divider, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField } from "@shopify/polaris";
+import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { auditCatalogResource, type CatalogResourceInput, type CatalogResourceType, type CatalogSeoIssue } from "../catalog-seo";
+import { suggestInternalLinksForDraft, insertApprovedLink, type LinkSuggestion } from "../internal-linking";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const type = resourceType(params.resourceType);
   const gid = shopifyGid(type, params.resourceId);
   const payload = await queryShopify(admin, type === "product" ? PRODUCT_QUERY : COLLECTION_QUERY, { id: gid });
@@ -21,10 +22,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (!node) throw new Response("Resource not found", { status: 404 });
   const resource = normalizeResource(node, type);
   const saved = await prisma.resourceSEO.findUnique({ where: { shop_resourceType_resourceId: { shop: session.shop, resourceType: type, resourceId: gid } } });
+  resource.focusKeyword = saved?.focusKeyword || "";
+  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  const linkTargets = limits.canInternalLinking ? await prisma.articleSEO.findMany({ where: { shop: session.shop }, select: { articleId: true, articleTitle: true, articleHandle: true, blogHandle: true }, orderBy: { sourceUpdatedAt: "desc" }, take: 250 }) : [];
   const details = type === "product"
     ? { status: String(node.status || ""), vendor: String(node.vendor || ""), productType: String(node.productType || ""), tags: Array.isArray(node.tags) ? node.tags : [], collectionKind: "", itemCount: 0 }
     : { status: "", vendor: "", productType: "", tags: [], collectionKind: node.ruleSet ? "Automated" : "Manual", itemCount: Number(node.productsCount?.count || 0) };
-  return json({ resource, details, audit: auditCatalogResource(resource), savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}` });
+  return json({ resource, details, audit: auditCatalogResource(resource), savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}`, canInternalLinking: limits.canInternalLinking, planKey, linkTargets });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -41,22 +45,32 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const vendor = field(form, "vendor", 255);
   const productType = field(form, "productType", 255);
   const tags = field(form, "tags", 5_000).split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 250);
+  const focusKeyword = field(form, "focusKeyword", 500);
+  const imageAlt = field(form, "imageAlt", 500);
   if (!title) return json({ error: "Title is required." }, { status: 400 });
   const variableKey = type === "product" ? "product" : "collection";
-  const input = { id: gid, title, handle, descriptionHtml, seo: { title: seoTitle || null, description: seoDescription || null }, ...(type === "product" ? { status, vendor, productType, tags } : {}) };
+  const input = { id: gid, title, handle, descriptionHtml, seo: { title: seoTitle || null, description: seoDescription || null }, ...(type === "product" ? { status, vendor, productType, tags } : { ...(imageAlt !== field(form, "originalImageAlt", 500) ? { image: { src: field(form, "imageUrl", 2_000), altText: imageAlt } } : {}) }) };
   const response = await admin.graphql(type === "product" ? PRODUCT_UPDATE : COLLECTION_UPDATE, { variables: { [variableKey]: input } });
   const payload: any = await response.json();
   const result = type === "product" ? payload.data?.productUpdate : payload.data?.collectionUpdate;
   const errors = [...(payload.errors || []), ...(result?.userErrors || [])].map((item: any) => item.message).filter(Boolean);
   if (errors.length) return json({ error: errors.join("; ") }, { status: 400 });
+  if (type === "product" && imageAlt !== field(form, "originalImageAlt", 500) && field(form, "mediaId", 500)) {
+    const mediaResponse = await admin.graphql(FILE_UPDATE, { variables: { files: [{ id: field(form, "mediaId", 500), alt: imageAlt }] } });
+    const mediaPayload: any = await mediaResponse.json();
+    const mediaErrors = [...(mediaPayload.errors || []), ...(mediaPayload.data?.fileUpdate?.userErrors || [])].map((item: any) => item.message).filter(Boolean);
+    if (mediaErrors.length) return json({ error: mediaErrors.join("; ") }, { status: 400 });
+  }
   const updated = normalizeResource(type === "product" ? result?.product : result?.collection, type);
+  updated.imageAlt = imageAlt;
+  updated.focusKeyword = focusKeyword;
   const audit = auditCatalogResource(updated);
   await prisma.resourceSEO.upsert({ where: { shop_resourceType_resourceId: { shop: session.shop, resourceType: type, resourceId: gid } }, create: seoRecord(session.shop, audit), update: seoRecord(session.shop, audit) });
   return redirect(`/app/catalog-seo/${type}/${params.resourceId}?saved=1`);
 }
 
 export default function CatalogResourceEditor() {
-  const { resource, details, savedAt, adminUrl } = useLoaderData<typeof loader>();
+  const { resource, details, savedAt, adminUrl, canInternalLinking, planKey, linkTargets } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [searchParams] = useSearchParams();
@@ -69,18 +83,25 @@ export default function CatalogResourceEditor() {
   const [vendor, setVendor] = useState(details.vendor);
   const [productType, setProductType] = useState(details.productType);
   const [tags, setTags] = useState(details.tags.join(", "));
-  const currentAudit = useMemo(() => auditCatalogResource({ ...resource, title, descriptionHtml, seoTitle, seoDescription, handle }), [resource, title, descriptionHtml, seoTitle, seoDescription, handle]);
+  const [focusKeyword, setFocusKeyword] = useState(resource.focusKeyword || "");
+  const [keywordInput, setKeywordInput] = useState("");
+  const [imageAlt, setImageAlt] = useState(resource.imageAlt);
+  const [pendingLink, setPendingLink] = useState<LinkSuggestion | null>(null);
+  const [linkAnchor, setLinkAnchor] = useState("");
+  const currentAudit = useMemo(() => auditCatalogResource({ ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword }), [resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword]);
   const typeLabel = resource.type === "product" ? "Product" : "Collection";
-  const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== resource.seoTitle || seoDescription !== resource.seoDescription || handle !== resource.handle || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
+  const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== resource.seoTitle || seoDescription !== resource.seoDescription || handle !== resource.handle || imageAlt !== resource.imageAlt || focusKeyword !== (resource.focusKeyword || "") || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
   const wordCount = stripHtml(descriptionHtml).split(/\s+/).filter(Boolean).length;
   const displaySeoTitle = seoTitle.trim() || title.trim() || `Untitled ${typeLabel.toLowerCase()}`;
   const displaySeoDescription = seoDescription.trim() || stripHtml(descriptionHtml).slice(0, 165) || `Add a description for this ${typeLabel.toLowerCase()}.`;
-  const reset = () => { setTitle(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(resource.seoTitle); setSeoDescription(resource.seoDescription); setHandle(resource.handle); setStatus(details.status || "ACTIVE"); setVendor(details.vendor); setProductType(details.productType); setTags(details.tags.join(", ")); };
-  const groups = checklistGroups(currentAudit.issues, resource);
+  const reset = () => { setTitle(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(resource.seoTitle); setSeoDescription(resource.seoDescription); setHandle(resource.handle); setStatus(details.status || "ACTIVE"); setVendor(details.vendor); setProductType(details.productType); setTags(details.tags.join(", ")); setImageAlt(resource.imageAlt); setFocusKeyword(resource.focusKeyword || ""); };
+  const groups = checklistGroups(currentAudit.issues, { ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword });
+  const linkSuggestions = useMemo(() => canInternalLinking ? suggestInternalLinksForDraft({ id: resource.id, title, handle, blogHandle: resource.type === "product" ? "products" : "collections", body: descriptionHtml }, linkTargets.map((item) => ({ id: item.articleId, title: item.articleTitle, handle: item.articleHandle, blogHandle: item.blogHandle, body: "" })), 8) : [], [canInternalLinking, descriptionHtml, handle, linkTargets, resource.id, resource.type, title]);
   return <Page fullWidth backAction={{ content: `${typeLabel} SEO`, url: `/app/catalog-seo?type=${resource.type}` }}>
     <TitleBar title={`Edit ${typeLabel.toLowerCase()}`}><button variant="primary" type="submit" form="catalog-resource-form" disabled={!dirty}>Save changes</button></TitleBar>
-    <Form method="post" id="catalog-resource-form"><BlockStack gap="500">
+    <div className="bp-catalog-editor-shell"><Form method="post" id="catalog-resource-form"><BlockStack gap="500">
       <input type="hidden" name="descriptionHtml" value={descriptionHtml} />
+      <input type="hidden" name="focusKeyword" value={focusKeyword} /><input type="hidden" name="originalImageAlt" value={resource.imageAlt} /><input type="hidden" name="imageUrl" value={resource.imageUrl} /><input type="hidden" name="mediaId" value={(resource as any).mediaId || ""} />
       <InlineStack align="space-between" blockAlign="center" gap="300"><BlockStack gap="100"><InlineStack gap="200" blockAlign="center"><Text as="h1" variant="headingXl" fontWeight="bold">{title || resource.title}</Text><Badge tone={resource.type === "product" && details.status === "ACTIVE" ? "success" : "info"}>{resource.type === "product" ? details.status || typeLabel : typeLabel}</Badge></InlineStack><Text as="p" tone="subdued">Improve storefront content, search appearance and image signals without leaving the app.</Text></BlockStack><InlineStack gap="200"><Button url={adminUrl} target="_blank">Open in Shopify</Button><Button variant="primary" submit loading={navigation.state === "submitting"} disabled={!dirty}>Save changes</Button></InlineStack></InlineStack>
       {actionData?.error && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
       {searchParams.get("saved") === "1" && <Banner tone="success" title={`${typeLabel} updated`}><p>The Shopify content and saved SEO report are now up to date.</p></Banner>}
@@ -90,22 +111,41 @@ export default function CatalogResourceEditor() {
         <EditorMetric label="Description" value={`${wordCount} words`} icon={SearchIcon} tone={wordCount >= (resource.type === "product" ? 40 : 30) ? "success" : "warning"} />
         <EditorMetric label={resource.type === "product" ? "Resource" : "Products"} value={resource.type === "product" ? "Product" : String(details.itemCount)} icon={resource.type === "product" ? ProductIcon : CollectionIcon} tone="info" />
       </InlineGrid>
-      <Layout><Layout.Section><BlockStack gap="400">
+      <div className="bp-catalog-editor-main"><main className="bp-catalog-editor-content"><BlockStack gap="400">
         <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">{typeLabel} content</Text><Text as="p" variant="bodySm" tone="subdued">Write useful storefront copy for shoppers, not search engines alone.</Text></BlockStack><Badge>{`${wordCount} words`}</Badge></InlineStack><TextField name="title" label="Title" value={title} onChange={setTitle} autoComplete="off" maxLength={255} showCharacterCount /><BlockStack gap="200"><Text as="h3" fontWeight="semibold">Description</Text><RichTextEditor value={descriptionHtml} onChange={setDescriptionHtml} /></BlockStack></BlockStack></Card>
         <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">Search engine listing</Text><Text as="p" tone="subdued">Preview and edit the title, description and Shopify URL.</Text></BlockStack><Icon source={SearchIcon} tone="info" /></InlineStack><div className="bp-search-preview"><div className="bp-search-preview__site">Your store · {resource.type}</div><div className="bp-search-preview__title">{displaySeoTitle}</div><div className="bp-search-preview__url">/{resource.type === "product" ? "products" : "collections"}/{handle}</div><div className="bp-search-preview__description">{displaySeoDescription}</div></div><TextField name="seoTitle" label="Page title" value={seoTitle} onChange={setSeoTitle} autoComplete="off" maxLength={70} showCharacterCount helpText="Leave blank to let Shopify use the resource title." /><TextField name="seoDescription" label="Meta description" value={seoDescription} onChange={setSeoDescription} multiline={4} autoComplete="off" maxLength={165} showCharacterCount helpText="Leave blank to let Shopify derive a description from the content." /><TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} /></BlockStack></Card>
-        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO checklist</Text><Text as="p" variant="bodySm" tone="subdued">Checks update as you edit this draft.</Text></BlockStack><Badge tone={currentAudit.issues.length ? "warning" : "success"}>{currentAudit.issues.length ? `${currentAudit.issues.length} issues` : "All good"}</Badge></InlineStack>{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</BlockStack></Card>
-      </BlockStack></Layout.Section><Layout.Section variant="oneThird"><BlockStack gap="400">
+        <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
+        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="bodySm" tone="subdued">Every passed and failed check remains visible and updates while you edit.</Text></BlockStack><Badge tone={scoreTone(currentAudit.score)}>{`${currentAudit.score}/100`}</Badge></InlineStack>{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</BlockStack></Card>
+      </BlockStack></main><aside className="bp-catalog-editor-sidebar"><BlockStack gap="400">
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="headingXl" fontWeight="bold">{currentAudit.score}<Text as="span" variant="bodySm" tone="subdued">/100</Text></Text></InlineStack><div className="bp-catalog-score-track"><span style={{ width: `${currentAudit.score}%` }} /></div><Text as="p" variant="bodySm" tone="subdued">{savedAt ? `Last analyzed ${new Date(savedAt).toLocaleString()}` : "Calculated from current Shopify content."}</Text></BlockStack></Card>
-        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Featured image</Text><Icon source={ImageIcon} tone="info" /></InlineStack>{resource.imageUrl ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={resource.imageAlt || resource.title} /></div> : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}<Text as="p" variant="bodySm" tone={resource.imageAlt ? "subdued" : "critical"}>{resource.imageAlt || "Image alt text is missing."}</Text><Button url={adminUrl} target="_blank" fullWidth>{resource.imageAlt ? "Manage image in Shopify" : "Add alt text in Shopify"}</Button></BlockStack></Card>
+        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Image</Text><Icon source={ImageIcon} tone="info" /></InlineStack>{resource.imageUrl ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={imageAlt || resource.title} /></div> : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}<TextField name="imageAlt" label="Image alt text" value={imageAlt} onChange={setImageAlt} autoComplete="off" maxLength={500} helpText="Briefly describe the image for screen readers and image search." /><Button url={adminUrl} target="_blank" fullWidth>Change image in Shopify</Button></BlockStack></Card>
+        <InternalLinkCard allowed={canInternalLinking} planKey={planKey} suggestions={linkSuggestions} onReview={(suggestion) => { setPendingLink(suggestion); setLinkAnchor(suggestion.anchorText); }} />
         <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} settings</Text><Divider />{resource.type === "product" ? <><Select name="status" label="Status" value={status} onChange={setStatus} options={[{ label: "Active", value: "ACTIVE" }, { label: "Draft", value: "DRAFT" }, { label: "Archived", value: "ARCHIVED" }]} /><TextField name="vendor" label="Vendor" value={vendor} onChange={setVendor} autoComplete="off" /><TextField name="productType" label="Product type" value={productType} onChange={setProductType} autoComplete="off" /><TextField name="tags" label="Tags" value={tags} onChange={setTags} autoComplete="off" helpText="Separate tags with commas." /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Variants, pricing, inventory, collection rules and media remain in Shopify to prevent destructive edits.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></Card>
-      </BlockStack></Layout.Section></Layout>
+      </BlockStack></aside></div>
       {dirty && <div className="bp-editor-savebar"><InlineStack align="space-between" blockAlign="center" gap="300"><Text as="p" fontWeight="semibold">You have unsaved changes</Text><InlineStack gap="200"><Button onClick={reset}>Discard</Button><Button variant="primary" submit loading={navigation.state === "submitting"}>Save changes</Button></InlineStack></InlineStack></div>}
-    </BlockStack></Form>
+    </BlockStack></Form></div>
+    <Modal open={Boolean(pendingLink)} onClose={() => setPendingLink(null)} title="Review internal link" primaryAction={{ content: "Insert link", onAction: () => { if (!pendingLink) return; setDescriptionHtml(insertApprovedLink(descriptionHtml, linkAnchor.trim() || pendingLink.anchorText, pendingLink.targetUrl).body); setPendingLink(null); } }} secondaryActions={[{ content: "Cancel", onAction: () => setPendingLink(null) }]}><Modal.Section><BlockStack gap="300"><Text as="p">Link to <strong>{pendingLink?.targetTitle}</strong></Text><TextField label="Anchor text" value={linkAnchor} onChange={setLinkAnchor} autoComplete="off" /><Text as="p" variant="bodySm" tone="subdued">The link is inserted into the description only after you approve and save this resource.</Text></BlockStack></Modal.Section></Modal>
   </Page>;
 }
 
 function EditorMetric({ label, value, icon, tone }: { label: string; value: string; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; tone: "success" | "warning" | "critical" | "info" }) {
   return <Card><InlineStack align="space-between" blockAlign="start" wrap={false}><BlockStack gap="150"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack><Icon source={icon} tone={tone} /></InlineStack></Card>;
+}
+
+function FocusKeywordCard({ value, input, setInput, onChange, audit }: { value: string; input: string; setInput: (value: string) => void; onChange: (value: string) => void; audit: ReturnType<typeof auditCatalogResource> }) {
+  const keywords = value.split(",").map((item) => item.trim()).filter(Boolean);
+  const addKeyword = () => {
+    const next = input.trim();
+    if (next && !keywords.some((item) => item.toLowerCase() === next.toLowerCase())) onChange([...keywords, next].join(", "));
+    setInput("");
+  };
+  return <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">Focus keyword</Text><div onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addKeyword(); } }}><TextField label="Focus keyword" labelHidden value={input} onChange={setInput} autoComplete="off" placeholder="Type keyword and press Enter" connectedRight={<Button onClick={addKeyword} disabled={!input.trim()}>Add</Button>} /></div>{keywords.length > 0 ? <InlineStack gap="200">{keywords.map((keyword) => { const relatedIssues = audit.issues.filter((issue) => issue.type.startsWith("keyword_") || issue.type === "missing_focus_keyword"); return <button type="button" className="bp-keyword-chip" key={keyword} onClick={() => onChange(keywords.filter((item) => item !== keyword).join(", "))} title="Remove keyword"><Badge tone={relatedIssues.length ? "warning" : "success"}>{`${keyword} ×`}</Badge></button>; })}</InlineStack> : <Text as="p" variant="bodySm" tone="subdued">Add the primary phrase shoppers use to find this page. It will activate keyword-specific checks.</Text>}</BlockStack></Card>;
+}
+
+function InternalLinkCard({ allowed, planKey, suggestions, onReview }: { allowed: boolean; planKey: string; suggestions: LinkSuggestion[]; onReview: (suggestion: LinkSuggestion) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? suggestions : suggestions.slice(0, 3);
+  return <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><InlineStack gap="200" blockAlign="center"><Icon source={LinkIcon} tone="info" /><Text as="h2" variant="headingMd">Internal link assistant</Text></InlineStack>{allowed && <Badge tone="info">{`${suggestions.length} suggestions`}</Badge>}</InlineStack>{!allowed ? <><Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text><Button url={`/app/pricing?reason=internal_linking&plan=${planKey}`} fullWidth>Upgrade to Pro</Button></> : suggestions.length ? <><Text as="p" variant="bodySm" tone="subdued">Review relevant Shopify articles before inserting a link into this description.</Text><div className="bp-catalog-link-list">{visible.map((suggestion) => <div className="bp-catalog-link-row" key={suggestion.id}><div className="bp-catalog-link-copy"><Text as="p" variant="bodySm" fontWeight="semibold">{suggestion.targetTitle}</Text><Text as="p" variant="bodySm" tone="subdued">Anchor: {suggestion.anchorText}</Text></div><Button size="micro" onClick={() => onReview(suggestion)}>Review</Button></div>)}</div>{suggestions.length > 3 && <Button variant="plain" onClick={() => setExpanded((value) => !value)} icon={expanded ? ChevronUpIcon : ChevronDownIcon}>{expanded ? "Show fewer" : `Show ${suggestions.length - 3} more`}</Button>}</> : <Text as="p" variant="bodySm" tone="subdued">No relevant article suggestion was found for the current title and description.</Text>}</BlockStack></Card>;
 }
 
 function RichTextEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -193,6 +233,7 @@ function checklistGroups(issues: CatalogSeoIssue[], resource: CatalogResourceInp
   return [
     { label: "Search appearance", rows: [...failed(["missing_seo_title", "long_seo_title", "short_seo_title", "missing_meta_description", "short_meta_description", "long_meta_description", "missing_handle", "long_handle"]), ...(effectiveTitle.length >= 20 && effectiveTitle.length <= 70 ? [{ label: "SEO title length is suitable", passed: true }] : []), ...(effectiveDescription.length >= 70 && effectiveDescription.length <= 165 ? [{ label: "Meta description length is suitable", passed: true }] : []), ...(resource.handle.length > 0 && resource.handle.length <= 80 ? [{ label: "URL handle is concise", passed: true }] : [])] },
     { label: "Content quality", rows: [...failed(["missing_description", "thin_description"]), ...(words >= (resource.type === "product" ? 40 : 30) ? [{ label: "Description has useful depth", passed: true }] : [])] },
+    { label: "Focus keyword", rows: [...failed(["missing_focus_keyword", "keyword_missing_title", "keyword_missing_description", "keyword_missing_content"]), ...((resource.focusKeyword || "").trim() && !issues.some((issue) => issue.type === "missing_focus_keyword" || issue.type.startsWith("keyword_")) ? [{ label: "Focus keyword is used across the important page elements", passed: true }] : [])] },
     { label: "Image SEO", rows: [...failed(["missing_featured_image", "missing_image_alt", "small_image"]), ...(resource.imageUrl ? [{ label: "Featured image is available", passed: true }] : []), ...(resource.imageAlt ? [{ label: "Featured image has alt text", passed: true }] : [])] },
     ...(resource.type === "collection" ? [{ label: "Merchandising", rows: [...failed(["empty_collection"]), ...(resource.itemCount > 0 ? [{ label: "Collection contains products", passed: true }] : [])] }] : []),
   ].map((group) => ({ ...group, rows: dedupeRows(group.rows as ChecklistRow[]) }));
@@ -229,8 +270,8 @@ function videoEmbed(value: string) {
 function shopifyGid(type: CatalogResourceType, id?: string) { if (!id || !/^\d+$/.test(id)) throw new Response("Not found", { status: 404 }); return `gid://shopify/${type === "product" ? "Product" : "Collection"}/${id}`; }
 function field(form: FormData, key: string, max: number) { return String(form.get(key) || "").trim().slice(0, max); }
 function scoreTone(score: number): "success" | "warning" | "critical" { return score >= 80 ? "success" : score >= 60 ? "warning" : "critical"; }
-function normalizeResource(node: any, type: CatalogResourceType): CatalogResourceInput { const image = type === "product" ? node.featuredMedia?.preview?.image || {} : node.image || {}; return { id: String(node.id), type, title: String(node.title || ""), handle: String(node.handle || ""), descriptionHtml: String(node.descriptionHtml || ""), updatedAt: String(node.updatedAt || ""), status: String(node.status || ""), seoTitle: String(node.seo?.title || ""), seoDescription: String(node.seo?.description || ""), imageUrl: String(image.url || ""), imageAlt: String(image.altText || ""), imageWidth: Number(image.width || 0), imageHeight: Number(image.height || 0), itemCount: type === "collection" ? Number(node.products?.nodes?.length || 0) : 0 }; }
-function seoRecord(shop: string, audit: ReturnType<typeof auditCatalogResource>) { return { shop, resourceType: audit.type, resourceId: audit.id, title: audit.title, handle: audit.handle, status: audit.status, seoScore: audit.score, metaTitle: audit.seoTitle, metaDescription: audit.seoDescription, imageUrl: audit.imageUrl, imageAlt: audit.imageAlt, issues: JSON.stringify(audit.issues), issueCount: audit.issues.length, contentHash: audit.contentHash, sourceUpdatedAt: new Date(), lastAnalyzedAt: new Date() }; }
+function normalizeResource(node: any, type: CatalogResourceType): CatalogResourceInput { const image = type === "product" ? node.featuredMedia?.preview?.image || {} : node.image || {}; return { id: String(node.id), type, title: String(node.title || ""), handle: String(node.handle || ""), descriptionHtml: String(node.descriptionHtml || ""), updatedAt: String(node.updatedAt || ""), status: String(node.status || ""), seoTitle: String(node.seo?.title || ""), seoDescription: String(node.seo?.description || ""), imageUrl: String(image.url || ""), imageAlt: String(image.altText || ""), imageWidth: Number(image.width || 0), imageHeight: Number(image.height || 0), itemCount: type === "collection" ? Number(node.products?.nodes?.length || 0) : 0, mediaId: type === "product" ? String(node.featuredMedia?.id || "") : "" }; }
+function seoRecord(shop: string, audit: ReturnType<typeof auditCatalogResource>) { return { shop, resourceType: audit.type, resourceId: audit.id, title: audit.title, handle: audit.handle, status: audit.status, seoScore: audit.score, metaTitle: audit.seoTitle, metaDescription: audit.seoDescription, focusKeyword: audit.focusKeyword || "", imageUrl: audit.imageUrl, imageAlt: audit.imageAlt, issues: JSON.stringify(audit.issues), issueCount: audit.issues.length, contentHash: audit.contentHash, sourceUpdatedAt: new Date(), lastAnalyzedAt: new Date() }; }
 
 async function queryShopify(admin: any, query: string, variables: Record<string, unknown>) {
   try {
@@ -251,7 +292,7 @@ const PRODUCT_QUERY = `#graphql
     product(id: $id) {
       id title handle descriptionHtml updatedAt status vendor productType tags
       seo { title description }
-      featuredMedia { preview { image { url altText width height } } }
+      featuredMedia { id preview { image { url altText width height } } }
     }
   }
 `;
@@ -265,6 +306,11 @@ const COLLECTION_QUERY = `#graphql
       productsCount { count }
       ruleSet { appliedDisjunctively }
     }
+  }
+`;
+const FILE_UPDATE = `#graphql
+  mutation CatalogSeoFileUpdate($files: [FileUpdateInput!]!) {
+    fileUpdate(files: $files) { files { id alt } userErrors { field message } }
   }
 `;
 const PRODUCT_UPDATE = `#graphql

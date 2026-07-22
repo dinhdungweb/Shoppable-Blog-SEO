@@ -1,0 +1,1 @@
+ALTER TABLE "ResourceSEO" ADD COLUMN "focusKeyword" TEXT NOT NULL DEFAULT '';
