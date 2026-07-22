@@ -6,6 +6,7 @@ import { Banner, BlockStack, Button, Card, IndexTable, InlineStack, Layout, Moda
 import { useEffect, useMemo, useState } from "react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
+import { generateAiSeoSuggestion, isNineRouterConfigured } from "../ai-seo.server";
 
 type ArticleData = { id: string; title: string; metaTitle: string; metaDescription: string; imageUrl: string; imageAlt: string; suggestedMetaTitle: string; suggestedMetaDescription: string; suggestedImageAlt: string };
 type UpdateItem = { id: string; metaTitle: string; metaDescription: string; imageAlt: string };
@@ -32,7 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       suggestedMetaTitle: suggestTitle(node.title), suggestedMetaDescription: suggestDescription(node.summary, node.body, node.title), suggestedImageAlt: suggestImageAlt(node.title) };
   });
   const history = await prisma.seoBulkChange.findMany({ where: { shop: session.shop }, orderBy: { appliedAt: "desc" }, take: 10 });
-  return json({ articles, history: history.map((row) => ({ ...row, appliedAt: row.appliedAt.toISOString(), undoneAt: row.undoneAt?.toISOString() || null })) });
+  return json({ articles, aiEnabled: isNineRouterConfigured(), history: history.map((row) => ({ ...row, appliedAt: row.appliedAt.toISOString(), undoneAt: row.undoneAt?.toISOString() || null })) });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -41,6 +42,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!limits.canBulkReview) return json({ error: "Bulk Review is a Growth plan feature.", planKey }, { status: 403 });
   const form = await request.formData();
   const intent = String(form.get("intent") || "apply");
+  if (intent === "generate-ai") {
+    if (!isNineRouterConfigured()) return json({ error: "9Router is not configured on the server." }, { status: 503 });
+    const ids = parseIds(String(form.get("ids") || ""));
+    if (!ids.length) return json({ error: "No valid articles were selected." }, { status: 400 });
+    const response = await admin.graphql(`#graphql
+      query AiSeoArticles($ids: [ID!]!) { nodes(ids: $ids) { ... on Article { id title summary body image { url } } } }
+    `, { variables: { ids } });
+    const result: any = await response.json();
+    if (result.errors?.length) return json({ error: result.errors[0].message }, { status: 502 });
+    const nodes = (result.data?.nodes || []).filter(Boolean);
+    const suggestions: Awaited<ReturnType<typeof generateAiSeoSuggestion>>[] = [];
+    const failures: string[] = [];
+    for (let index = 0; index < nodes.length; index += 3) {
+      const batch = nodes.slice(index, index + 3);
+      const settled = await Promise.allSettled(batch.map((node: any) => generateAiSeoSuggestion({
+        id: node.id,
+        title: clean(node.title),
+        summary: clean(node.summary),
+        body: typeof node.body === "string" ? node.body : "",
+        hasImage: Boolean(node.image?.url),
+      })));
+      settled.forEach((item, itemIndex) => {
+        if (item.status === "fulfilled") suggestions.push(item.value);
+        else failures.push(`${clean(batch[itemIndex]?.title) || "Article"}: ${item.reason instanceof Error ? item.reason.message : "AI generation failed"}`);
+      });
+    }
+    if (!suggestions.length) return json({ error: failures[0] || "9Router could not generate suggestions." }, { status: 502 });
+    return json({ success: true, suggestions, warning: failures.length ? `${failures.length} article(s) kept their existing suggestions because 9Router failed.` : "" });
+  }
   if (intent === "undo") {
     const change = await prisma.seoBulkChange.findFirst({ where: { id: String(form.get("changeId") || ""), shop: session.shop, status: "applied" } });
     if (!change) return json({ error: "This change is unavailable or already undone." }, { status: 404 });
@@ -88,20 +118,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function BulkSeoEdit() {
-  const { articles, history } = useLoaderData<typeof loader>();
+  const { articles, aiEnabled, history } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const fetcher = useFetcher<typeof action>();
+  const aiFetcher = useFetcher<typeof action>();
   const [items, setItems] = useState(articles.map((article) => ({ ...article, metaTitle: article.metaTitle || article.suggestedMetaTitle, metaDescription: article.metaDescription || article.suggestedMetaDescription, imageAlt: article.imageAlt || (article.imageUrl ? article.suggestedImageAlt : "") })));
   const [preview, setPreview] = useState(false);
   const changed = useMemo(() => items.filter((item, i) => item.metaTitle !== articles[i]?.metaTitle || item.metaDescription !== articles[i]?.metaDescription || item.imageAlt !== articles[i]?.imageAlt), [articles, items]);
   useEffect(() => { if (fetcher.data && "success" in fetcher.data && fetcher.data.success) { setPreview(false); } }, [fetcher.data]);
+  useEffect(() => {
+    if (!aiFetcher.data || !("suggestions" in aiFetcher.data) || !Array.isArray(aiFetcher.data.suggestions)) return;
+    const suggestions = new Map(aiFetcher.data.suggestions.map((item) => [item.id, item]));
+    setItems((rows) => rows.map((row) => {
+      const suggestion = suggestions.get(row.id);
+      return suggestion ? { ...row, ...suggestion } : row;
+    }));
+  }, [aiFetcher.data]);
   const update = (id: string, field: "metaTitle" | "metaDescription" | "imageAlt", value: string) => setItems((rows) => rows.map((row) => row.id === id ? { ...row, [field]: value } : row));
   const apply = () => fetcher.submit({ intent: "apply", payload: JSON.stringify(changed.map(({ id, metaTitle, metaDescription, imageAlt }) => ({ id, metaTitle, metaDescription, imageAlt }))) }, { method: "post" });
   const error = fetcher.data && "error" in fetcher.data ? fetcher.data.error : "";
+  const aiError = aiFetcher.data && "error" in aiFetcher.data ? aiFetcher.data.error : "";
+  const aiWarning = aiFetcher.data && "warning" in aiFetcher.data ? aiFetcher.data.warning : "";
   return <Page backAction={{ content: "Blogs", onAction: () => navigate("/app/blogs") }} title="Bulk SEO Fix" subtitle={`${items.length} selected articles`} primaryAction={{ content: `Preview ${changed.length} changes`, onAction: () => setPreview(true), disabled: !changed.length }}>
     <Layout><Layout.Section><BlockStack gap="400">
       {error && <Banner tone="critical"><p>{error}</p></Banner>}
+      {aiError && <Banner tone="critical" title="AI suggestions unavailable"><p>{aiError}</p></Banner>}
+      {aiWarning && <Banner tone="warning"><p>{aiWarning}</p></Banner>}
       <Banner tone="info" title="Review before publishing"><p>Suggestions are created from existing article content. Nothing is written to Shopify until you confirm the preview.</p></Banner>
+      <InlineStack align="end"><Button disabled={!aiEnabled} loading={aiFetcher.state !== "idle"} onClick={() => aiFetcher.submit({ intent: "generate-ai", ids: articles.map((article) => article.id).join(",") }, { method: "post" })}>{aiEnabled ? "Generate with AI" : "AI not configured"}</Button></InlineStack>
       <Card padding="0"><IndexTable resourceName={{ singular: "article", plural: "articles" }} itemCount={items.length} selectable={false} headings={[{ title: "Article" }, { title: "SEO title" }, { title: "Meta description" }, { title: "Featured image alt" }]}>
         {items.map((item, index) => <IndexTable.Row id={item.id} key={item.id} position={index}>
           <IndexTable.Cell><div style={{ width: 220 }}><Text as="span" fontWeight="semibold">{item.title}</Text></div></IndexTable.Cell>

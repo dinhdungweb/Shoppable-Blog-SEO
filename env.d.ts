@@ -14,5 +14,9 @@ declare namespace NodeJS {
     RAW_EVENT_RETENTION_DAYS?: string;
     SEO_WORKER_SECRET?: string;
     SEO_WORKER_URL?: string;
+    NINE_ROUTER_BASE_URL?: string;
+    NINE_ROUTER_API_KEY?: string;
+    NINE_ROUTER_MODEL?: string;
+    NINE_ROUTER_TIMEOUT_MS?: string;
   }
 }
