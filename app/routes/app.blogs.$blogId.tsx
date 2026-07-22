@@ -88,6 +88,15 @@ import {
   type AiSeoFixSuggestion,
 } from "../ai-seo-fix.server";
 import {
+  generateContentRefresh,
+  type ContentRefreshField,
+  type ContentRefreshQuery,
+  type ContentRefreshSignal,
+  type ContentRefreshSuggestion,
+} from "../ai-content-refresh.server";
+import { buildContentRefreshQueries } from "../content-refresh-context";
+import type { ContentDecayReport, DecayIssue } from "../content-decay";
+import {
   generateAiProductRecommendations,
   rankCatalogProductsForArticle,
   type AiCatalogProduct,
@@ -103,6 +112,25 @@ type SeoFixSnapshot = {
   metaTitleTouched: boolean;
   metaDescription: string;
   featuredImageAlt: string;
+  isDirty: boolean;
+};
+
+type ContentRefreshContext = {
+  canUse: boolean;
+  aiEnabled: boolean;
+  signals: ContentRefreshSignal[];
+  queries: ContentRefreshQuery[];
+  analyzedAt: string | null;
+  searchSyncedAt: string | null;
+};
+
+type ContentRefreshSnapshot = {
+  title: string;
+  body: string;
+  excerpt: string;
+  metaTitle: string;
+  metaTitleTouched: boolean;
+  metaDescription: string;
   isDirty: boolean;
 };
 
@@ -249,6 +277,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const tocAuditOptions = await getSeoTocAuditOptions(shop, limits.canContentNavigation);
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
+  const contentRefreshRequested = new URL(request.url).searchParams.get("refresh") === "1";
   const [blogs, internalLinkCandidates] = await Promise.all([
     fetchShopifyEditorBlogs(admin),
     limits.canInternalLinking ? prisma.articleSEO.findMany({
@@ -308,6 +337,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       canInternalLinking: limits.canInternalLinking,
       planKey,
       aiEnabled: isNineRouterConfigured(),
+      contentRefresh: emptyContentRefreshContext(limits.canContentDecay),
+      contentRefreshRequested: false,
     });
   }
 
@@ -359,7 +390,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw new Response("Article not found", { status: 404 });
   }
 
-  const [linkedProducts, seoData, eventGroups] = await Promise.all([
+  const [linkedProducts, seoData, eventGroups, contentRefresh] = await Promise.all([
     prisma.articleProduct.findMany({
       where: { shop, articleId, isActive: true },
       orderBy: { position: "asc" },
@@ -371,6 +402,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       by: ["productId", "blockId", "eventType"],
       where: { shop, articleId },
       _count: { _all: true },
+    }),
+    loadContentRefreshContext({
+      shop,
+      articleId,
+      blogHandle: article.blog?.handle || "",
+      articleHandle: article.handle || "",
+      canUse: limits.canContentDecay,
     }),
   ]);
 
@@ -449,6 +487,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     canInternalLinking: limits.canInternalLinking,
     planKey,
     aiEnabled: isNineRouterConfigured(),
+    contentRefresh,
+    contentRefreshRequested,
   });
 };
 
@@ -542,6 +582,48 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ success: true, action: "ai_seo_fix_generated", suggestion });
     } catch (error) {
       const message = error instanceof Error ? error.message : "9Router could not generate SEO fixes.";
+      return json({ success: false, error: message }, { status: 502 });
+    }
+  }
+
+  if (intent === "generate_ai_content_refresh") {
+    if (!isNineRouterConfigured()) {
+      return json({ success: false, error: "9Router is not configured on the server." }, { status: 503 });
+    }
+    const { limits } = await getActivePlan();
+    if (!limits.canContentDecay) {
+      return json({ success: false, error: "Content Refresh Copilot is available on the Growth plan." }, { status: 403 });
+    }
+
+    const context = await loadContentRefreshContext({
+      shop,
+      articleId,
+      blogHandle: cleanString(formData.get("blogHandle")),
+      articleHandle: cleanString(formData.get("articleHandle")),
+      canUse: true,
+    });
+    const selectedSignalIds = new Set(parseStringArray(cleanString(formData.get("signalIds")), 20));
+    const selectedQueries = new Set(parseStringArray(cleanString(formData.get("queries")), 20));
+    const signals = context.signals.filter((signal) => selectedSignalIds.has(signal.id));
+    const queries = context.queries.filter((query) => selectedQueries.has(query.query));
+    if (!signals.length && !queries.length) {
+      return json({ success: false, error: "Choose at least one decay signal or Search Console query." }, { status: 400 });
+    }
+
+    try {
+      const suggestion = await generateContentRefresh({
+        title: cleanString(formData.get("title")),
+        body: cleanString(formData.get("body")),
+        excerpt: cleanString(formData.get("excerpt")),
+        metaTitle: cleanString(formData.get("metaTitle")),
+        metaDescription: cleanString(formData.get("metaDescription")),
+        focusKeyword: cleanString(formData.get("focusKeyword")),
+        signals,
+        queries,
+      });
+      return json({ success: true, action: "ai_content_refresh_generated", suggestion });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "9Router could not generate a content refresh.";
       return json({ success: false, error: message }, { status: 502 });
     }
   }
@@ -1288,11 +1370,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey, aiEnabled } =
+  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey, aiEnabled, contentRefresh, contentRefreshRequested } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const aiFetcher = useFetcher<typeof action>();
   const seoFixFetcher = useFetcher<typeof action>();
+  const contentRefreshFetcher = useFetcher<typeof action>();
   const productAiFetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
   const uploadFetcher = useFetcher<typeof action>();
@@ -1314,6 +1397,14 @@ export default function ArticleDetail() {
   const [selectedSeoFixFields, setSelectedSeoFixFields] = useState<AiSeoFixField[]>([]);
   const [seoFixBase, setSeoFixBase] = useState<SeoFixSnapshot | null>(null);
   const [seoFixUndo, setSeoFixUndo] = useState<SeoFixSnapshot | null>(null);
+  const [contentRefreshOpen, setContentRefreshOpen] = useState(Boolean(contentRefreshRequested && contentRefresh.canUse && contentRefresh.aiEnabled));
+  const [contentRefreshReviewOpen, setContentRefreshReviewOpen] = useState(false);
+  const [contentRefreshSuggestion, setContentRefreshSuggestion] = useState<ContentRefreshSuggestion | null>(null);
+  const [selectedRefreshSignalIds, setSelectedRefreshSignalIds] = useState<string[]>(contentRefresh.signals.map((signal) => signal.id));
+  const [selectedRefreshQueries, setSelectedRefreshQueries] = useState<string[]>(contentRefresh.queries.slice(0, 10).map((query) => query.query));
+  const [selectedRefreshFields, setSelectedRefreshFields] = useState<ContentRefreshField[]>([]);
+  const [contentRefreshBase, setContentRefreshBase] = useState<ContentRefreshSnapshot | null>(null);
+  const [contentRefreshUndo, setContentRefreshUndo] = useState<ContentRefreshSnapshot | null>(null);
   const [aiProductModalOpen, setAiProductModalOpen] = useState(false);
   const [aiProductRecommendations, setAiProductRecommendations] = useState<any[]>([]);
   const [selectedAiProductIds, setSelectedAiProductIds] = useState<string[]>([]);
@@ -1359,6 +1450,7 @@ export default function ArticleDetail() {
   const handledFetcherDataRef = useRef<any>(null);
   const handledAiFetcherDataRef = useRef<any>(null);
   const handledSeoFixFetcherDataRef = useRef<any>(null);
+  const handledContentRefreshFetcherDataRef = useRef<any>(null);
   const handledProductAiFetcherDataRef = useRef<any>(null);
   const [focusKeyword, setFocusKeyword] = useState(seoData?.focusKeyword || "");
   const [pendingInternalLink, setPendingInternalLink] = useState<LinkSuggestion | null>(null);
@@ -1442,6 +1534,7 @@ export default function ArticleDetail() {
   const isSubmitting = fetcher.state !== "idle";
   const isAiGenerating = aiFetcher.state !== "idle";
   const isSeoFixGenerating = seoFixFetcher.state !== "idle";
+  const isContentRefreshGenerating = contentRefreshFetcher.state !== "idle";
   const isAiProductLoading = productAiFetcher.state !== "idle";
   const activeImage = imageRemoved ? null : featuredImageUrl;
   const normalizedImageQuery = imageSearchQuery.trim().toLowerCase();
@@ -1613,6 +1706,22 @@ export default function ArticleDetail() {
     setSelectedSeoFixFields(suggestion.changes.map((change) => change.field));
     setSeoFixReviewOpen(true);
   }, [seoFixFetcher.data, shopify]);
+
+  useEffect(() => {
+    const data = contentRefreshFetcher.data as any;
+    if (!data || handledContentRefreshFetcherDataRef.current === data) return;
+    handledContentRefreshFetcherDataRef.current = data;
+    if (!data.success) {
+      shopify.toast.show(data.error || "Content Refresh Copilot failed.", { isError: true });
+      return;
+    }
+    if (data.action !== "ai_content_refresh_generated" || !data.suggestion) return;
+    const suggestion = data.suggestion as ContentRefreshSuggestion;
+    setContentRefreshSuggestion(suggestion);
+    setSelectedRefreshFields(suggestion.changes.map((change) => change.field));
+    setContentRefreshOpen(false);
+    setContentRefreshReviewOpen(true);
+  }, [contentRefreshFetcher.data, shopify]);
 
   useEffect(() => {
     const data = productAiFetcher.data as any;
@@ -1986,6 +2095,92 @@ export default function ArticleDetail() {
     shopify.toast.show("AI SEO changes undone.");
   }, [seoFixUndo, shopify]);
 
+  const openContentRefresh = useCallback(() => {
+    if (!contentRefresh.canUse) {
+      navigate(`/app/pricing?reason=content_decay&plan=${planKey}`);
+      return;
+    }
+    if (!contentRefresh.aiEnabled) {
+      shopify.toast.show("Configure 9Router before using Content Refresh Copilot.", { isError: true });
+      return;
+    }
+    setContentRefreshOpen(true);
+  }, [contentRefresh.aiEnabled, contentRefresh.canUse, navigate, planKey, shopify]);
+
+  const handleGenerateContentRefresh = useCallback(() => {
+    if (!selectedRefreshSignalIds.length && !selectedRefreshQueries.length) {
+      shopify.toast.show("Choose at least one decay signal or Search Console query.", { isError: true });
+      return;
+    }
+    setContentRefreshBase({ title, body, excerpt, metaTitle: effectiveMetaTitle, metaTitleTouched, metaDescription: metaDescription || excerpt, isDirty });
+    const formData = new FormData();
+    formData.append("intent", "generate_ai_content_refresh");
+    formData.append("signalIds", JSON.stringify(selectedRefreshSignalIds));
+    formData.append("queries", JSON.stringify(selectedRefreshQueries));
+    formData.append("title", title);
+    formData.append("body", body);
+    formData.append("excerpt", excerpt);
+    formData.append("metaTitle", effectiveMetaTitle);
+    formData.append("metaDescription", metaDescription || excerpt);
+    formData.append("focusKeyword", focusKeyword);
+    formData.append("blogHandle", article.blog?.handle || "");
+    formData.append("articleHandle", article.handle || "");
+    contentRefreshFetcher.submit(formData, { method: "POST" });
+  }, [article.blog?.handle, article.handle, body, contentRefreshFetcher, effectiveMetaTitle, excerpt, focusKeyword, isDirty, metaDescription, metaTitleTouched, selectedRefreshQueries, selectedRefreshSignalIds, shopify, title]);
+
+  const handleApplyContentRefresh = useCallback(() => {
+    if (!contentRefreshSuggestion || !contentRefreshBase || !selectedRefreshFields.length) return;
+    const selected = new Set(selectedRefreshFields);
+    const currentValues: Record<ContentRefreshField, string> = { title, body, excerpt, metaTitle: effectiveMetaTitle, metaDescription: metaDescription || excerpt };
+    const baseValues: Record<ContentRefreshField, string> = {
+      title: contentRefreshBase.title,
+      body: contentRefreshBase.body,
+      excerpt: contentRefreshBase.excerpt,
+      metaTitle: contentRefreshBase.metaTitle,
+      metaDescription: contentRefreshBase.metaDescription,
+    };
+    if (contentRefreshSuggestion.changes.some((change) => selected.has(change.field) && currentValues[change.field] !== baseValues[change.field])) {
+      shopify.toast.show("The draft changed while Copilot was working. Close this preview and generate the refresh again.", { isError: true });
+      return;
+    }
+    const selectedBodyChange = contentRefreshSuggestion.changes.find((change) => change.field === "body" && selected.has(change.field));
+    const safeRefreshBody = selectedBodyChange
+      ? sanitizeEditorPasteHtml(selectedBodyChange.after, stripHtml(selectedBodyChange.after))
+      : "";
+    if (selectedBodyChange && !safeRefreshBody) {
+      shopify.toast.show("AI returned an empty article body.", { isError: true });
+      return;
+    }
+    const snapshot: ContentRefreshSnapshot = { title, body, excerpt, metaTitle, metaTitleTouched, metaDescription, isDirty };
+    for (const change of contentRefreshSuggestion.changes) {
+      if (!selected.has(change.field)) continue;
+      if (change.field === "title") setTitle(change.after);
+      else if (change.field === "body") setBody(safeRefreshBody);
+      else if (change.field === "excerpt") setExcerpt(change.after);
+      else if (change.field === "metaTitle") {
+        setMetaTitle(change.after);
+        setMetaTitleTouched(true);
+      } else if (change.field === "metaDescription") setMetaDescription(change.after);
+    }
+    setContentRefreshUndo(snapshot);
+    setIsDirty(true);
+    setContentRefreshReviewOpen(false);
+    shopify.toast.show("Content refresh added to the draft. Verify the changes, then save when ready.");
+  }, [body, contentRefreshBase, contentRefreshSuggestion, effectiveMetaTitle, excerpt, isDirty, metaDescription, metaTitle, metaTitleTouched, selectedRefreshFields, shopify, title]);
+
+  const handleUndoContentRefresh = useCallback(() => {
+    if (!contentRefreshUndo) return;
+    setTitle(contentRefreshUndo.title);
+    setBody(contentRefreshUndo.body);
+    setExcerpt(contentRefreshUndo.excerpt);
+    setMetaTitle(contentRefreshUndo.metaTitle);
+    setMetaTitleTouched(contentRefreshUndo.metaTitleTouched);
+    setMetaDescription(contentRefreshUndo.metaDescription);
+    setIsDirty(contentRefreshUndo.isDirty);
+    setContentRefreshUndo(null);
+    shopify.toast.show("Content refresh undone.");
+  }, [contentRefreshUndo, shopify]);
+
   const openAiAssistant = useCallback(() => {
     setAiWritingMode(stripHtml(body).trim() ? "improve" : "draft");
     setAiAssistantOpen(true);
@@ -2148,6 +2343,8 @@ export default function ArticleDetail() {
     setSelectedImage(null);
     setIsImageModalOpen(false);
     setImageRemoved(false);
+    setSeoFixUndo(null);
+    setContentRefreshUndo(null);
     setIsDirty(false);
   };
 
@@ -2264,6 +2461,26 @@ export default function ArticleDetail() {
           <main className="bp-detail-content">
             {selectedTab === 0 && (
               <BlockStack gap="600">
+                {!isNewPost && (
+                  <ContentRefreshCard
+                    context={contentRefresh}
+                    loading={isContentRefreshGenerating}
+                    onOpen={openContentRefresh}
+                  />
+                )}
+
+                {contentRefreshUndo && (
+                  <Card padding="300">
+                    <InlineStack align="space-between" blockAlign="center" gap="300">
+                      <BlockStack gap="050">
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">AI content refresh is in this draft</Text>
+                        <Text as="span" variant="bodySm" tone="subdued">Review the draft and SEO score. Nothing is published until you save.</Text>
+                      </BlockStack>
+                      <Button size="micro" onClick={handleUndoContentRefresh}>Undo refresh</Button>
+                    </InlineStack>
+                  </Card>
+                )}
+
                 <ShopifyContentEditor
                   title={title}
                   body={body}
@@ -2532,6 +2749,166 @@ export default function ArticleDetail() {
           </InlineStack>
         </div>
       )}
+
+      <Modal
+        open={contentRefreshOpen}
+        onClose={() => {
+          if (!isContentRefreshGenerating) setContentRefreshOpen(false);
+        }}
+        title="Plan content refresh"
+        primaryAction={{
+          content: "Generate refresh",
+          onAction: handleGenerateContentRefresh,
+          loading: isContentRefreshGenerating,
+          disabled: isContentRefreshGenerating || (!selectedRefreshSignalIds.length && !selectedRefreshQueries.length),
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setContentRefreshOpen(false), disabled: isContentRefreshGenerating }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="500">
+            <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+              <BlockStack gap="100">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">Choose the evidence Copilot should use</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Decay findings come from the latest saved analysis. Query metrics come from the current and previous 28-day Search Console windows.</Text>
+              </BlockStack>
+            </Box>
+
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h3" variant="headingMd">Content Decay signals</Text>
+                {contentRefresh.analyzedAt && <Text as="span" variant="bodySm" tone="subdued">Analyzed {formatDateTime(contentRefresh.analyzedAt)}</Text>}
+              </InlineStack>
+              {contentRefresh.signals.length ? contentRefresh.signals.map((signal) => (
+                <Card key={signal.id} padding="300">
+                  <InlineStack gap="300" blockAlign="start" wrap={false}>
+                    <Checkbox
+                      label={`Use ${signal.message}`}
+                      labelHidden
+                      checked={selectedRefreshSignalIds.includes(signal.id)}
+                      onChange={(checked) => setSelectedRefreshSignalIds((current) => checked
+                        ? [...new Set([...current, signal.id])]
+                        : current.filter((id) => id !== signal.id))}
+                    />
+                    <BlockStack gap="100">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">{signal.message}</Text>
+                        {signal.severity && <Badge tone={signal.severity === "high" ? "critical" : signal.severity === "medium" ? "warning" : "info"}>{signal.severity}</Badge>}
+                      </InlineStack>
+                      <Text as="p" variant="bodySm">{signal.previousValue} → {signal.currentValue}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">{signal.recommendation}</Text>
+                    </BlockStack>
+                  </InlineStack>
+                </Card>
+              )) : <Text as="p" variant="bodySm" tone="subdued">No saved decay issues were found for this article.</Text>}
+            </BlockStack>
+
+            <Divider />
+
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h3" variant="headingMd">Search Console queries</Text>
+                {contentRefresh.searchSyncedAt && <Text as="span" variant="bodySm" tone="subdued">Synced {formatDateTime(contentRefresh.searchSyncedAt)}</Text>}
+              </InlineStack>
+              {contentRefresh.queries.length ? contentRefresh.queries.map((query) => (
+                <Card key={query.query} padding="300">
+                  <InlineStack gap="300" blockAlign="start" wrap={false}>
+                    <Checkbox
+                      label={`Use query ${query.query}`}
+                      labelHidden
+                      checked={selectedRefreshQueries.includes(query.query)}
+                      onChange={(checked) => setSelectedRefreshQueries((current) => checked
+                        ? [...new Set([...current, query.query])]
+                        : current.filter((value) => value !== query.query))}
+                    />
+                    <BlockStack gap="150">
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">{query.query}</Text>
+                      <InlineStack gap="200">
+                        <Badge>{`${Math.round(query.impressions)} impressions`}</Badge>
+                        <Badge>{`${Math.round(query.clicks)} clicks`}</Badge>
+                        <Badge>{`${(query.ctr * 100).toFixed(1)}% CTR`}</Badge>
+                        <Badge>{`Position ${query.position.toFixed(1)}`}</Badge>
+                      </InlineStack>
+                      {query.previousImpressions > 0 && (
+                        <Text as="p" variant="bodySm" tone="subdued">Previous period: {Math.round(query.previousClicks)} clicks, {(query.previousCtr * 100).toFixed(1)}% CTR, position {query.previousPosition.toFixed(1)}</Text>
+                      )}
+                    </BlockStack>
+                  </InlineStack>
+                </Card>
+              )) : <Text as="p" variant="bodySm" tone="subdued">No synced Search Console queries were found for this article URL.</Text>}
+            </BlockStack>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      <Modal
+        open={contentRefreshReviewOpen}
+        onClose={() => setContentRefreshReviewOpen(false)}
+        title="Review content refresh"
+        primaryAction={{
+          content: `Apply selected (${selectedRefreshFields.length})`,
+          onAction: handleApplyContentRefresh,
+          disabled: selectedRefreshFields.length === 0,
+        }}
+        secondaryActions={[
+          { content: "Back to signals", onAction: () => { setContentRefreshReviewOpen(false); setContentRefreshOpen(true); } },
+          { content: "Close", onAction: () => setContentRefreshReviewOpen(false) },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+              <BlockStack gap="100">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">Refresh strategy</Text>
+                <Text as="p" variant="bodySm">{contentRefreshSuggestion?.strategy || "Review the proposed refresh below."}</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Applying updates only the local draft. Verify factual freshness before saving to Shopify.</Text>
+              </BlockStack>
+            </Box>
+
+            {contentRefreshSuggestion?.changes.map((change) => (
+              <Card key={change.field} padding="300">
+                <BlockStack gap="300">
+                  <Checkbox
+                    label={`Apply ${contentRefreshFieldLabel(change.field)}`}
+                    checked={selectedRefreshFields.includes(change.field)}
+                    onChange={(checked) => setSelectedRefreshFields((current) => checked
+                      ? [...new Set([...current, change.field])]
+                      : current.filter((field) => field !== change.field))}
+                  />
+                  <Text as="p" variant="bodySm">{change.explanation}</Text>
+                  <InlineStack gap="100">
+                    {change.queries.map((query) => <Badge key={query} tone="magic">{query}</Badge>)}
+                    {change.signalIds.map((id) => <Badge key={id} tone="info">{contentRefresh.signals.find((signal) => signal.id === id)?.message || "Decay signal"}</Badge>)}
+                  </InlineStack>
+                  <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+                    <SeoFixPreview label="Before" field={change.field} value={contentRefreshBase ? contentRefreshSnapshotValue(contentRefreshBase, change.field) : ""} />
+                    <SeoFixPreview label="After" field={change.field} value={change.after} changed />
+                  </InlineGrid>
+                </BlockStack>
+              </Card>
+            ))}
+
+            {contentRefreshSuggestion && contentRefreshSuggestion.changes.length === 0 && (
+              <Text as="p" variant="bodyMd" tone="subdued">The selected signals require merchant verification, so Copilot did not alter the draft.</Text>
+            )}
+
+            {Boolean(contentRefreshSuggestion?.manualActions.length) && (
+              <BlockStack gap="300">
+                <Divider />
+                <Text as="h3" variant="headingMd">Verification checklist</Text>
+                {contentRefreshSuggestion?.manualActions.map((item) => (
+                  <Card key={item.sourceId} padding="300">
+                    <BlockStack gap="100">
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">{item.title}</Text>
+                      {item.explanation && <Text as="p" variant="bodySm" tone="subdued">{item.explanation}</Text>}
+                      <Text as="p" variant="bodySm">{item.action}</Text>
+                    </BlockStack>
+                  </Card>
+                ))}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
 
       <Modal
         open={aiAssistantOpen}
@@ -4674,6 +5051,51 @@ function SeoSidebar({
   );
 }
 
+function ContentRefreshCard({
+  context,
+  loading,
+  onOpen,
+}: {
+  context: ContentRefreshContext;
+  loading: boolean;
+  onOpen: () => void;
+}) {
+  const available = context.signals.length + context.queries.length;
+  return (
+    <Card padding="400">
+      <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
+        <InlineStack gap="300" blockAlign="start" wrap={false}>
+          <span className="bp-action-icon"><Icon source={MagicIcon} tone="magic" /></span>
+          <BlockStack gap="150">
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="h2" variant="headingMd" fontWeight="bold">AI Content Refresh Copilot</Text>
+              <Badge tone={available ? "warning" : "info"}>{available ? `${available} signals` : "Needs signals"}</Badge>
+            </InlineStack>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Refresh this article using saved Content Decay findings and real Search Console queries. Every change stays review-only.
+            </Text>
+            {context.canUse && available > 0 && (
+              <InlineStack gap="200">
+                <Badge>{`${context.signals.length} decay issues`}</Badge>
+                <Badge>{`${context.queries.length} search queries`}</Badge>
+              </InlineStack>
+            )}
+          </BlockStack>
+        </InlineStack>
+        {!context.canUse ? (
+          <Button onClick={onOpen}>Upgrade to Growth</Button>
+        ) : available === 0 ? (
+          <Button url="/app/content-decay">Analyze content</Button>
+        ) : (
+          <Button variant="primary" icon={MagicIcon} loading={loading} disabled={!context.aiEnabled} onClick={onOpen}>
+            Plan refresh
+          </Button>
+        )}
+      </InlineStack>
+    </Card>
+  );
+}
+
 function RecommendationsCard({
   issues,
   onApplyAll,
@@ -4757,7 +5179,7 @@ function SeoFixPreview({
   changed = false,
 }: {
   label: string;
-  field: AiSeoFixField;
+  field: string;
   value: string;
   changed?: boolean;
 }) {
@@ -4804,6 +5226,25 @@ function seoFixSnapshotValue(snapshot: SeoFixSnapshot, field: AiSeoFixField) {
 
 function seoIssueLabel(type: string, issues: SeoIssue[]) {
   return issues.find((issue) => issue.type === type)?.label || type.replace(/_/g, " ");
+}
+
+function contentRefreshFieldLabel(field: ContentRefreshField) {
+  const labels: Record<ContentRefreshField, string> = {
+    title: "article title",
+    body: "article content",
+    excerpt: "excerpt",
+    metaTitle: "meta title",
+    metaDescription: "meta description",
+  };
+  return labels[field];
+}
+
+function contentRefreshSnapshotValue(snapshot: ContentRefreshSnapshot, field: ContentRefreshField) {
+  if (field === "title") return snapshot.title;
+  if (field === "body") return snapshot.body;
+  if (field === "excerpt") return snapshot.excerpt;
+  if (field === "metaTitle") return snapshot.metaTitle;
+  return snapshot.metaDescription;
 }
 
 function ProductsSummaryCard({
@@ -5448,6 +5889,88 @@ function makeEmptyArticle(blog?: any, authorName = DEFAULT_AUTHOR_NAME) {
 
 function cleanString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function emptyContentRefreshContext(canUse: boolean): ContentRefreshContext {
+  return {
+    canUse,
+    aiEnabled: isNineRouterConfigured(),
+    signals: [],
+    queries: [],
+    analyzedAt: null,
+    searchSyncedAt: null,
+  };
+}
+
+async function loadContentRefreshContext({
+  shop,
+  articleId,
+  blogHandle,
+  articleHandle,
+  canUse,
+}: {
+  shop: string;
+  articleId: string;
+  blogHandle: string;
+  articleHandle: string;
+  canUse: boolean;
+}): Promise<ContentRefreshContext> {
+  if (!canUse) return emptyContentRefreshContext(false);
+  const [analysis, connection] = await Promise.all([
+    prisma.contentDecayAnalysis.findUnique({ where: { shop } }),
+    prisma.searchConsoleConnection.findUnique({
+      where: { shop },
+      select: { selectedSiteUrl: true, lastSyncedAt: true },
+    }),
+  ]);
+  const report = analysis?.report as unknown as ContentDecayReport | undefined;
+  const signals = report?.version === 1
+    ? report.issues.filter((issue: DecayIssue) => issue.articleId === articleId).map((issue) => ({
+        id: issue.id,
+        type: issue.type,
+        message: issue.message,
+        previousValue: issue.previousValue,
+        currentValue: issue.currentValue,
+        recommendation: issue.recommendation,
+        detail: issue.detail,
+        severity: issue.severity,
+      }))
+    : [];
+  const articlePath = blogHandle && articleHandle ? `/blogs/${blogHandle}/${articleHandle}` : "";
+  const metricRows = articlePath && connection?.selectedSiteUrl
+    ? await prisma.searchConsoleMetric.findMany({
+        where: {
+          shop,
+          siteUrl: connection.selectedSiteUrl,
+          windowDays: 28,
+          period: { in: ["current", "previous"] },
+          pageUrl: { contains: articlePath },
+        },
+        select: { pageUrl: true, query: true, period: true, clicks: true, impressions: true, ctr: true, position: true },
+        orderBy: { impressions: "desc" },
+        take: 200,
+      })
+    : [];
+  return {
+    canUse: true,
+    aiEnabled: isNineRouterConfigured(),
+    signals,
+    queries: buildContentRefreshQueries(metricRows, articlePath),
+    analyzedAt: analysis?.analyzedAt.toISOString() || null,
+    searchSyncedAt: connection?.lastSyncedAt?.toISOString() || null,
+  };
+}
+
+function parseStringArray(value: string, limit: number) {
+  if (!value || value.length > 20_000) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))].slice(0, limit)
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function parseSeoFixIssues(value: string): SeoIssue[] {

@@ -16,6 +16,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
     summary: "Optimize Shopify products and collections in-app, monitor storefront speed, and retain conversion attribution across cart interactions.",
     tags: ["New", "Improved", "Fixed"],
     changes: [
+      { type: "New", text: "AI Content Refresh Copilot turns saved Content Decay findings and real Search Console queries into a selective, review-only article refresh with before-and-after previews and undo." },
+      { type: "Improved", text: "Content refreshes preserve article links, images, tables, product blocks and TOC markers, while facts, broken links, unavailable products and outdated years remain explicit merchant verification tasks." },
       { type: "Fixed", text: "Signed conversion attribution tokens now remain valid for the same seven-day window as the Shopify Web Pixel, so delayed add-to-cart and purchase events are no longer dropped after 24 hours." },
       { type: "Fixed", text: "Web Pixel conversion requests are now awaited, kept alive through cart-drawer and navigation lifecycle changes, and retried once after transient network failures." },
       { type: "Fixed", text: "Product attribution now survives variant URL changes, with a storefront fallback for custom Shopify cart drawers that do not reliably emit the standard add-to-cart pixel event." },

@@ -132,7 +132,7 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
 
 function IssueRow({ issue }: { issue: DecayIssue }) {
   const showDetail = issue.detail && issue.type !== "broken_outbound" && issue.type !== "unavailable_product";
-  return <tr style={rowStyle}><Cell><strong>{issue.articleTitle}</strong>{showDetail && <><br /><span style={subduedStyle}>{issue.detail}</span></>}</Cell><Cell><strong>{issue.message}</strong></Cell><Cell><CompactValue value={issue.previousValue} isUrl={issue.type === "broken_outbound"} /></Cell><Cell>{issue.currentValue}</Cell><Cell>{issue.recommendation}</Cell><Cell><Badge tone={issue.severity === "high" ? "critical" : issue.severity === "medium" ? "warning" : "info"}>{issue.severity === "high" ? "High" : issue.severity === "medium" ? "Medium" : "Low"}</Badge></Cell><Cell><Button size="micro" url={articleEditorUrl(issue.articleId)}>Review</Button></Cell></tr>;
+  return <tr style={rowStyle}><Cell><strong>{issue.articleTitle}</strong>{showDetail && <><br /><span style={subduedStyle}>{issue.detail}</span></>}</Cell><Cell><strong>{issue.message}</strong></Cell><Cell><CompactValue value={issue.previousValue} isUrl={issue.type === "broken_outbound"} /></Cell><Cell>{issue.currentValue}</Cell><Cell>{issue.recommendation}</Cell><Cell><Badge tone={issue.severity === "high" ? "critical" : issue.severity === "medium" ? "warning" : "info"}>{issue.severity === "high" ? "High" : issue.severity === "medium" ? "Medium" : "Low"}</Badge></Cell><Cell><Button size="micro" url={articleEditorUrl(issue.articleId, true)}>AI refresh</Button></Cell></tr>;
 }
 
 function CompactValue({ value, isUrl }: { value: string; isUrl: boolean }) {
@@ -254,7 +254,7 @@ function isPublicHost(hostname: string) {
   return true;
 }
 
-function articleEditorUrl(articleId: string) { return `/app/blogs/${encodeURIComponent(articleId.split("/").pop() || articleId)}`; }
+function articleEditorUrl(articleId: string, refresh = false) { return `/app/blogs/${encodeURIComponent(articleId.split("/").pop() || articleId)}${refresh ? "?refresh=1" : ""}`; }
 function compactUrl(value: string) { try { const url = new URL(value); const text = `${url.hostname}${url.pathname}`; return text.length > 58 ? `${text.slice(0, 55)}...` : text; } catch { return value.length > 58 ? `${value.slice(0, 55)}...` : value; } }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleString() : "not yet"; }
 function Header({ children }: { children: React.ReactNode }) { return <th style={{ padding: "12px 16px", textAlign: "left", whiteSpace: "nowrap", color: "var(--p-color-text-secondary)", fontSize: 12 }}>{children}</th>; }
