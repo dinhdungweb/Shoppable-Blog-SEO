@@ -216,6 +216,20 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
   useEffect(() => {
     if (editor.current && document.activeElement !== editor.current && editor.current.innerHTML !== value) editor.current.innerHTML = value;
   }, [value]);
+  useEffect(() => {
+    const syncBlockFromSelection = () => {
+      const active = window.getSelection();
+      if (!editor.current || !active?.rangeCount) return;
+      const node = active.getRangeAt(0).startContainer;
+      const element = node instanceof HTMLElement ? node : node.parentElement;
+      if (!element || !editor.current.contains(element)) return;
+      const blockElement = element.closest("h2, h3, blockquote, p, div");
+      const tag = blockElement?.tagName.toLowerCase();
+      setBlock(tag === "h2" || tag === "h3" || tag === "blockquote" ? tag : "p");
+    };
+    document.addEventListener("selectionchange", syncBlockFromSelection);
+    return () => document.removeEventListener("selectionchange", syncBlockFromSelection);
+  }, []);
   const saveSelection = () => {
     const active = window.getSelection();
     if (!editor.current || !active || !active.rangeCount) return;
@@ -233,6 +247,14 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
     editor.current?.focus();
     restoreSelection();
     document.execCommand(name, false, commandValue);
+    emit();
+  };
+  const applyBlock = (next: string) => {
+    setBlock(next);
+    editor.current?.focus();
+    restoreSelection();
+    document.execCommand("formatBlock", false, `<${next}>`);
+    saveSelection();
     emit();
   };
   const insertHtml = (html: string) => command("insertHTML", html);
@@ -277,8 +299,8 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
   const toolbarButton = (label: string, icon: any, action: () => void) => <button type="button" title={label} aria-label={label} className="bp-editor-icon-button" onMouseDown={(event) => { event.preventDefault(); saveSelection(); }} onClick={action}><Icon source={icon} tone="base" /></button>;
   return <>
     <div className="bp-rich-editor">
-      <div className="bp-editor-toolbar" role="toolbar" aria-label="Description formatting">
-        <Select label="Text style" labelHidden options={[{ label: "Paragraph", value: "p" }, { label: "Heading 2", value: "h2" }, { label: "Heading 3", value: "h3" }, { label: "Quote", value: "blockquote" }]} value={block} onChange={(next) => { setBlock(next); command("formatBlock", next); }} />
+      <div className="bp-editor-toolbar" role="toolbar" aria-label="Description formatting" onMouseDown={(event) => { if ((event.target as HTMLElement).closest(".Polaris-Select")) saveSelection(); }}>
+        <Select label="Text style" labelHidden options={[{ label: "Paragraph", value: "p" }, { label: "Heading 2", value: "h2" }, { label: "Heading 3", value: "h3" }, { label: "Quote", value: "blockquote" }]} value={block} onChange={applyBlock} />
         <span className="bp-editor-separator" />
         {toolbarButton("Bold", TextBoldIcon, () => command("bold"))}
         {toolbarButton("Italic", TextItalicIcon, () => command("italic"))}

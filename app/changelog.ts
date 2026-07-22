@@ -35,6 +35,9 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Removed the redundant Product or Collection badge beside the catalog editor title." },
       { type: "New", text: "Catalog Manager provides a dedicated searchable and filterable workspace for managing Shopify products and collections, separate from SEO issue triage." },
       { type: "Improved", text: "Product and Collection tabs in SEO Optimizer now group findings by issue, impact, effort and suggested fix, with affected resources available for review and editing." },
+      { type: "Improved", text: "Catalog review dialogs now open the full in-app Product or Collection editor instead of sending merchants to the Shopify admin editor." },
+      { type: "Fixed", text: "SEO scope tabs now use equal vertical padding and consistent control height in both SEO Optimizer and Catalog Manager." },
+      { type: "Fixed", text: "The catalog rich-text style selector now preserves the text selection, applies Paragraph, Heading and Quote blocks reliably, and follows the block under the cursor." },
     ],
   },
   {
