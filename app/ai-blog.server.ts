@@ -1,4 +1,5 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
+import { getNineRouterGenerationOptions } from "./nine-router.server";
 
 export type AiWritingMode = "draft" | "improve" | "expand" | "shorten";
 
@@ -57,7 +58,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
-      temperature: input.mode === "draft" ? 0.5 : 0.25,
+      ...getNineRouterGenerationOptions(model, input.mode === "draft" ? 0.5 : 0.25),
       response_format: { type: "json_object" },
       messages: [
         {

@@ -48,7 +48,9 @@ describe("AI product placement", () => {
 
     expect(result).toEqual([{ productId: "1", reason: "Useful for the trail shoe section.", placementHint: "After Choosing trail shoes" }]);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(request.model).toBe("cx/test-model");
+    expect(request.model).toBe("codex/gpt-5.5");
+    expect(request.reasoning_effort).toBe("low");
+    expect(request).not.toHaveProperty("temperature");
     expect(request.messages[1].content).toContain("Trail Running Shoes");
   });
 
@@ -72,7 +74,7 @@ describe("AI product placement", () => {
 function configure() {
   process.env.NINE_ROUTER_BASE_URL = "http://127.0.0.1:20127/v1";
   process.env.NINE_ROUTER_API_KEY = "test-key";
-  process.env.NINE_ROUTER_MODEL = "cx/test-model";
+  process.env.NINE_ROUTER_MODEL = "codex/gpt-5.5";
 }
 
 function makeProduct(id: string, title: string, description: string, tags: string[]): AiCatalogProduct {

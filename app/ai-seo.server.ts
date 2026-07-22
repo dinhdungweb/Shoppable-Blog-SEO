@@ -1,3 +1,5 @@
+import { getNineRouterGenerationOptions } from "./nine-router.server";
+
 type SeoSuggestionInput = {
   id: string;
   title: string;
@@ -43,7 +45,7 @@ export async function generateAiSeoSuggestion(input: SeoSuggestionInput): Promis
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
-      temperature: 0.2,
+      ...getNineRouterGenerationOptions(model, 0.2),
       response_format: { type: "json_object" },
       messages: [
         {

@@ -1,4 +1,5 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
+import { getNineRouterGenerationOptions } from "./nine-router.server";
 
 export type AiCatalogProduct = {
   id: string;
@@ -60,7 +61,7 @@ export async function generateAiProductRecommendations(
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
-      temperature: 0.15,
+      ...getNineRouterGenerationOptions(model, 0.15),
       response_format: { type: "json_object" },
       messages: [
         {
