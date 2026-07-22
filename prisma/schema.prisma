@@ -32,62 +32,62 @@ model Session {
 
 // Shop configuration for widget display and settings
 model ShopConfig {
-  id            String   @id @default(cuid())
-  shop          String   @unique
-  
+  id   String @id @default(cuid())
+  shop String @unique
+
   // General
-  defaultBlog   String   @default("News & Articles")
-  language      String   @default("English")
-  market        String   @default("United States")
-  appStatus     Boolean  @default(true)
+  defaultBlog String  @default("News & Articles")
+  language    String  @default("English")
+  market      String  @default("United States")
+  appStatus   Boolean @default(true)
 
   // Shoppable blog display
-  productCardLayout    String   @default("Standard")
-  cardPosition         String   @default("After paragraph")
-  buttonText           String   @default("View product")
-  showPrice            Boolean  @default(true)
-  showVariantSelector  Boolean  @default(true)
-  openInNewTab         Boolean  @default(true)
-  imageAspectRatio     String   @default("Square")
-  imageFit             String   @default("Cover")
-  cardDensity          String   @default("Comfortable")
-  gridColumns          Int      @default(3)
-  textAlignment        String   @default("Left")
-  buttonStyle          String   @default("Solid")
-  shadowStyle          String   @default("Soft")
-  showCarouselArrows   Boolean  @default(true)
-  showCarouselDots     Boolean  @default(true)
-  carouselItemsVisible Int      @default(4)
+  productCardLayout    String  @default("Standard")
+  cardPosition         String  @default("After paragraph")
+  buttonText           String  @default("View product")
+  showPrice            Boolean @default(true)
+  showVariantSelector  Boolean @default(true)
+  openInNewTab         Boolean @default(true)
+  imageAspectRatio     String  @default("Square")
+  imageFit             String  @default("Cover")
+  cardDensity          String  @default("Comfortable")
+  gridColumns          Int     @default(3)
+  textAlignment        String  @default("Left")
+  buttonStyle          String  @default("Solid")
+  shadowStyle          String  @default("Soft")
+  showCarouselArrows   Boolean @default(true)
+  showCarouselDots     Boolean @default(true)
+  carouselItemsVisible Int     @default(4)
 
   // SEO rules
-  metaTitleTemplate       String   @default("{{title}} - {{blog}} | {{store}}")
-  metaDescriptionTemplate String   @default("{{excerpt}}")
-  urlHandleRules          String   @default("Use post title")
-  canonicalRules          String   @default("Use default canonical (self)")
-  addBlogSchema           Boolean  @default(true)
-  addProductSchema        Boolean  @default(true)
+  metaTitleTemplate       String  @default("{{title}} - {{blog}} | {{store}}")
+  metaDescriptionTemplate String  @default("{{excerpt}}")
+  urlHandleRules          String  @default("Use post title")
+  canonicalRules          String  @default("Use default canonical (self)")
+  addBlogSchema           Boolean @default(true)
+  addProductSchema        Boolean @default(true)
 
   // Tracking & attribution
-  attributionWindow        String   @default("7 days")
-  utmRules                 String   @default("Auto-append to product links")
-  enableConversionTracking Boolean  @default(true)
+  attributionWindow        String  @default("7 days")
+  utmRules                 String  @default("Auto-append to product links")
+  enableConversionTracking Boolean @default(true)
 
   // AI writing rules
-  brandTone               String   @default("Professional")
-  defaultContentStructure String   @default("Introduction, H2 sections, Conclusion")
-  autoGenerateAltText     Boolean  @default(true)
-  requireApproval         Boolean  @default(true)
-  forbiddenWords          String   @default("")
-  seoAutoScanEnabled      Boolean  @default(false)
+  brandTone               String  @default("Professional")
+  defaultContentStructure String  @default("Introduction, H2 sections, Conclusion")
+  autoGenerateAltText     Boolean @default(true)
+  requireApproval         Boolean @default(true)
+  forbiddenWords          String  @default("")
+  seoAutoScanEnabled      Boolean @default(false)
 
   // Legacy fields
-  widgetStyle   String   @default("carousel")
-  primaryColor  String   @default("#6366f1")
-  showRating    Boolean  @default(true)
-  showAddToCart Boolean  @default(true)
-  seoAutoSchema Boolean  @default(true)
-  maxProducts   Int      @default(6)
-  borderRadius  String   @default("8px")
+  widgetStyle   String  @default("carousel")
+  primaryColor  String  @default("#6366f1")
+  showRating    Boolean @default(true)
+  showAddToCart Boolean @default(true)
+  seoAutoSchema Boolean @default(true)
+  maxProducts   Int     @default(6)
+  borderRadius  String  @default("8px")
   customCss     String?
 
   // Content navigation
@@ -111,9 +111,9 @@ model ShopConfig {
   tocStickyOffset             Int     @default(96)
   contentNavPrimaryColor      String  @default("#6366f1")
   contentNavCustomCss         String?
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Mapping: Article <-> Product
@@ -168,9 +168,34 @@ model ArticleSEO {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
+  @@unique([shop, articleId])
   @@index([shop])
   @@index([shop, sourceUpdatedAt])
-  @@unique([shop, articleId])
+}
+
+model ResourceSEO {
+  id              String    @id @default(cuid())
+  shop            String
+  resourceType    String
+  resourceId      String
+  title           String    @default("")
+  handle          String    @default("")
+  status          String    @default("")
+  seoScore        Int       @default(0)
+  metaTitle       String    @default("")
+  metaDescription String    @default("")
+  imageUrl        String    @default("")
+  imageAlt        String    @default("")
+  issues          String?
+  contentHash     String?
+  sourceUpdatedAt DateTime?
+  lastAnalyzedAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([shop, resourceType, resourceId])
+  @@index([shop, resourceType, seoScore])
+  @@index([shop, sourceUpdatedAt])
 }
 
 model SeoScanJob {
@@ -216,17 +241,17 @@ model WidgetEvent {
 }
 
 model AnalyticsDaily {
-  id         String   @id @default(cuid())
-  shop       String
-  date       DateTime
-  articleId  String
-  productId  String
-  source     String   @default("Direct")
-  impressions Int    @default(0)
-  clicks      Int    @default(0)
-  addToCarts  Int    @default(0)
-  purchases   Int    @default(0)
-  sessions    Int    @default(0)
+  id          String   @id @default(cuid())
+  shop        String
+  date        DateTime
+  articleId   String
+  productId   String
+  source      String   @default("Direct")
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  addToCarts  Int      @default(0)
+  purchases   Int      @default(0)
+  sessions    Int      @default(0)
   updatedAt   DateTime @updatedAt
 
   @@unique([shop, date, articleId, productId, source])
@@ -250,19 +275,19 @@ model AnalyticsDailySession {
 }
 
 model SearchConsoleConnection {
-  id                       String   @id @default(cuid())
-  shop                     String   @unique
-  accessTokenEncrypted     String
-  refreshTokenEncrypted    String?
-  tokenExpiresAt           DateTime?
-  scope                    String?
-  selectedSiteUrl          String?
-  selectedPermissionLevel  String?
-  availableSites           Json?
-  lastSyncedAt             DateTime?
-  lastSyncError            String?
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
+  id                      String    @id @default(cuid())
+  shop                    String    @unique
+  accessTokenEncrypted    String
+  refreshTokenEncrypted   String?
+  tokenExpiresAt          DateTime?
+  scope                   String?
+  selectedSiteUrl         String?
+  selectedPermissionLevel String?
+  availableSites          Json?
+  lastSyncedAt            DateTime?
+  lastSyncError           String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 }
 
 model SearchConsoleOAuthState {
@@ -313,20 +338,20 @@ model ContentDecayAnalysis {
 }
 
 model StorefrontPerformanceScan {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   shop         String
   pageType     String
   pageTitle    String
   pageUrl      String
-  seoScore     Int      @default(0)
-  mobileScore  Int      @default(0)
-  desktopScore Int      @default(0)
+  seoScore     Int       @default(0)
+  mobileScore  Int       @default(0)
+  desktopScore Int       @default(0)
   report       Json?
-  status       String   @default("completed")
+  status       String    @default("completed")
   error        String?
   scannedAt    DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@unique([shop, pageType])
   @@index([shop, scannedAt])

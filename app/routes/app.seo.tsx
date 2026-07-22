@@ -45,6 +45,8 @@ import { auditSeoPortfolio } from "../seo-portfolio-audit";
 import { buildSearchOpportunities } from "../search-console-opportunities";
 import { getPublicSeoScanError } from "../seo-scan-error";
 import { SEARCH_CONSOLE_TOTAL_PAGE, createAuthorizationUrl, disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
+import { applyCatalogDuplicateIssues, auditCatalogResource, type CatalogSeoAudit } from "../catalog-seo";
+import { fetchShopifyCatalogResources } from "../catalog-seo.server";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -151,6 +153,12 @@ const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
   { id: "image", content: "Image SEO" },
   { id: "schema", content: "Schema" },
   { id: "content", content: "Content quality" },
+];
+
+const SEO_SCOPE_TABS = [
+  { id: "blogs", content: "Blog posts" },
+  { id: "products", content: "Products" },
+  { id: "collections", content: "Collections" },
 ];
 
 async function loadSearchConsoleMetrics(shop: string, siteUrl: string) {
@@ -397,10 +405,13 @@ async function runSeoScan({
 
   const scanStartedAt = Date.now();
   await report({ phase: "Loading Shopify articles", progress: 5 });
-  const [articles, linkedProducts, config, seoRows, shopDomains] = await Promise.all([
+  const [articles, catalogResources, linkedProducts, config, seoRows, resourceSeoRows, shopDomains] = await Promise.all([
     fetchShopifyArticles(admin, async (loadedPosts) => {
       const progress = Math.min(25, 5 + Math.ceil(loadedPosts / 100) * 3);
       await report({ phase: `Loading Shopify articles (${loadedPosts})`, progress, totalPosts: loadedPosts });
+    }),
+    fetchShopifyCatalogResources(admin, async (type, loaded) => {
+      await report({ phase: `Loading Shopify ${type}s (${loaded})`, progress: Math.min(25, 8 + Math.ceil(loaded / 100) * 2) });
     }),
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
@@ -428,6 +439,7 @@ async function runSeoScan({
         auditVersion: true,
       },
     }),
+    prisma.resourceSEO.findMany({ where: { shop }, select: { resourceId: true, resourceType: true, contentHash: true, sourceUpdatedAt: true } }),
     fetchShopDomains(admin, shop),
   ]);
   await report({ phase: "Analyzing SEO", progress: 30, totalPosts: articles.length });
@@ -563,13 +575,45 @@ async function runSeoScan({
     await report({ phase: "Saving results", progress: saveProgress, totalPosts: audits.length, processedPosts, analyzedPosts: analyzedCount });
   }
 
+  await report({ phase: "Analyzing product and collection SEO", progress: 96, totalPosts: articles.length + catalogResources.length, processedPosts: articles.length, analyzedPosts: analyzedCount });
+  const catalogAudits = catalogResources.map(auditCatalogResource);
+  applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "product"));
+  applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "collection"));
+  const storedResourceMap = new Map(resourceSeoRows.map((row) => [`${row.resourceType}:${row.resourceId}`, row]));
+  analyzedCount += catalogAudits.filter((audit) => {
+    const stored = storedResourceMap.get(`${audit.type}:${audit.id}`);
+    return !stored || stored.contentHash !== audit.contentHash || !datesEqual(stored.sourceUpdatedAt, audit.updatedAt ? new Date(audit.updatedAt) : null);
+  }).length;
+  for (let index = 0; index < catalogAudits.length; index += batchSize) {
+    const batch = catalogAudits.slice(index, index + batchSize);
+    await Promise.all(batch.map((audit) => saveCatalogAudit(shop, audit)));
+  }
+  for (const resourceType of ["product", "collection"] as const) {
+    await prisma.resourceSEO.deleteMany({ where: { shop, resourceType, resourceId: { notIn: catalogAudits.filter((audit) => audit.type === resourceType).map((audit) => audit.id) } } });
+  }
+  await report({ phase: "Saving catalog SEO results", progress: 99, totalPosts: articles.length + catalogAudits.length, processedPosts: articles.length + catalogAudits.length, analyzedPosts: analyzedCount });
+
   const durationMs = Date.now() - scanStartedAt;
-  console.info("SEO incremental scan timing", { shop, articles: articles.length, analyzedCount, fetchDurationMs, auditDurationMs, durationMs });
+  console.info("SEO incremental scan timing", { shop, articles: articles.length, catalogResources: catalogAudits.length, analyzedCount, fetchDurationMs, auditDurationMs, durationMs });
   return {
-    scannedCount: audits.length,
+    scannedCount: audits.length + catalogAudits.length,
     analyzedCount,
-    averageScore: getAverageScore(audits),
+    averageScore: getAverageScore([...audits, ...catalogAudits]),
   };
+}
+
+function saveCatalogAudit(shop: string, audit: CatalogSeoAudit) {
+  const data = {
+    shop, resourceType: audit.type, title: audit.title, handle: audit.handle, status: audit.status, seoScore: audit.score,
+    metaTitle: audit.effectiveSeoTitle, metaDescription: audit.effectiveSeoDescription,
+    imageUrl: audit.imageUrl, imageAlt: audit.imageAlt, issues: JSON.stringify(audit.issues), contentHash: audit.contentHash,
+    sourceUpdatedAt: audit.updatedAt ? new Date(audit.updatedAt) : null, lastAnalyzedAt: new Date(),
+  };
+  return prisma.resourceSEO.upsert({
+    where: { shop_resourceType_resourceId: { shop, resourceType: audit.type, resourceId: audit.id } },
+    update: data,
+    create: { ...data, resourceId: audit.id },
+  });
 }
 
 export default function SEOOptimizer() {
@@ -651,7 +695,7 @@ export default function SEOOptimizer() {
   useEffect(() => {
     if (!completedJobId || handledCompletedJobId.current === completedJobId) return;
     handledCompletedJobId.current = completedJobId;
-    shopify.toast.show(`SEO scan complete: ${currentJob?.totalPosts || 0} posts, average ${currentJob?.averageScore || 0}/100`);
+    shopify.toast.show(`SEO scan complete: ${currentJob?.totalPosts || 0} resources, average ${currentJob?.averageScore || 0}/100`);
     revalidator.revalidate();
   }, [completedJobId, currentJob?.averageScore, currentJob?.totalPosts, revalidator, shopify]);
   useEffect(() => {
@@ -715,7 +759,7 @@ export default function SEOOptimizer() {
               SEO Optimizer
             </Text>
             <Text as="p" variant="bodyMd" tone="subdued">
-              Identify and resolve SEO issues across Shopify blog posts. Scores are saved to ArticleSEO for Blog Manager and Overview.
+              Identify and resolve SEO issues across Shopify blog posts, products and collections.
             </Text>
           </BlockStack>
           <InlineStack gap="200" blockAlign="center">
@@ -736,6 +780,8 @@ export default function SEOOptimizer() {
           </InlineStack>
         </InlineStack>
 
+        <Card padding="200"><Tabs tabs={SEO_SCOPE_TABS} selected={0} onSelect={(index) => { if (index > 0) navigate(`/app/catalog-seo?type=${index === 1 ? "product" : "collection"}`); }} /></Card>
+
         {shopifyError && (
           <Card padding="400">
             <Text as="p" variant="bodyMd" tone="caution">
@@ -752,10 +798,10 @@ export default function SEOOptimizer() {
                   ? currentJob.error || "The worker could not complete this scan. You can run it again."
                   : currentJob.totalPosts > 0
                     ? currentJob.phase.startsWith("Saving")
-                      ? `${currentJob.processedPosts} of ${currentJob.totalPosts} posts saved. ${currentJob.analyzedPosts} changed posts analyzed.`
+                      ? `${currentJob.processedPosts} of ${currentJob.totalPosts} resources saved. ${currentJob.analyzedPosts} changed resources analyzed.`
                       : currentJob.phase.startsWith("Loading")
-                        ? `${currentJob.totalPosts} posts loaded from Shopify so far.`
-                        : `${currentJob.processedPosts} of ${currentJob.totalPosts} posts analyzed.`
+                        ? `${currentJob.totalPosts} resources loaded from Shopify so far.`
+                        : `${currentJob.processedPosts} of ${currentJob.totalPosts} resources analyzed.`
                     : "The scan is waiting for the background worker."}
               </Text>
               {currentJob.status !== "failed" && <ProgressBar progress={currentJob.progress} size="small" />}
