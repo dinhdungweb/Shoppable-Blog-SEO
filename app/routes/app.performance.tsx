@@ -5,7 +5,7 @@ import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
 import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, InlineGrid, InlineStack, Page, Text } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { AlertTriangleIcon, AppsIcon, BlogIcon, ChartVerticalIcon, CheckCircleIcon, ChevronDownIcon, CodeIcon, CollectionIcon, DesktopIcon, ExternalIcon, GaugeIcon, HomeIcon, ImageIcon, MobileIcon, ProductIcon, SearchIcon, SettingsIcon } from "@shopify/polaris-icons";
+import { AlertTriangleIcon, AppsIcon, BlogIcon, ChartVerticalIcon, CheckCircleIcon, ChevronDownIcon, CodeIcon, CollectionIcon, DesktopIcon, GaugeIcon, HomeIcon, ImageIcon, MobileIcon, ProductIcon, SearchIcon } from "@shopify/polaris-icons";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import performanceStyles from "../styles/performance.css?url";
@@ -56,7 +56,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: scan.error,
     })),
     hasApiKey: Boolean(process.env.GOOGLE_PAGESPEED_API_KEY),
-    themeEditorUrl: `https://${session.shop}/admin/themes/current/editor`,
   });
 };
 
@@ -200,12 +199,6 @@ export default function PerformancePage() {
               {report.warnings.length > 0 && <Banner tone="warning" title="Scan warnings"><BlockStack gap="100">{report.warnings.map((warning) => <p key={warning}>{warning}</p>)}</BlockStack></Banner>}
               <FieldDataCard fieldData={activeDevice.fieldData} />
               <LabDataCard report={activeDevice} device={device} />
-              <FixCenter
-                audits={activeDevice.opportunities}
-                pageType={selected}
-                pageUrl={report.url}
-                themeEditorUrl={initial.themeEditorUrl}
-              />
               <AuditReport audits={activeDevice.opportunities} passed={activeDevice.passedAudits} />
               <InlineStack align="end"><Button url={`https://pagespeed.web.dev/analysis?url=${encodeURIComponent(report.url)}`} target="_blank">Open full PageSpeed report</Button></InlineStack>
             </>}
@@ -235,113 +228,6 @@ const ChartIcon = ChartVerticalIcon;
 
 function LabDataCard({ report, device }: { report: ReturnType<typeof normalizeDeviceReport>; device: "mobile" | "desktop" }) {
   return <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><InlineStack gap="200" blockAlign="center"><span className="bp-section-icon is-purple"><Icon source={GaugeIcon} /></span><BlockStack gap="050"><Text as="h3" variant="headingMd">Diagnose performance issues</Text><Text as="p" variant="bodySm" tone="subdued">Emulated {device} test powered by Lighthouse</Text></BlockStack></InlineStack><Badge tone={scoreTone(report.categories.performance)}>{`${report.categories.performance}/100`}</Badge></InlineStack><div className="bp-lab-layout"><div className="bp-lab-score"><ScoreCard title="Performance" score={report.categories.performance} icon={GaugeIcon} /></div>{report.screenshot ? <div className="bp-page-screenshot"><img src={report.screenshot} alt={`Final ${device} screenshot of the tested storefront page`} /></div> : <div className="bp-page-screenshot is-empty"><Icon source={ImageIcon} /><Text as="p" tone="subdued">Screenshot unavailable</Text></div>}</div><Divider /><div className="bp-lab-metrics">{Object.entries(report.metrics).map(([label, value]) => <div className="bp-lab-metric" key={label}><span className="bp-metric-status" /><BlockStack gap="050"><Text as="p" variant="bodySm" tone="subdued">{metricName(label)}</Text><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack></div>)}</div></BlockStack></Card>;
-}
-
-type FixPath = "app" | "shopify" | "developer";
-
-type FixRecommendation = {
-  audit: StorefrontPerformanceReport["mobile"]["opportunities"][number];
-  path: FixPath;
-  priority: "High" | "Medium" | "Low";
-  guidance: string;
-  actionLabel: string;
-  actionUrl: string;
-  external: boolean;
-};
-
-function FixCenter({ audits, pageType, pageUrl, themeEditorUrl }: {
-  audits: StorefrontPerformanceReport["mobile"]["opportunities"];
-  pageType: PerformancePageType;
-  pageUrl: string;
-  themeEditorUrl: string;
-}) {
-  const [showAll, setShowAll] = useState(false);
-  const recommendations = audits.map((audit) => recommendFix(audit, pageType, pageUrl, themeEditorUrl));
-  const ordered = [...recommendations].sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
-  const visible = showAll ? ordered : ordered.slice(0, 6);
-  const counts = {
-    app: recommendations.filter((item) => item.path === "app").length,
-    shopify: recommendations.filter((item) => item.path === "shopify").length,
-    developer: recommendations.filter((item) => item.path === "developer").length,
-  };
-
-  return <Card padding="0">
-    <Box padding="400">
-      <BlockStack gap="300">
-        <InlineStack align="space-between" blockAlign="center" gap="300">
-          <InlineStack gap="200" blockAlign="center">
-            <span className="bp-section-icon is-green"><Icon source={SettingsIcon} /></span>
-            <BlockStack gap="050">
-              <Text as="h3" variant="headingMd">Fix Center</Text>
-              <Text as="p" variant="bodySm" tone="subdued">Turn Lighthouse findings into Shopify-safe next steps.</Text>
-            </BlockStack>
-          </InlineStack>
-          <Badge tone={ordered.length ? "warning" : "success"}>{ordered.length ? `${ordered.length} actions` : "All clear"}</Badge>
-        </InlineStack>
-        <div className="bp-fix-summary">
-          <FixSummary icon={BlogIcon} label="Fix in app" count={counts.app} tone="blue" />
-          <FixSummary icon={SettingsIcon} label="Fix in Shopify" count={counts.shopify} tone="orange" />
-          <FixSummary icon={CodeIcon} label="Developer required" count={counts.developer} tone="purple" />
-        </div>
-        <Banner tone="info"><p>Recommendations are review-only. Theme code and third-party apps are never changed automatically.</p></Banner>
-      </BlockStack>
-    </Box>
-    {visible.length > 0 && <>
-      <Divider />
-      <div className="bp-fix-list">
-        {visible.map((item) => <FixRow key={item.audit.id} item={item} />)}
-      </div>
-      {ordered.length > 6 && <Box padding="300"><InlineStack align="center"><Button variant="plain" onClick={() => setShowAll((value) => !value)}>{showAll ? "Show fewer actions" : `Show all ${ordered.length} actions`}</Button></InlineStack></Box>}
-    </>}
-  </Card>;
-}
-
-function FixSummary({ icon, label, count, tone }: { icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; label: string; count: number; tone: string }) {
-  return <div className="bp-fix-summary-card"><span className={`bp-fix-summary-icon is-${tone}`}><Icon source={icon} /></span><div><Text as="p" variant="headingLg" fontWeight="bold">{count}</Text><Text as="p" variant="bodySm" tone="subdued">{label}</Text></div></div>;
-}
-
-function FixRow({ item }: { item: FixRecommendation }) {
-  const pathLabel = item.path === "app" ? "Fix in app" : item.path === "shopify" ? "Fix in Shopify" : "Developer required";
-  const badgeTone = item.path === "app" ? "info" : item.path === "shopify" ? "warning" : undefined;
-  return <div className="bp-fix-row">
-    <span className={`bp-fix-priority is-${item.priority.toLowerCase()}`} aria-label={`${item.priority} priority`} />
-    <div className="bp-fix-copy">
-      <InlineStack gap="150" blockAlign="center"><Text as="h4" fontWeight="semibold">{item.audit.title}</Text><Badge tone={badgeTone}>{pathLabel}</Badge></InlineStack>
-      <Text as="p" variant="bodySm" tone="subdued">{item.guidance}</Text>
-      {item.audit.displayValue && <Text as="p" variant="bodySm"><strong>Measured impact:</strong> {item.audit.displayValue}</Text>}
-    </div>
-    <div className="bp-fix-action"><Badge tone={item.priority === "High" ? "critical" : item.priority === "Medium" ? "warning" : "info"}>{item.priority}</Badge><Button size="micro" icon={item.external ? ExternalIcon : undefined} url={item.actionUrl} target={item.external ? "_blank" : undefined}>{item.actionLabel}</Button></div>
-  </div>;
-}
-
-function recommendFix(audit: StorefrontPerformanceReport["mobile"]["opportunities"][number], pageType: PerformancePageType, pageUrl: string, themeEditorUrl: string): FixRecommendation {
-  const value = `${audit.id} ${audit.title} ${audit.group}`.toLowerCase();
-  const isImage = /image|unsized|aspect-ratio|offscreen/.test(value);
-  const isArticleEditable = pageType === "blog" && isImage;
-  const isDeveloper = /javascript|main-thread|render-blocking|third-part|deprecated|console|source-map|dom size|forced reflow|network dependency|legacy/.test(value);
-  const priority: FixRecommendation["priority"] = audit.score !== null && audit.score < 0.5 ? "High" : audit.score !== null && audit.score < 0.9 ? "Medium" : "Low";
-
-  if (isArticleEditable) return {
-    audit, path: "app", priority,
-    guidance: "Review article images in Blog Manager. Add dimensions and alt text, remove unnecessary images, and keep the main image appropriately sized.",
-    actionLabel: "Open Blog Manager", actionUrl: "/app/blogs", external: false,
-  };
-  if (isDeveloper) return {
-    audit, path: "developer", priority,
-    guidance: "Inspect the listed script or theme resource before changing it. Remove unused code, defer non-critical work, or contact the responsible theme or app developer.",
-    actionLabel: "View affected page", actionUrl: pageUrl, external: true,
-  };
-  return {
-    audit, path: "shopify", priority,
-    guidance: isImage
-      ? "Open the Shopify Theme Editor and review the affected image section. Use a suitable source image, reserve its aspect ratio, and avoid lazy-loading the above-the-fold hero image."
-      : "Review the affected section in Shopify Theme Editor. Preview the change before saving and rerun the scan to verify the result.",
-    actionLabel: "Open Theme Editor", actionUrl: themeEditorUrl, external: true,
-  };
-}
-
-function priorityRank(priority: FixRecommendation["priority"]) {
-  return priority === "High" ? 0 : priority === "Medium" ? 1 : 2;
 }
 
 function AuditReport({ audits, passed }: { audits: StorefrontPerformanceReport["mobile"]["opportunities"]; passed: StorefrontPerformanceReport["mobile"]["passedAudits"] }) {

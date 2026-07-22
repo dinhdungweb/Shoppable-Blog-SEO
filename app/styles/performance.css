@@ -40,7 +40,6 @@
 .bp-section-icon.is-blue { background: #e5f3ff; color: #0876c9; }
 .bp-section-icon.is-purple { background: #eeeaff; color: #654de4; }
 .bp-section-icon.is-orange { background: #fff0dc; color: #b65d00; }
-.bp-section-icon.is-green { background: #dcf5e8; color: #007a5c; }
 
 .bp-page-type-icon {
   width: 34px;
@@ -151,23 +150,6 @@
 .bp-lab-metric { display: flex; align-items: flex-start; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--p-color-border-secondary); }
 .bp-metric-status { width: 9px; height: 9px; margin-top: 6px; border-radius: 50%; background: #f4a62a; }
 
-.bp-fix-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.bp-fix-summary-card { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--p-color-border); border-radius: 10px; background: var(--p-color-bg-surface-secondary); }
-.bp-fix-summary-icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border-radius: 9px; }
-.bp-fix-summary-icon .Polaris-Icon { margin: 0; }
-.bp-fix-summary-icon.is-blue { color: #0876c9; background: #e5f3ff; }
-.bp-fix-summary-icon.is-orange { color: #b65d00; background: #fff0dc; }
-.bp-fix-summary-icon.is-purple { color: #654de4; background: #eeeaff; }
-.bp-fix-list { display: grid; }
-.bp-fix-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--p-color-border-secondary); }
-.bp-fix-row:last-child { border-bottom: 0; }
-.bp-fix-priority { width: 8px; height: 44px; border-radius: 999px; background: #8c9196; }
-.bp-fix-priority.is-high { background: #d82c0d; }
-.bp-fix-priority.is-medium { background: #f5a623; }
-.bp-fix-priority.is-low { background: #0aaf72; }
-.bp-fix-copy { display: grid; min-width: 0; gap: 5px; }
-.bp-fix-action { display: flex; min-width: 150px; align-items: flex-end; flex-direction: column; gap: 8px; }
-
 .bp-audit-filters { display: flex; flex-wrap: wrap; gap: 7px; }
 .bp-audit-filters button { padding: 6px 11px; cursor: pointer; border: 1px solid var(--p-color-border); border-radius: 999px; background: var(--p-color-bg-surface); font-size: 12px; }
 .bp-audit-filters button.is-active { color: #fff; border-color: #303030; background: #303030; }
@@ -197,9 +179,7 @@
     grid-template-columns: 1fr;
   }
   .bp-performance-hero .Polaris-InlineStack { align-items: flex-start; }
-  .bp-lab-layout, .bp-lab-metrics, .bp-passed-grid, .bp-fix-summary { grid-template-columns: 1fr; }
-  .bp-fix-row { grid-template-columns: 6px minmax(0, 1fr); padding: 14px; }
-  .bp-fix-action { grid-column: 2; min-width: 0; align-items: flex-start; flex-direction: row; }
+  .bp-lab-layout, .bp-lab-metrics, .bp-passed-grid { grid-template-columns: 1fr; }
   .bp-audit-row summary { grid-template-columns: 24px minmax(0, 1fr) 24px; }
   .bp-audit-value { grid-column: 2; text-align: left; }
   .bp-audit-chevron { grid-column: 3; grid-row: 1 / span 2; }
