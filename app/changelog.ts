@@ -72,6 +72,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "Product attribution now survives variant URL changes, with a storefront fallback for custom Shopify cart drawers that do not reliably emit the standard add-to-cart pixel event." },
       { type: "New", text: "Storefront Performance compares saved Lighthouse SEO, mobile speed and desktop speed reports for representative Shopify homepage, product, collection and blog pages." },
       { type: "Improved", text: "Performance reports surface Core Web Vitals lab metrics and prioritized Lighthouse opportunities without rescanning pages every time the app opens." },
+      { type: "Fixed", text: "Storefront Performance scans now run in the background and update automatically instead of holding the embedded app request open until Nginx returns a 504 timeout." },
     ],
   },
   {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
 import { Badge, Banner, BlockStack, Box, Button, Card, Divider, InlineGrid, InlineStack, Page, ProgressBar, Text } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
@@ -29,7 +29,9 @@ type SavedScan = {
   mobileScore: number;
   desktopScore: number;
   scannedAt: string;
-  report: StorefrontPerformanceReport;
+  report: StorefrontPerformanceReport | null;
+  status: string;
+  error: string | null;
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -47,8 +49,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       seoScore: scan.seoScore,
       mobileScore: scan.mobileScore,
       desktopScore: scan.desktopScore,
-      scannedAt: scan.scannedAt.toISOString(),
+      scannedAt: scan.scannedAt?.toISOString() || "",
       report: scan.report as unknown as StorefrontPerformanceReport,
+      status: scan.status,
+      error: scan.error,
     })),
     hasApiKey: Boolean(process.env.GOOGLE_PAGESPEED_API_KEY),
   });
@@ -66,22 +70,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const targets = await discoverPerformanceTargets(admin);
     const target = targets.find((item) => item.type === pageType);
     if (!target?.available) return json({ error: `No published ${labelFor(pageType).toLowerCase()} is available to scan.` }, { status: 404 });
-    const report = await runStorefrontPerformanceScan(target.url);
-    const scannedAt = new Date();
+    const existing = await prisma.storefrontPerformanceScan.findUnique({ where: { shop_pageType: { shop: session.shop, pageType } }, select: { status: true, updatedAt: true } });
+    const stillRunning = existing?.status === "running" && Date.now() - existing.updatedAt.getTime() < 3 * 60 * 1000;
+    if (stillRunning) return json({ success: true, queued: true, pageType }, { status: 202 });
     await prisma.storefrontPerformanceScan.upsert({
       where: { shop_pageType: { shop: session.shop, pageType } },
       update: {
-        pageTitle: target.title, pageUrl: target.url, seoScore: report.seoScore,
-        mobileScore: report.mobile.score, desktopScore: report.desktop.score,
-        report: report as unknown as Prisma.InputJsonValue, scannedAt,
+        pageTitle: target.title, pageUrl: target.url, status: "running", error: null,
       },
       create: {
         shop: session.shop, pageType, pageTitle: target.title, pageUrl: target.url,
-        seoScore: report.seoScore, mobileScore: report.mobile.score,
-        desktopScore: report.desktop.score, report: report as unknown as Prisma.InputJsonValue, scannedAt,
+        status: "running",
       },
     });
-    return json({ success: true, pageType, report, scannedAt: scannedAt.toISOString() });
+    void completePerformanceScan(session.shop, pageType, target);
+    return json({ success: true, queued: true, pageType }, { status: 202 });
   } catch (error) {
     console.error("Storefront performance scan failed", error instanceof Error ? error.message : String(error));
     const message = error instanceof Error && /quota|api key|daily limit/i.test(error.message)
@@ -91,33 +94,71 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
+async function completePerformanceScan(shop: string, pageType: PerformancePageType, target: PerformanceTarget) {
+  try {
+    const report = await runStorefrontPerformanceScan(target.url);
+    await prisma.storefrontPerformanceScan.update({
+      where: { shop_pageType: { shop, pageType } },
+      data: {
+        pageTitle: target.title,
+        pageUrl: target.url,
+        seoScore: report.seoScore,
+        mobileScore: report.mobile.score,
+        desktopScore: report.desktop.score,
+        report: report as unknown as Prisma.InputJsonValue,
+        scannedAt: new Date(),
+        status: "completed",
+        error: null,
+      },
+    });
+  } catch (error) {
+    console.error("Background storefront performance scan failed", error instanceof Error ? error.message : String(error));
+    await prisma.storefrontPerformanceScan.update({
+      where: { shop_pageType: { shop, pageType } },
+      data: { status: "failed", error: performanceErrorMessage(error) },
+    }).catch(() => undefined);
+  }
+}
+
+function performanceErrorMessage(error: unknown) {
+  return error instanceof Error && /quota|api key|daily limit/i.test(error.message)
+    ? "Google PageSpeed quota is unavailable. Configure GOOGLE_PAGESPEED_API_KEY or try again later."
+    : "The storefront could not be scanned. Confirm it is public and try again.";
+}
+
 export default function PerformancePage() {
   const initial = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const revalidator = useRevalidator();
   const shopify = useAppBridge();
   const handled = useRef<unknown>(null);
   const [selected, setSelected] = useState<PerformancePageType>(() => {
     const firstSaved = initial.scans[0]?.pageType as PerformancePageType | undefined;
     return firstSaved && PERFORMANCE_PAGE_TYPES.includes(firstSaved) ? firstSaved : "homepage";
   });
-  const response = fetcher.data as { success?: boolean; pageType?: PerformancePageType; report?: StorefrontPerformanceReport; scannedAt?: string; error?: string } | undefined;
+  const response = fetcher.data as { success?: boolean; queued?: boolean; pageType?: PerformancePageType; error?: string } | undefined;
 
   useEffect(() => {
     if (!response || handled.current === response) return;
     handled.current = response;
-    if (response.success) shopify.toast.show(`${labelFor(response.pageType || selected)} report updated`);
+    if (response.success) shopify.toast.show(`${labelFor(response.pageType || selected)} scan started`);
     if (response.error) shopify.toast.show(response.error, { isError: true });
   }, [response, selected, shopify]);
 
   const savedByType = useMemo(() => new Map(initial.scans.map((scan) => [scan.pageType, scan as SavedScan])), [initial.scans]);
   const target = initial.targets.find((item) => item.type === selected) as PerformanceTarget | undefined;
   const saved = savedByType.get(selected);
-  const liveReport = response?.success && response.pageType === selected && response.report ? response.report : null;
-  const report = liveReport || saved?.report || null;
-  const scannedAt = liveReport ? response?.scannedAt : saved?.scannedAt;
-  const scanning = fetcher.state !== "idle";
+  const report = saved?.report || null;
+  const scannedAt = saved?.scannedAt;
+  const scanning = fetcher.state !== "idle" || saved?.status === "running";
   const overall = report ? Math.round((report.seoScore + report.mobile.score + report.desktop.score) / 3) : 0;
   const scan = () => fetcher.submit({ intent: "scan", pageType: selected }, { method: "post" });
+
+  useEffect(() => {
+    if (!initial.scans.some((scan) => scan.status === "running")) return;
+    const timer = window.setInterval(() => revalidator.revalidate(), 2500);
+    return () => window.clearInterval(timer);
+  }, [initial.scans, revalidator]);
 
   return <Page fullWidth>
     <TitleBar title="Storefront Performance"><button variant="primary" disabled={scanning || !target?.available} onClick={scan}>{scanning ? "Scanning..." : report ? "Recheck page" : "Run scan"}</button></TitleBar>
@@ -128,6 +169,8 @@ export default function PerformancePage() {
       </InlineStack>
       {!initial.hasApiKey && <Banner tone="info" title="Using shared PageSpeed quota"><p>Add GOOGLE_PAGESPEED_API_KEY on the server for reliable recurring scans. Saved reports remain available if Google temporarily limits new requests.</p></Banner>}
       {response?.error && <Banner tone="critical"><p>{response.error}</p></Banner>}
+      {saved?.status === "failed" && <Banner tone="critical" title="Performance scan failed"><p>{saved.error || "The storefront could not be scanned. Please try again."}</p></Banner>}
+      {saved?.status === "running" && <Banner tone="info" title="PageSpeed scan is running"><p>Mobile and desktop Lighthouse checks continue in the background. This page will update automatically.</p></Banner>}
 
       <div className="bp-performance-layout">
         <Box padding="400" background="bg-surface-secondary">

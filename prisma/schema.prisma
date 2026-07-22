@@ -318,11 +318,13 @@ model StorefrontPerformanceScan {
   pageType     String
   pageTitle    String
   pageUrl      String
-  seoScore     Int
-  mobileScore  Int
-  desktopScore Int
-  report       Json
-  scannedAt    DateTime @default(now())
+  seoScore     Int      @default(0)
+  mobileScore  Int      @default(0)
+  desktopScore Int      @default(0)
+  report       Json?
+  status       String   @default("completed")
+  error        String?
+  scannedAt    DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
