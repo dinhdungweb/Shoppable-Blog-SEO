@@ -1,5 +1,3 @@
-import crypto from "node:crypto";
-
 export type CatalogResourceType = "product" | "collection";
 
 export type CatalogResourceInput = {
@@ -108,12 +106,19 @@ export function applyCatalogDuplicateIssues(audits: CatalogSeoAudit[]) {
 }
 
 export function getCatalogContentHash(resource: CatalogResourceInput) {
-  return crypto.createHash("sha256").update(JSON.stringify({
+  const value = JSON.stringify({
     title: resource.title, handle: resource.handle, descriptionHtml: resource.descriptionHtml,
     status: resource.status, seoTitle: resource.seoTitle, seoDescription: resource.seoDescription,
     imageUrl: resource.imageUrl, imageAlt: resource.imageAlt, imageWidth: resource.imageWidth,
     imageHeight: resource.imageHeight, itemCount: resource.itemCount,
-  })).digest("hex");
+  });
+  // A fast deterministic fingerprint is sufficient here; this value only detects changed content.
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 function issue(type: string, label: string, impact: CatalogSeoIssue["impact"], effort: CatalogSeoIssue["effort"], fix: string): CatalogSeoIssue {

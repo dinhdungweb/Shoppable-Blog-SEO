@@ -187,6 +187,7 @@ model ResourceSEO {
   imageUrl        String    @default("")
   imageAlt        String    @default("")
   issues          String?
+  issueCount      Int       @default(0)
   contentHash     String?
   sourceUpdatedAt DateTime?
   lastAnalyzedAt  DateTime?
@@ -195,6 +196,7 @@ model ResourceSEO {
 
   @@unique([shop, resourceType, resourceId])
   @@index([shop, resourceType, seoScore])
+  @@index([shop, resourceType, issueCount])
   @@index([shop, sourceUpdatedAt])
 }
 

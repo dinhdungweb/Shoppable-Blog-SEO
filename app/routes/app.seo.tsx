@@ -47,6 +47,7 @@ import { getPublicSeoScanError } from "../seo-scan-error";
 import { SEARCH_CONSOLE_TOTAL_PAGE, createAuthorizationUrl, disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
 import { applyCatalogDuplicateIssues, auditCatalogResource, type CatalogSeoAudit } from "../catalog-seo";
 import { fetchShopifyCatalogResources } from "../catalog-seo.server";
+import catalogSeoStyles from "../styles/catalog-seo.css?url";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -607,6 +608,7 @@ function saveCatalogAudit(shop: string, audit: CatalogSeoAudit) {
     shop, resourceType: audit.type, title: audit.title, handle: audit.handle, status: audit.status, seoScore: audit.score,
     metaTitle: audit.effectiveSeoTitle, metaDescription: audit.effectiveSeoDescription,
     imageUrl: audit.imageUrl, imageAlt: audit.imageAlt, issues: JSON.stringify(audit.issues), contentHash: audit.contentHash,
+    issueCount: audit.issues.length,
     sourceUpdatedAt: audit.updatedAt ? new Date(audit.updatedAt) : null, lastAnalyzedAt: new Date(),
   };
   return prisma.resourceSEO.upsert({
@@ -780,7 +782,7 @@ export default function SEOOptimizer() {
           </InlineStack>
         </InlineStack>
 
-        <Card padding="200"><Tabs tabs={SEO_SCOPE_TABS} selected={0} onSelect={(index) => { if (index > 0) navigate(`/app/catalog-seo?type=${index === 1 ? "product" : "collection"}`); }} /></Card>
+        <div className="bp-seo-scope-tabs"><Tabs tabs={SEO_SCOPE_TABS} selected={0} onSelect={(index) => { if (index > 0) navigate(`/app/catalog-seo?type=${index === 1 ? "product" : "collection"}`); }} /></div>
 
         {shopifyError && (
           <Card padding="400">
@@ -2306,6 +2308,7 @@ function datesEqual(left: Date | null | undefined, right: Date | null) {
 
 export function links() {
   return [
+    { rel: "stylesheet", href: catalogSeoStyles },
     {
       rel: "stylesheet",
       href:

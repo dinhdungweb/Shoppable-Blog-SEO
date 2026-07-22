@@ -30,6 +30,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "New", text: "A configurable raw-event retention command keeps long-term daily reports while controlling database growth." },
       { type: "New", text: "SEO scans now run in a persistent background queue with live progress, cancellation, failure recovery and optional weekly scheduling." },
       { type: "New", text: "Internal Linking Assistant suggests related articles and natural anchors, detects orphan and broken links, maps topic clusters, and inserts links only after approval." },
+      { type: "New", text: "Products and collections now have dedicated Shopify-aware SEO editors for content, search listings, URL handles and issue guidance." },
       { type: "Improved", text: "Internal Linking reports are saved per shop and organized into overview, suggestions, issues and topic cluster tabs." },
       { type: "Improved", text: "Merchants can leave SEO Optimizer while a scan runs, avoiding long browser requests and timeouts on large stores." },
       { type: "Fixed", text: "Uninstall and privacy cleanup now includes analytics aggregates, Search Console records, bulk-change history and SEO scan jobs." },
@@ -76,6 +77,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Storefront Performance now includes full Lighthouse category scores, real-user Core Web Vitals, page screenshots, lab metrics, grouped diagnostics, expandable audit details and passed checks in a more visual Shopify-native report." },
       { type: "Improved", text: "Storefront Performance now keeps Homepage as the automatic target and replaces fixed product, collection and blog targets with one saved Other page URL chosen by the merchant." },
       { type: "New", text: "SEO Optimizer now audits active Shopify products and collections alongside blog posts, with separate scores, issue lists, pagination and direct links to the native Shopify editors." },
+      { type: "Fixed", text: "Product and collection SEO reports now use Shopify-native pagination and redirect invalid page numbers to the last available page." },
+      { type: "Improved", text: "Product and collection SEO now include compact scope tabs, store-wide issue summaries, search and status filters, richer statistics and a detailed review dialog with Shopify-specific fixes." },
     ],
   },
   {
