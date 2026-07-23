@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   Badge,
   Banner,
@@ -263,6 +263,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     done: boolean;
     actionUrl?: string;
     actionLabel?: string;
+    actionError?: string;
   };
 
   const setupItems: SetupItem[] = [
@@ -276,7 +277,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     {
       label: "Conversion tracking (Web Pixel) active",
       done: webPixelEnabled,
-      actionLabel: webPixelError === "Checking…" ? "Checking…" : webPixelError ? `Error: ${webPixelError}` : undefined
+      actionLabel: webPixelError === "Checking…" ? "Checking…" : "Activate",
+      actionError: webPixelError && webPixelError !== "Checking…" ? webPixelError : undefined,
     },
     { label: "Products linked to posts", done: linkedProducts.length > 0 },
     { label: "Tracking events received", done: everEventCount > 0 },
@@ -330,6 +332,7 @@ export default function Dashboard() {
   const data = useLoaderData<any>();
   const setupFetcher = useFetcher<any>();
   const pixelFetcher = useFetcher<any>();
+  const pixelAutoActivationAttempted = useRef(false);
   const navigate = useNavigate();
   const revalidator = useRevalidator();
 
@@ -346,6 +349,19 @@ export default function Dashboard() {
   useEffect(() => {
     if (pixelFetcher.data?.success) setupFetcher.load("/app/dashboard-status");
   }, [pixelFetcher.data, setupFetcher]);
+
+  useEffect(() => {
+    if (
+      pixelAutoActivationAttempted.current
+      || setupFetcher.state !== "idle"
+      || !setupFetcher.data
+      || setupFetcher.data.webPixelEnabled
+      || setupFetcher.data.webPixelError
+      || pixelFetcher.state !== "idle"
+    ) return;
+    pixelAutoActivationAttempted.current = true;
+    pixelFetcher.submit({ intent: "activate_pixel" }, { method: "post", action: "/app/dashboard-status" });
+  }, [pixelFetcher, setupFetcher.data, setupFetcher.state]);
 
   if (data?.needsRevalidation) {
     return (
@@ -424,7 +440,7 @@ export default function Dashboard() {
               <BlockStack gap="300">
                 {setup.items.map((item: any) => (
                   <ProgressItem
-                    key={item.label} label={item.label} done={item.done} actionUrl={item.actionUrl} actionLabel={item.actionLabel}
+                    key={item.label} label={item.label} done={item.done} actionUrl={item.actionUrl} actionLabel={item.actionLabel} actionError={item.actionError}
                     loading={item.label === "Conversion tracking (Web Pixel) active" && pixelFetcher.state !== "idle"}
                     onAction={item.label === "Conversion tracking (Web Pixel) active"
                       ? () => pixelFetcher.submit({ intent: "activate_pixel" }, { method: "post", action: "/app/dashboard-status" })
@@ -704,7 +720,7 @@ export default function Dashboard() {
   );
 }
 
-function ProgressItem({ label, done, actionUrl, actionLabel, onAction, loading }: { label: string; done: boolean; actionUrl?: string; actionLabel?: string; onAction?: () => void; loading?: boolean }) {
+function ProgressItem({ label, done, actionUrl, actionLabel, actionError, onAction, loading }: { label: string; done: boolean; actionUrl?: string; actionLabel?: string; actionError?: string; onAction?: () => void; loading?: boolean }) {
   return (
     <InlineStack align="space-between" blockAlign="center">
       <InlineStack gap="200" blockAlign="center">
@@ -717,10 +733,11 @@ function ProgressItem({ label, done, actionUrl, actionLabel, onAction, loading }
         <Badge tone="success">Done</Badge>
       ) : actionLabel === "Checking…" ? (
         <Badge tone="info">Checking…</Badge>
-      ) : actionLabel?.startsWith("Error:") ? (
-        <Badge tone="critical">{actionLabel}</Badge>
       ) : actionUrl || onAction ? (
-        <Button size="micro" url={actionUrl} target={actionUrl ? "_blank" : undefined} onClick={onAction} loading={loading}>{actionLabel || "Enable"}</Button>
+        <InlineStack gap="200" blockAlign="center">
+          {actionError ? <Badge tone="critical">{`Error: ${actionError}`}</Badge> : null}
+          <Button size="micro" url={actionUrl} target={actionUrl ? "_blank" : undefined} onClick={onAction} loading={loading}>{actionError ? "Retry" : actionLabel || "Enable"}</Button>
+        </InlineStack>
       ) : (
         <Badge tone="new">Pending</Badge>
       )}
@@ -1066,7 +1083,12 @@ function mergeSetupStatus(setup: any, status: any, pixelActionError?: string) {
   if (!status || status.error) return setup;
   const items = setup.items.map((item: any) => {
     if (item.label === "App enabled in theme") return { ...item, done: Boolean(status.appEmbedEnabled), actionLabel: status.appEmbedError || (status.appEmbedEnabled ? undefined : "Enable") };
-    if (item.label === "Conversion tracking (Web Pixel) active") return { ...item, done: Boolean(status.webPixelEnabled), actionLabel: pixelActionError ? `Error: ${pixelActionError}` : status.webPixelError ? `Error: ${status.webPixelError}` : status.webPixelEnabled ? undefined : "Activate" };
+    if (item.label === "Conversion tracking (Web Pixel) active") return {
+      ...item,
+      done: Boolean(status.webPixelEnabled),
+      actionLabel: status.webPixelEnabled ? undefined : "Activate",
+      actionError: pixelActionError || status.webPixelError || undefined,
+    };
     return item;
   });
   const done = items.filter((item: any) => item.done).length;

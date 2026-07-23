@@ -32,6 +32,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "SEO Optimizer and Catalog Manager tabs no longer reserve an empty measurement row, and Catalog Manager metric icons now stay aligned beside their values." },
       { type: "Fixed", text: "Opening a saved SEO issue for an article that was deleted in Shopify now returns to SEO Optimizer with refresh guidance instead of showing an in-app 404 page." },
       { type: "Improved", text: "The app identity is now RankAI SEO Audit & Optimizer across Shopify configuration, the theme extension, documentation, and privacy policy." },
+      { type: "Fixed", text: "New installs now attempt to activate conversion tracking automatically, while Web Pixel status errors keep a visible Retry action instead of replacing the button." },
     ],
   },
   {
