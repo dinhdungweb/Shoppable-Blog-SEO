@@ -3,7 +3,7 @@ import { useLoaderData } from "@remix-run/react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
-    appName: "Shoppable Blog & SEO",
+    appName: "RankAI SEO Audit & Optimizer",
     lastUpdated: new Date().toLocaleDateString("en-US", { year: 'numeric', month: 'long', day: 'numeric' })
   });
 };

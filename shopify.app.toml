@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "138ef9418d0be545a3a246a0dfc4b365"
-name = "Shoppable Blog & SEO"
+name = "RankAI SEO Audit & Optimizer"
 application_url = "https://shopable-blog.bluepeaks.top"
 embedded = true
 
