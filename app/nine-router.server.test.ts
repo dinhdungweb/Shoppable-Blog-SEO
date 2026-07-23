@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createNineRouterResponseError, getNineRouterGenerationOptions, getPublicNineRouterErrorMessage, isReasoningModel, readNineRouterJson } from "./nine-router.server";
+import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, getPublicNineRouterErrorMessage, isReasoningModel, readNineRouterJson } from "./nine-router.server";
 
 afterEach(() => {
   delete process.env.NINE_ROUTER_REASONING_EFFORT;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("9Router model options", () => {
@@ -57,5 +58,13 @@ describe("9Router model options", () => {
     const response = new Response('{"ok":true}unexpected', { status: 200 });
 
     await expect(readNineRouterJson(response)).rejects.toThrow();
+  });
+
+  it("times out without aborting or cancelling the response stream", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+
+    const error = await fetchNineRouter("http://127.0.0.1/test", {}, 5).catch((caught) => caught);
+
+    expect(getPublicNineRouterErrorMessage(error, "Fallback")).toBe("AI took too long to respond. Please try again.");
   });
 });

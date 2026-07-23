@@ -1,5 +1,5 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
-import { createNineRouterResponseError, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
+import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
 export const CONTENT_REFRESH_FIELDS = ["title", "body", "excerpt", "metaTitle", "metaDescription"] as const;
 export type ContentRefreshField = typeof CONTENT_REFRESH_FIELDS[number];
@@ -86,10 +86,9 @@ export async function generateContentRefresh(input: ContentRefreshInput): Promis
   const signalIds = new Set(signals.map((signal) => signal.id));
   const queryNames = new Set(queries.map((query) => query.query));
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
       stream: false,
@@ -131,7 +130,7 @@ export async function generateContentRefresh(input: ContentRefreshInput): Promis
         },
       ],
     }),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     throw await createNineRouterResponseError(response, "content refresh");

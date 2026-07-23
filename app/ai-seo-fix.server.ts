@@ -1,6 +1,6 @@
 import type { SeoAuditIssue } from "./seo-audit";
 import { isNineRouterConfigured } from "./ai-seo.server";
-import { createNineRouterResponseError, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
+import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
 export const AI_SEO_FIX_FIELDS = ["body", "excerpt", "metaTitle", "metaDescription", "featuredImageAlt"] as const;
 
@@ -86,13 +86,12 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
   const currentBody = input.body;
   const selectedTypes = new Set(issues.map((issue) => issue.type));
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
       stream: false,
@@ -141,7 +140,7 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
         },
       ],
     }),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     throw await createNineRouterResponseError(response, "SEO fixes");
@@ -213,6 +212,7 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
   if (!Array.isArray(value)) return [];
   const changes: AiSeoFixChange[] = [];
   const seenFields = new Set<string>();
+  let firstValidationError: unknown;
 
   for (const raw of value) {
     if (!raw || typeof raw !== "object") continue;
@@ -226,7 +226,15 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
     let after = stringValue(item.after).trim();
     if (!after) continue;
 
-    if (field === "body") validateBodyChange(input.body, after, issueTypes);
+    if (field === "body") {
+      try {
+        validateBodyChange(input.body, after, issueTypes);
+      } catch (error) {
+        firstValidationError ||= error;
+        console.warn("Rejected unsafe or structurally invalid AI body change", error instanceof Error ? error.message : String(error));
+        continue;
+      }
+    }
     else after = cleanLine(after);
     const limit = field === "metaTitle" ? 70 : field === "metaDescription" ? 160 : field === "excerpt" ? 400 : field === "featuredImageAlt" ? 255 : MAX_ARTICLE_CHARS;
     if (after.length > limit) throw new Error(`9Router returned ${field} over the allowed length`);
@@ -242,6 +250,7 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
     seenFields.add(field);
   }
 
+  if (!changes.length && firstValidationError) throw firstValidationError;
   return changes;
 }
 

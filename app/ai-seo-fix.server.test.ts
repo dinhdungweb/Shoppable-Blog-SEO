@@ -60,6 +60,32 @@ describe("AI SEO Fix Copilot", () => {
     await expect(generateAiSeoFix(baseInput())).rejects.toThrow("preserve the article links");
   });
 
+  it("keeps valid metadata when an unsafe body change is rejected", async () => {
+    configure();
+    stubResult({
+      summary: "Improved metadata.",
+      changes: [
+        {
+          field: "body",
+          after: '<p>Changed.</p><script>alert(1)</script><img src="https://cdn.example.com/a.jpg">[[SBS_PRODUCTS:featured]]',
+          explanation: "Rewrites the body.",
+          issueTypes: ["kw_early"],
+        },
+        {
+          field: "metaTitle",
+          after: "Travel Bag Guide and Tips",
+          explanation: "Improves the title.",
+          issueTypes: ["kw_title"],
+        },
+      ],
+      manualActions: [],
+    });
+
+    const result = await generateAiSeoFix(baseInput());
+
+    expect(result.changes).toEqual([expect.objectContaining({ field: "metaTitle", after: "Travel Bag Guide and Tips" })]);
+  });
+
   it("keeps unsafe tasks as manual actions", async () => {
     configure();
     stubResult({

@@ -1,5 +1,5 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
-import { createNineRouterResponseError, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
+import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
 export type AiCatalogProduct = {
   id: string;
@@ -52,13 +52,12 @@ export async function generateAiProductRecommendations(
   );
   const products = input.products.slice(0, MAX_CATALOG_PRODUCTS);
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
       stream: false,
@@ -98,7 +97,7 @@ export async function generateAiProductRecommendations(
         },
       ],
     }),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     throw await createNineRouterResponseError(response, "product recommendations");

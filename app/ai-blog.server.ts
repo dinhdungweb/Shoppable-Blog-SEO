@@ -1,5 +1,5 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
-import { createNineRouterResponseError, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
+import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
 export type AiWritingMode = "draft" | "improve" | "expand" | "shorten";
 
@@ -49,13 +49,12 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
   const currentBody = input.body.slice(0, MAX_ARTICLE_CHARS);
   const requiredProductMarkers = currentBody.match(PRODUCT_MARKER_PATTERN) || [];
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
       stream: false,
@@ -88,7 +87,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
         },
       ],
     }),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     throw await createNineRouterResponseError(response, "blog draft");

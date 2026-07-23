@@ -1,4 +1,4 @@
-import { createNineRouterResponseError, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
+import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
 type SeoSuggestionInput = {
   id: string;
@@ -36,13 +36,12 @@ export async function generateAiSeoSuggestion(input: SeoSuggestionInput): Promis
   const timeoutMs = Number.isFinite(timeoutValue) && timeoutValue >= 1_000
     ? Math.min(timeoutValue, 60_000)
     : DEFAULT_TIMEOUT_MS;
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
       stream: false,
@@ -64,7 +63,7 @@ export async function generateAiSeoSuggestion(input: SeoSuggestionInput): Promis
         },
       ],
     }),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     throw await createNineRouterResponseError(response, "bulk SEO suggestions");

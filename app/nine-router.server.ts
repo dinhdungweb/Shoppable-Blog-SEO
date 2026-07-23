@@ -7,6 +7,27 @@ class NineRouterUpstreamError extends Error {
   }
 }
 
+class NineRouterTimeoutError extends Error {
+  constructor() {
+    super("9Router request timed out");
+    this.name = "NineRouterTimeoutError";
+  }
+}
+
+export async function fetchNineRouter(url: string, init: RequestInit, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fetch(url, init),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new NineRouterTimeoutError()), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function createNineRouterResponseError(response: Response, operation: string) {
   const detail = (await response.text()).slice(0, 500);
   console.error("9Router upstream request failed", {
@@ -28,6 +49,10 @@ export async function createNineRouterResponseError(response: Response, operatio
 
 export function getPublicNineRouterErrorMessage(error: unknown, fallback: string) {
   if (error instanceof NineRouterUpstreamError) return error.publicMessage;
+  if (error instanceof NineRouterTimeoutError) {
+    console.error("9Router request timed out");
+    return "AI took too long to respond. Please try again.";
+  }
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
     console.error("9Router request timed out", { name: error.name });
     return "AI took too long to respond. Please try again.";
