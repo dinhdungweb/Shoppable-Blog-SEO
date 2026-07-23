@@ -83,6 +83,7 @@ describe("AI SEO Fix Copilot", () => {
     expect(result.changes[0]).toEqual(expect.objectContaining({
       field: "body",
       after: '<p>A practical travel bag introduction.</p><img src="https://cdn.example.com/a.jpg">[[SBS_PRODUCTS:featured]]',
+      replacements: [{ find: "Original introduction.", replace: "A practical travel bag introduction." }],
     }));
   });
 
@@ -118,6 +119,10 @@ describe("AI SEO Fix Copilot", () => {
     expect(result.changes[0]).toEqual(expect.objectContaining({
       field: "body",
       after: '<p style="text-align: left">First sentence.</p><p>Second sentence.</p>',
+      replacements: [{
+        find: "First sentence. Second sentence.",
+        replace: "First sentence.</p><p>Second sentence.",
+      }],
     }));
     expect(result.manualActions).toEqual([]);
   });

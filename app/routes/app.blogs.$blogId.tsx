@@ -2139,7 +2139,14 @@ export default function ArticleDetail() {
         if (!metaTitleTouched) setMetaTitle(change.after);
         if (isNewPost && !handleTouched) setHandle(slugifyKeyword(change.after));
       } else if (change.field === "body") {
-        const safeBody = sanitizeEditorPasteHtml(change.after, stripHtml(change.after));
+        const patchedBody = change.replacements?.length
+          ? applySeoFixReplacements(nextBody, change.replacements)
+          : change.after;
+        if (!patchedBody) {
+          shopify.toast.show("The paragraph changed after AI generated this fix. Run Fix with AI again.", { isError: true });
+          return;
+        }
+        const safeBody = sanitizeEditorPasteHtml(patchedBody, stripHtml(patchedBody));
         if (!safeBody) {
           shopify.toast.show("AI returned an empty article body.", { isError: true });
           return;
@@ -3117,7 +3124,7 @@ export default function ArticleDetail() {
               <Card key={change.field} padding="300">
                 <BlockStack gap="300">
                   <Checkbox
-                    label={`Apply ${seoFixFieldLabel(change.field)}`}
+                    label={`Apply ${seoFixChangeLabel(change)}`}
                     checked={selectedSeoFixFields.includes(change.field)}
                     onChange={(checked) => setSelectedSeoFixFields((current) => checked
                       ? [...new Set([...current, change.field])]
@@ -3131,9 +3138,14 @@ export default function ArticleDetail() {
                     <SeoFixPreview
                       label="Before"
                       field={change.field}
-                      value={seoFixBase ? seoFixSnapshotValue(seoFixBase, change.field) : ""}
+                      value={seoFixBase ? seoFixChangePreview(change, seoFixSnapshotValue(seoFixBase, change.field), "before") : ""}
                     />
-                    <SeoFixPreview label="After" field={change.field} value={change.after} changed />
+                    <SeoFixPreview
+                      label="After"
+                      field={change.field}
+                      value={seoFixChangePreview(change, change.after, "after")}
+                      changed
+                    />
                   </InlineGrid>
                 </BlockStack>
               </Card>
@@ -5582,6 +5594,35 @@ function seoFixFieldLabel(field: AiSeoFixField) {
     featuredImageAlt: "featured image alt text",
   };
   return labels[field];
+}
+
+function seoFixChangeLabel(change: AiSeoFixSuggestion["changes"][number]) {
+  if (change.field === "body" && change.issueTypes.includes("paragraph_length")) return "paragraph change";
+  return seoFixFieldLabel(change.field);
+}
+
+function seoFixChangePreview(
+  change: AiSeoFixSuggestion["changes"][number],
+  fallback: string,
+  side: "before" | "after",
+) {
+  if (change.field !== "body" || !change.replacements?.length) return fallback;
+  return change.replacements
+    .map((replacement) => side === "before" ? replacement.find : replacement.replace)
+    .join("\n\n");
+}
+
+function applySeoFixReplacements(
+  currentBody: string,
+  replacements: NonNullable<AiSeoFixSuggestion["changes"][number]["replacements"]>,
+) {
+  let updated = currentBody;
+  for (const replacement of replacements) {
+    const firstIndex = updated.indexOf(replacement.find);
+    if (firstIndex < 0 || updated.indexOf(replacement.find, firstIndex + replacement.find.length) >= 0) return "";
+    updated = `${updated.slice(0, firstIndex)}${replacement.replace}${updated.slice(firstIndex + replacement.find.length)}`;
+  }
+  return updated;
 }
 
 function seoFixSnapshotValue(snapshot: SeoFixSnapshot, field: AiSeoFixField) {

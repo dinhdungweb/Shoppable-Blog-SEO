@@ -9,8 +9,14 @@ export type AiSeoFixField = typeof AI_SEO_FIX_FIELDS[number];
 export type AiSeoFixChange = {
   field: AiSeoFixField;
   after: string;
+  replacements?: AiSeoFixReplacement[];
   explanation: string;
   issueTypes: string[];
+};
+
+export type AiSeoFixReplacement = {
+  find: string;
+  replace: string;
 };
 
 export type AiSeoFixManualAction = {
@@ -321,8 +327,9 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
     if (!issueTypes.length || issueTypes.every(isManualOnlySeoIssue)) continue;
     if (selectedTypes.size === 1 && selectedTypes.has("article_title") && field !== "title") continue;
     if (selectedTypes.size === 1 && selectedTypes.has("excerpt_summary") && field !== "excerpt") continue;
+    const bodyReplacement = field === "body" ? parseBodyReplacements(input.body, item.replacements) : null;
     let after = field === "body"
-      ? applyBodyReplacements(input.body, item.replacements) || stringValue(item.after).trim()
+      ? bodyReplacement?.after || stringValue(item.after).trim()
       : stringValue(item.after).trim();
     if (!after) continue;
 
@@ -344,6 +351,7 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
     changes.push({
       field,
       after,
+      ...(bodyReplacement?.replacements.length ? { replacements: bodyReplacement.replacements } : {}),
       explanation: cleanLine(item.explanation).slice(0, 500) || "Improves the selected SEO issue.",
       issueTypes,
     });
@@ -362,20 +370,22 @@ function seoIssueGroup(type: string) {
   return "content";
 }
 
-function applyBodyReplacements(original: string, value: unknown) {
-  if (!Array.isArray(value) || !value.length || value.length > 12) return "";
+function parseBodyReplacements(original: string, value: unknown) {
+  if (!Array.isArray(value) || !value.length || value.length > 12) return null;
   let updated = original;
+  const replacements: AiSeoFixReplacement[] = [];
   for (const raw of value) {
-    if (!raw || typeof raw !== "object") return "";
+    if (!raw || typeof raw !== "object") return null;
     const item = raw as Record<string, unknown>;
     const find = stringValue(item.find);
     const replace = stringValue(item.replace);
-    if (find.length < 3 || find.length > 4_000 || replace.length > 8_000) return "";
+    if (find.length < 3 || find.length > 4_000 || replace.length > 8_000) return null;
     const firstIndex = updated.indexOf(find);
-    if (firstIndex < 0 || updated.indexOf(find, firstIndex + find.length) >= 0) return "";
+    if (firstIndex < 0 || updated.indexOf(find, firstIndex + find.length) >= 0) return null;
     updated = `${updated.slice(0, firstIndex)}${replace}${updated.slice(firstIndex + find.length)}`;
+    replacements.push({ find, replace });
   }
-  return updated === original ? "" : updated;
+  return updated === original ? null : { after: updated, replacements };
 }
 
 function parseManualActions(value: unknown, selectedTypes: Set<string>) {
