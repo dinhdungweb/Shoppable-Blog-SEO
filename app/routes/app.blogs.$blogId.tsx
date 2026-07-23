@@ -1398,6 +1398,7 @@ export default function ArticleDetail() {
   const [selectedSeoFixFields, setSelectedSeoFixFields] = useState<AiSeoFixField[]>([]);
   const [seoFixBase, setSeoFixBase] = useState<SeoFixSnapshot | null>(null);
   const [seoFixUndo, setSeoFixUndo] = useState<SeoFixSnapshot | null>(null);
+  const [seoFixLoadingTarget, setSeoFixLoadingTarget] = useState<string | null>(null);
   const [contentRefreshOpen, setContentRefreshOpen] = useState(Boolean(contentRefreshRequested && contentRefresh.canUse && contentRefresh.aiEnabled));
   const [contentRefreshReviewOpen, setContentRefreshReviewOpen] = useState(false);
   const [contentRefreshSuggestion, setContentRefreshSuggestion] = useState<ContentRefreshSuggestion | null>(null);
@@ -1709,6 +1710,10 @@ export default function ArticleDetail() {
   }, [seoFixFetcher.data, shopify]);
 
   useEffect(() => {
+    if (seoFixFetcher.state === "idle") setSeoFixLoadingTarget(null);
+  }, [seoFixFetcher.state]);
+
+  useEffect(() => {
     const data = contentRefreshFetcher.data as any;
     if (!data || handledContentRefreshFetcherDataRef.current === data) return;
     handledContentRefreshFetcherDataRef.current = data;
@@ -2004,7 +2009,7 @@ export default function ArticleDetail() {
     focusKeyword,
   ]);
 
-  const handleGenerateSeoFix = useCallback((issuesToFix: SeoIssue[]) => {
+  const handleGenerateSeoFix = useCallback((issuesToFix: SeoIssue[], loadingTarget: string) => {
     if (!aiEnabled) {
       shopify.toast.show("Configure 9Router before using SEO Fix Copilot.", { isError: true });
       return;
@@ -2028,6 +2033,7 @@ export default function ArticleDetail() {
     formData.append("featuredImageAlt", featuredImageAlt);
     formData.append("hasFeaturedImage", activeImage ? "true" : "false");
     formData.append("focusKeyword", focusKeyword);
+    setSeoFixLoadingTarget(loadingTarget);
     seoFixFetcher.submit(formData, { method: "POST" });
   }, [activeImage, aiEnabled, body, effectiveMetaTitle, excerpt, featuredImageAlt, focusKeyword, isDirty, metaDescription, metaTitleTouched, seoFixFetcher, shopify, title]);
 
@@ -2581,26 +2587,17 @@ export default function ArticleDetail() {
                   keywordScores={keywordScores}
                 />
                 
-                {seoFixUndo && (
-                  <Card padding="300">
-                    <InlineStack align="space-between" blockAlign="center" gap="300">
-                      <BlockStack gap="050">
-                        <Text as="span" variant="bodyMd" fontWeight="semibold">AI SEO fixes are in this draft</Text>
-                        <Text as="span" variant="bodySm" tone="subdued">Nothing is published until you save the post.</Text>
-                      </BlockStack>
-                      <Button size="micro" onClick={handleUndoSeoFix}>Undo AI changes</Button>
-                    </InlineStack>
-                  </Card>
-                )}
-
                 <RecommendationsCard
                   issues={seoIssues.filter((i: any) => i.severity !== 'good')}
                   onApplyAll={handleApplySeoSuggestions}
                   onManageProducts={() => setSelectedTab(1)}
                   aiEnabled={aiEnabled}
                   aiLoading={isSeoFixGenerating}
-                  onFixIssue={(issue) => handleGenerateSeoFix([issue])}
-                  onFixAll={() => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"))}
+                  aiLoadingTarget={seoFixLoadingTarget}
+                  undoAvailable={Boolean(seoFixUndo)}
+                  onUndo={handleUndoSeoFix}
+                  onFixIssue={(issue) => handleGenerateSeoFix([issue], issue.type)}
+                  onFixAll={() => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all")}
                 />
               </BlockStack>
             )}
@@ -2666,7 +2663,7 @@ export default function ArticleDetail() {
                   <BlockStack gap="200">
                     <Text as="h3" variant="headingMd">Internal link assistant</Text>
                     <Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text>
-                    <Button url={`/app/pricing?reason=internal_linking&plan=${planKey}`}>Upgrade to Pro</Button>
+                    <InlineStack align="end"><Button size="micro" url={`/app/pricing?reason=internal_linking&plan=${planKey}`}>Upgrade to Pro</Button></InlineStack>
                   </BlockStack>
                 </Card>
               )}
@@ -5079,13 +5076,13 @@ function ContentRefreshCard({
           {context.canUse && available > 0 && <Badge>{`${context.queries.length} search queries`}</Badge>}
         </InlineStack>
         {!context.canUse ? (
-          <Button fullWidth onClick={onOpen}>Upgrade to Growth</Button>
+          <InlineStack align="end"><Button size="micro" onClick={onOpen}>Upgrade to Growth</Button></InlineStack>
         ) : available === 0 ? (
-          <Button fullWidth url="/app/content-decay">Analyze content</Button>
+          <InlineStack align="end"><Button size="micro" url="/app/content-decay">Analyze content</Button></InlineStack>
         ) : (
-          <Button fullWidth variant="primary" icon={MagicIcon} loading={loading} disabled={!context.aiEnabled} onClick={onOpen}>
+          <InlineStack align="end"><Button size="micro" variant="primary" icon={MagicIcon} loading={loading} disabled={!context.aiEnabled} onClick={onOpen}>
             Plan refresh
-          </Button>
+          </Button></InlineStack>
         )}
       </BlockStack>
     </Card>
@@ -5098,6 +5095,9 @@ function RecommendationsCard({
   onManageProducts,
   aiEnabled,
   aiLoading,
+  aiLoadingTarget,
+  undoAvailable,
+  onUndo,
   onFixIssue,
   onFixAll,
 }: {
@@ -5106,6 +5106,9 @@ function RecommendationsCard({
   onManageProducts: () => void;
   aiEnabled: boolean;
   aiLoading: boolean;
+  aiLoadingTarget: string | null;
+  undoAvailable: boolean;
+  onUndo: () => void;
   onFixIssue: (issue: SeoIssue) => void;
   onFixAll: () => void;
 }) {
@@ -5119,7 +5122,10 @@ function RecommendationsCard({
             <Text as="h3" variant="headingMd" fontWeight="bold">SEO Fix Copilot</Text>
             <Text as="p" variant="bodySm" tone="subdued">Review every AI change before adding it to your draft.</Text>
           </BlockStack>
-          {aiEnabled ? <Badge tone="magic">AI ready</Badge> : <Badge>9Router required</Badge>}
+          <InlineStack gap="200" blockAlign="center">
+            {aiEnabled ? <Badge tone="magic">AI ready</Badge> : <Badge>9Router required</Badge>}
+            {undoAvailable && <Button size="micro" onClick={onUndo}>Undo AI changes</Button>}
+          </InlineStack>
         </InlineStack>
         <BlockStack gap="300">
           {!recommendations.length && (
@@ -5150,6 +5156,7 @@ function RecommendationsCard({
                   icon={issue.type === "products" ? LinkIcon : MagicIcon}
                   onClick={() => issue.type === "products" ? onManageProducts() : onFixIssue(issue)}
                   disabled={aiLoading || (!aiEnabled && issue.type !== "products")}
+                  loading={issue.type !== "products" && aiLoadingTarget === issue.type}
                 >
                   {issue.type === "products" ? "Manage" : "Fix with AI"}
                 </Button>
@@ -5157,12 +5164,12 @@ function RecommendationsCard({
             </Card>
           ))}
         </BlockStack>
-        <ButtonGroup fullWidth>
-          <Button fullWidth onClick={onApplyAll} disabled={aiLoading}>Apply basic metadata</Button>
-          <Button fullWidth variant="primary" icon={MagicIcon} onClick={onFixAll} loading={aiLoading} disabled={!aiEnabled || !issues.length}>
+        <InlineStack align="end" gap="200">
+          <Button size="micro" onClick={onApplyAll} disabled={aiLoading}>Apply basic metadata</Button>
+          <Button size="micro" variant="primary" icon={MagicIcon} onClick={onFixAll} loading={aiLoadingTarget === "all"} disabled={aiLoading || !aiEnabled || !issues.length}>
             Fix all with AI
           </Button>
-        </ButtonGroup>
+        </InlineStack>
       </BlockStack>
     </Card>
   );
