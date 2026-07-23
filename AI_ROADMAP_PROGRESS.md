@@ -1,7 +1,7 @@
 # AI roadmap và tiến độ triển khai
 
 > Cập nhật lần cuối: 2026-07-23
-> Đối chiếu với nhánh `main` tại `8f6c88e` và phần AI Image SEO hàng loạt đang hoàn thiện trong worktree
+> Đối chiếu với nhánh `main` tại `3b3583d`
 > Mục đích: lưu lại các đề xuất AI đã trao đổi, trạng thái thực tế trong mã nguồn và thứ tự nên làm tiếp.
 
 Danh sách dưới đây được dựng lại từ các đề xuất trong cuộc trao đổi hiện tại; tên hạng mục được chuẩn hóa để dùng lâu dài làm roadmap kỹ thuật.
@@ -24,8 +24,10 @@ Các nền tảng hỗ trợ đã hoàn thành thêm:
 
 - Kết nối 9Router theo chuẩn OpenAI-compatible API.
 - Hỗ trợ model reasoning như `codex/gpt-5.5` với `reasoning_effort` hợp lệ.
+- Fallback nhiều tầng cho model không hỗ trợ `json_schema`/`response_format`, kèm bộ trích xuất và kiểm tra JSON dùng chung.
 - AI Bulk SEO cho meta title, meta description và alt ảnh đại diện.
 - Content Decay Monitor và Google Search Console làm nguồn dữ liệu cho Content Refresh.
+- Content Brief xác minh sản phẩm Shopify, chèn product block và liên kết sản phẩm tự động khi lưu bài.
 
 ## 3. Roadmap gốc và trạng thái hiện tại
 
@@ -36,7 +38,7 @@ Các nền tảng hỗ trợ đã hoàn thành thêm:
 | 3 | SEO Fix Copilot | **Hoàn thành** | Sửa từng lỗi hoặc tất cả; giải thích; preview trước/sau; chọn field; Apply/Undo; lỗi cần dữ liệu thật chuyển thành manual action | Commit `02beded`; `app/ai-seo-fix.server.ts` |
 | 4 | AI Internal Link Copilot | **Hoàn thành** | Lọc ứng viên deterministic trước khi gửi 9Router; AI đánh giá ngữ nghĩa và ích lợi cho reader, đề xuất nhiều anchor khớp chính xác ngữ cảnh, cảnh báo cannibalization/anchor risk; preview Before/After; chọn nhiều, Apply batch và Undo; URL đích luôn được xác minh lại từ Shopify | `app/ai-internal-linking.server.ts`; `app/internal-linking.ts`; `app/routes/app.internal-links.tsx`; `InternalLinkChange` |
 | 5 | AI Content Refresh Copilot | **Hoàn thành** | Dùng Content Decay và query thật từ Search Console; chọn signal/query; sửa title, body, excerpt và metadata; preview, chọn field, Apply/Undo; giữ link, ảnh, alt, TOC và product block | Commit `2321487`; `app/ai-content-refresh.server.ts`; `app/content-refresh-context.ts` |
-| 6 | AI Content Brief & Keyword Cluster | **Hoàn thành** | Workspace tạo và lưu brief từ Shopify + Search Console; search intent, audience, objective, angle, keyword cluster, entity, H2/H3, câu hỏi, internal link, product placement và cannibalization; tái tạo từng phần; tạo draft điền sẵn trong editor | `app/ai-content-brief.server.ts`; `app/content-brief-context.ts`; `app/routes/app.content-briefs.tsx`; `ContentBrief` |
+| 6 | AI Content Brief & Keyword Cluster | **Hoàn thành** | Workspace tạo và lưu brief từ Shopify + Search Console; search intent, audience, objective, angle, keyword cluster, entity, H2/H3, câu hỏi, internal link, product placement và cannibalization; tái tạo từng phần; tạo draft điền sẵn; xác minh và tự liên kết sản phẩm vào block khi lưu bài | `app/ai-content-brief.server.ts`; `app/content-brief-context.ts`; `app/content-brief-products.ts`; `app/routes/app.content-briefs.tsx`; `ContentBrief` |
 | 7 | AI Image SEO hàng loạt | **Hoàn thành** | Quét featured và inline images; AI alt theo ngữ cảnh; filter/select/edit/preview; Apply tối đa 100 thay đổi; lịch sử và guarded Undo theo batch; giữ nguyên src, dimensions và thuộc tính ngoài alt | `app/image-seo.ts`; `app/ai-image-seo.server.ts`; `app/routes/app.image-seo.tsx`; `ImageSeoChange` |
 | 8 | AI FAQ + Schema Generator | **Chưa làm** | Hiện có BlogPosting, BreadcrumbList và schema điều hướng/TOC, nhưng chưa có AI sinh FAQ từ nội dung, review câu hỏi/câu trả lời và xuất FAQPage JSON-LD | `extensions/shoppable-blog-widget/blocks/sbs-seo-schema.liquid`; chưa có AI FAQ service |
 
@@ -173,6 +175,9 @@ Trạng thái: **Hoàn thành**.
 - Phát hiện bài có khả năng cạnh tranh, giải thích rủi ro và gợi ý differentiate, consolidate, update hoặc proceed.
 - Cho tái tạo độc lập strategy, keyword cluster, outline, questions, internal links, product placements và cannibalization review.
 - Tạo bài hoàn chỉnh từ brief rồi mở Blog Editor mới với title, handle, body, excerpt, metadata và focus keywords điền sẵn.
+- Product placement trong brief chỉ dùng sản phẩm Shopify đã được server xác minh; ứng dụng tự tạo marker block riêng, không dùng tên sản phẩm làm shortcode.
+- Tab Products của bài mới hiển thị đầy đủ ảnh, tên, giá và trạng thái **Ready on save** cho các sản phẩm đang chờ liên kết.
+- Khi merchant lưu bài, các sản phẩm đã xác minh được ghi vào đúng article ID và đúng product block; không cần thêm lại thủ công.
 - Draft chỉ nằm trong editor; merchant vẫn phải review và Save để ghi lên Shopify, không có auto-publish.
 - Khi Search Console chưa kết nối, workspace thông báo rõ và vẫn tạo brief từ dữ liệu Shopify mà không bịa query.
 - Có test cho context ranking, query competition, allowlist article/product/query và brief thiếu outline.
@@ -245,15 +250,22 @@ Các mục dưới đây không làm thay đổi trạng thái chức năng chí
 
 Hạng mục hardening này nên được xử lý trước khi mở rộng thêm các thao tác AI batch lên body HTML.
 
+Các hạng mục vận hành storefront đã hoàn thành:
+
+- Đồng bộ Theme App Extension với App Proxy đang hoạt động tại `/apps/shoppable-blog-seo`.
+- Widget sản phẩm tự ẩn khi proxy lỗi, thiếu cấu hình hoặc không có sản phẩm; thông tin kỹ thuật chỉ ghi trong DevTools Console, không hiển thị cho khách.
+- Cần chạy `shopify app deploy --allow-updates` sau khi thay đổi Theme App Extension; chỉ Git push hoặc restart PM2 không cập nhật asset storefront.
+
 ## 9. Kết quả kiểm tra gần nhất
 
-Sau khi hoàn thành AI Internal Link Copilot, AI Content Brief & Keyword Cluster và AI Image SEO hàng loạt trong worktree ngày 2026-07-23:
+Sau khi hoàn thành các Copilot, hardening tương thích model, liên kết sản phẩm Content Brief và sửa App Proxy ngày 2026-07-23:
 
 - `npx prisma validate`: pass.
-- `npm test`: **109/109 test pass**, 27 test files.
+- `npm test`: **127/127 test pass**, 28 test files.
 - `npm run typecheck`: pass.
 - `npm run lint`: pass.
 - `npm run build`: pass.
+- `npx shopify app build`: pass.
 
 Các cảnh báo build còn thấy là cảnh báo có sẵn từ CSS/Remix dependency, không phải lỗi build của các Copilot AI.
 
@@ -264,4 +276,7 @@ Các cảnh báo build còn thấy là cảnh báo có sẵn từ CSS/Remix depe
 - **2026-07-23**: hoàn thành AI Internal Link Copilot với AI review, preview, batch apply và guarded Undo.
 - **2026-07-23**: hoàn thành AI Content Brief & Keyword Cluster, lưu brief theo shop, tái tạo từng phần và chuyển thành draft điền sẵn trong Blog Editor.
 - **2026-07-23**: hoàn thành AI Image SEO hàng loạt cho featured/inline images, AI review theo ngữ cảnh, preview, guarded Apply và Undo toàn batch.
+- **2026-07-23**: hardening toàn bộ luồng JSON của 9Router để chạy với model hỗ trợ `json_schema`, chỉ hỗ trợ JSON object hoặc không hỗ trợ `response_format`.
+- **2026-07-23**: hoàn thành product block cho Content Brief: xác minh catalog thật, hiển thị danh sách chờ lưu và tự liên kết sản phẩm khi tạo bài.
+- **2026-07-23**: sửa App Proxy storefront về `/apps/shoppable-blog-seo` và ẩn lỗi kỹ thuật của widget khỏi giao diện khách hàng.
 - **2026-07-23**: xác nhận AI FAQ + Schema Generator là hạng mục AI chính cuối cùng chưa triển khai.
