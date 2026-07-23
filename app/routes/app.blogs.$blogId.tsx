@@ -326,6 +326,34 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const briefProductBlockId = savedBrief
       ? getContentBriefProductBlockId(savedBrief.id)
       : DEFAULT_PRODUCT_BLOCK_ID;
+    let pendingBriefProducts: PendingBriefProduct[] = briefProductPlacements.map((placement) => ({
+      ...placement,
+      productHandle: productHandleFromUrl(placement.productUrl),
+      productImage: "",
+      productPrice: "",
+      blockId: briefProductBlockId,
+    }));
+    if (savedBrief && briefProductPlacements.length) {
+      try {
+        const verified = await loadVerifiedContentBriefProducts(admin, shop, savedBrief.id);
+        const placementMap = new Map(briefProductPlacements.map((placement) => [placement.productId, placement]));
+        pendingBriefProducts = verified.products.flatMap((product) => {
+          const placement = placementMap.get(product.id);
+          if (!placement) return [];
+          return [{
+            ...placement,
+            productTitle: product.title,
+            productUrl: `/products/${product.handle}`,
+            productHandle: product.handle,
+            productImage: product.featuredImage?.url || "",
+            productPrice: product.priceRangeV2?.minVariantPrice?.amount || "0",
+            blockId: verified.blockId,
+          }];
+        });
+      } catch (error) {
+        console.warn("Could not enrich pending Content Brief products", error);
+      }
+    }
     const briefPrefill = savedBrief && contentBrief ? {
       id: savedBrief.id,
       primaryKeyword: contentBrief.primaryKeyword || "",
@@ -336,6 +364,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       hasDraft: Boolean(contentDraft?.bodyHtml),
       productBlockId: briefProductBlockId,
       productPlacements: briefProductPlacements,
+      pendingProducts: pendingBriefProducts,
     } : null;
     if (contentBrief) {
       article.title = contentDraft?.title || contentBrief.title || "";
@@ -356,7 +385,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       body: article.body,
       hasImage: false,
       imageAlt: "",
-      productCount: briefProductPlacements.length,
+      productCount: pendingBriefProducts.length,
       authorName: article.author?.name || defaultAuthorName,
       publishedAt: article.publishedAt,
       updatedAt: article.updatedAt,
@@ -1649,8 +1678,8 @@ export default function ArticleDetail() {
 
   const effectiveMetaTitle = metaTitleTouched ? metaTitle || title : title;
   const pendingBriefProducts = useMemo(
-    () => isNewPost ? briefPrefill?.productPlacements || [] : [],
-    [briefPrefill?.productPlacements, isNewPost],
+    () => isNewPost ? briefPrefill?.pendingProducts || [] : [],
+    [briefPrefill?.pendingProducts, isNewPost],
   );
   const displayedProductCount = embeddedProducts.length + pendingBriefProducts.length;
 
@@ -1679,9 +1708,9 @@ export default function ArticleDetail() {
   const productBlockOptions = useMemo(
     () => buildProductBlockOptions(body, [
       ...embeddedProducts,
-      ...pendingBriefProducts.map(() => ({ blockId: briefPrefill?.productBlockId })),
+      ...pendingBriefProducts,
     ]),
-    [body, briefPrefill?.productBlockId, embeddedProducts, pendingBriefProducts],
+    [body, embeddedProducts, pendingBriefProducts],
   );
   const selectedProductBlock =
     productBlockOptions.find((block) => block.id === selectedProductBlockId) || productBlockOptions[0];
@@ -5193,7 +5222,7 @@ function ProductsPanel({
   onOpenStyleModal,
 }: {
   products: any[];
-  pendingProducts: ContentBriefProductPlacement[];
+  pendingProducts: PendingBriefProduct[];
   blocks: ProductBlockOption[];
   selectedBlockId: string;
   onBlockChange: (blockId: string) => void;
@@ -5208,6 +5237,21 @@ function ProductsPanel({
 }) {
   const selectedBlock = blocks.find((block) => block.id === selectedBlockId) || blocks[0];
   const selectedShortcode = selectedBlock?.marker || "[[SBS_PRODUCTS]]";
+  const tableProducts = [
+    ...products.map((product) => ({ ...product, pending: false })),
+    ...pendingProducts.map((product) => ({
+      id: `pending:${product.productId}`,
+      productId: product.productId,
+      productTitle: product.productTitle,
+      productHandle: product.productHandle,
+      productImage: product.productImage,
+      productPrice: product.productPrice,
+      displayStyle: "card",
+      clicks: 0,
+      ctr: 0,
+      pending: true,
+    })),
+  ];
   const [shortcodeCopied, setShortcodeCopied] = useState(false);
 
   useEffect(() => {
@@ -5300,10 +5344,10 @@ function ProductsPanel({
       </Card>
 
       <Card padding="0">
-        {products.length > 0 ? (
+        {tableProducts.length > 0 ? (
           <IndexTable
             resourceName={{ singular: "product", plural: "products" }}
-            itemCount={products.length}
+            itemCount={tableProducts.length}
             headings={[
               { title: "Product" },
               { title: "Price" },
@@ -5314,67 +5358,61 @@ function ProductsPanel({
             ]}
             selectable={false}
           >
-            {products.map((product, index) => (
+            {tableProducts.map((product, index) => (
               <IndexTable.Row id={product.id} key={product.id} position={index}>
                 <IndexTable.Cell>
                   <InlineStack gap="300" blockAlign="center" wrap={false}>
                     <Thumbnail source={product.productImage || ImageIcon} alt={product.productTitle} size="small" />
-                    <Text as="span" variant="bodyMd" fontWeight="semibold">
-                      {product.productTitle}
-                    </Text>
+                    <BlockStack gap="050">
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">
+                        {product.productTitle}
+                      </Text>
+                      {product.pending && <Badge tone="info">Ready on save</Badge>}
+                    </BlockStack>
                   </InlineStack>
                 </IndexTable.Cell>
-                <IndexTable.Cell>{formatProductPrice(product.productPrice)}</IndexTable.Cell>
-                <IndexTable.Cell>{product.clicks}</IndexTable.Cell>
-                <IndexTable.Cell>{formatPercent(product.ctr)}</IndexTable.Cell>
                 <IndexTable.Cell>
-                  <Button size="micro" onClick={() => onOpenStyleModal(product.id, product.displayStyle)}>
-                    {styleLabel(product.displayStyle)}
-                  </Button>
+                  {product.productPrice ? formatProductPrice(product.productPrice) : "—"}
+                </IndexTable.Cell>
+                <IndexTable.Cell>{product.pending ? "—" : product.clicks}</IndexTable.Cell>
+                <IndexTable.Cell>{product.pending ? "—" : formatPercent(product.ctr)}</IndexTable.Cell>
+                <IndexTable.Cell>
+                  {product.pending ? (
+                    <Badge>Card</Badge>
+                  ) : (
+                    <Button size="micro" onClick={() => onOpenStyleModal(product.id, product.displayStyle)}>
+                      {styleLabel(product.displayStyle)}
+                    </Button>
+                  )}
                 </IndexTable.Cell>
                 <IndexTable.Cell>
                   <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <InlineStack wrap={false} gap="200" blockAlign="center">
-                    <ButtonGroup variant="segmented">
-                      <Button
-                        size="micro"
-                        icon={ArrowUpIcon}
-                        disabled={index === 0}
-                        onClick={() => onMoveProduct(index, "up")}
-                      />
-                      <Button
-                        size="micro"
-                        icon={ArrowDownIcon}
-                        disabled={index === products.length - 1}
-                        onClick={() => onMoveProduct(index, "down")}
-                      />
-                    </ButtonGroup>
-                    <Button size="micro" icon={DeleteIcon} tone="critical" onClick={() => onRemoveProduct(product.id)} />
-                    </InlineStack>
+                    {product.pending ? (
+                      <Badge tone="attention">Pending</Badge>
+                    ) : (
+                      <InlineStack wrap={false} gap="200" blockAlign="center">
+                        <ButtonGroup variant="segmented">
+                          <Button
+                            size="micro"
+                            icon={ArrowUpIcon}
+                            disabled={index === 0}
+                            onClick={() => onMoveProduct(index, "up")}
+                          />
+                          <Button
+                            size="micro"
+                            icon={ArrowDownIcon}
+                            disabled={index === products.length - 1}
+                            onClick={() => onMoveProduct(index, "down")}
+                          />
+                        </ButtonGroup>
+                        <Button size="micro" icon={DeleteIcon} tone="critical" onClick={() => onRemoveProduct(product.id)} />
+                      </InlineStack>
+                    )}
                   </div>
                 </IndexTable.Cell>
               </IndexTable.Row>
             ))}
           </IndexTable>
-        ) : pendingProducts.length > 0 ? (
-          <Box padding="600">
-            <BlockStack gap="300">
-              <InlineStack gap="200" blockAlign="center">
-                <Badge tone="info">Ready on save</Badge>
-                <Text as="h3" variant="headingMd">
-                  Content Brief selected {pendingProducts.length} product{pendingProducts.length === 1 ? "" : "s"}
-                </Text>
-              </InlineStack>
-              <Text as="p" tone="subdued">
-                These verified Shopify products will be linked to this block automatically when you create the post.
-              </Text>
-              <ul>
-                {pendingProducts.map((product) => (
-                  <li key={product.productId}>{product.productTitle}</li>
-                ))}
-              </ul>
-            </BlockStack>
-          </Box>
         ) : (
           <Box padding="600">
             <EmptyState
@@ -6564,6 +6602,17 @@ type VerifiedBriefProduct = {
   featuredImage: { url?: string | null } | null;
   priceRangeV2: { minVariantPrice?: { amount?: string | null } | null } | null;
 };
+
+type PendingBriefProduct = ContentBriefProductPlacement & {
+  productHandle: string;
+  productImage: string;
+  productPrice: string;
+  blockId: string;
+};
+
+function productHandleFromUrl(value: string) {
+  return value.split("?")[0].split("#")[0].split("/").filter(Boolean).pop() || "";
+}
 
 async function loadVerifiedContentBriefProducts(
   admin: any,

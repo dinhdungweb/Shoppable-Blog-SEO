@@ -62,7 +62,7 @@
     if (!source) return DEFAULT_CONFIG;
 
     const shop = source.dataset.shop || "";
-    const appUrl = normalizeAppUrl(source.dataset.appUrl || "/apps/rankai-seo-audit-optimizer");
+    const appUrl = normalizeAppUrl(source.dataset.appUrl || "/apps/shoppable-blog-seo");
     if (!shop) return DISABLED_CONFIG;
 
     const response = await fetch(contentNavUrl(appUrl, shop), {
@@ -122,7 +122,7 @@
     element.className = type === "toc" ? "bp-content-nav bp-toc" : "bp-content-nav bp-breadcrumbs";
     element.dataset.bpContentNav = type;
     element.dataset.shop = context.dataset.shop || "";
-    element.dataset.appUrl = context.dataset.appUrl || "/apps/rankai-seo-audit-optimizer";
+    element.dataset.appUrl = context.dataset.appUrl || "/apps/shoppable-blog-seo";
     element.dataset.homeLabel = context.dataset.homeLabel || "";
     element.dataset.homeUrl = context.dataset.homeUrl || "/";
     element.dataset.blogTitle = context.dataset.blogTitle || "";
@@ -549,7 +549,7 @@
   }
 
   function normalizeAppUrl(value) {
-    return (value || "/apps/rankai-seo-audit-optimizer").replace(/\/+$/, "");
+    return (value || "/apps/shoppable-blog-seo").replace(/\/+$/, "");
   }
 
   function absoluteUrl(value) {

@@ -6,7 +6,6 @@
   const WIDGET_SELECTOR = ".bp-widget";
   const CAROUSEL_TRACK_SELECTOR = ".bp-carousel__track";
   const GRID_CONTAINER_SELECTOR = ".bp-grid__container";
-  const LOADING_SELECTOR = ".bp-widget__loading";
   const DEFAULT_BLOCK_ID = "default";
   const STOREFRONT_ATTRIBUTION_KEY = "sbs_storefront_attribution";
   const ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -79,7 +78,7 @@
     widget.className = style === "grid" ? "bp-widget bp-grid" : "bp-widget bp-carousel";
     widget.dataset.articleId = config.dataset.articleId || "";
     widget.dataset.shop = config.dataset.shop || "";
-    widget.dataset.appUrl = config.dataset.appUrl || "/apps/rankai-seo-audit-optimizer";
+    widget.dataset.appUrl = config.dataset.appUrl || "/apps/shoppable-blog-seo";
     widget.dataset.style = style;
     widget.dataset.blockId = marker.blockId;
     widget.dataset.styleLocked = marker.styleLocked ? "true" : "false";
@@ -152,19 +151,19 @@
 
     const articleId = widget.dataset.articleId;
     const shop = widget.dataset.shop;
-    const appUrl = widget.dataset.appUrl || "/apps/rankai-seo-audit-optimizer";
+    const appUrl = widget.dataset.appUrl || "/apps/shoppable-blog-seo";
     const style = widget.dataset.style || "carousel";
     const blockId = cleanBlockId(widget.dataset.blockId);
 
     if (!articleId) {
       console.warn("[SBS Widget] Missing article ID");
-      showError(widget, "Shoppable Blog marker only works on blog article pages.");
+      hideWidget(widget);
       return;
     }
 
     if (!shop) {
       console.warn("[SBS Widget] Missing shop domain");
-      showError(widget, "Shoppable Blog marker is missing the shop domain.");
+      hideWidget(widget);
       return;
     }
 
@@ -183,7 +182,7 @@
 
       const config = payload.config || {};
       if (!payload.products || payload.products.length === 0) {
-        showEmpty(widget);
+        hideWidget(widget);
         return;
       }
 
@@ -198,7 +197,7 @@
       });
     } catch (error) {
       console.error("[SBS Widget] Failed to load products", error);
-      showError(widget, "Unable to load products. Check that the app proxy is active.");
+      hideWidget(widget);
     }
   }
 
@@ -399,7 +398,7 @@
       if (!attribution) return;
 
       trackEvent(
-        config.dataset.appUrl || "/apps/rankai-seo-audit-optimizer",
+        config.dataset.appUrl || "/apps/shoppable-blog-seo",
         attribution.shop || config.dataset.shop || "",
         attribution.articleId,
         attribution.blockId,
@@ -740,7 +739,7 @@
   }
 
   function normalizeAppUrl(value) {
-    return (value || "/apps/rankai-seo-audit-optimizer").replace(/\/+$/, "");
+    return (value || "/apps/shoppable-blog-seo").replace(/\/+$/, "");
   }
 
   function cleanBlockId(value) {
@@ -760,19 +759,9 @@
     return sessionId;
   }
 
-  function showEmpty(widget) {
-    const loading = widget.querySelector(LOADING_SELECTOR);
-    if (loading) loading.innerHTML = '<p class="bp-widget__empty">No products to display.</p>';
-  }
-
   function hideWidget(widget) {
     widget.innerHTML = "";
     widget.style.display = "none";
-  }
-
-  function showError(widget, message) {
-    const loading = widget.querySelector(LOADING_SELECTOR);
-    if (loading) loading.innerHTML = `<p class="bp-widget__empty">${escapeHtml(message)}</p>`;
   }
 
   function loadingMarkup() {

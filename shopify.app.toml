@@ -25,7 +25,7 @@ redirect_urls = [
 
 [app_proxy]
 url = "https://shopable-blog.bluepeaks.top/api"
-subpath = "rankai-seo-audit-optimizer"
+subpath = "shoppable-blog-seo"
 prefix = "apps"
 
 [webhooks.privacy_compliance]
