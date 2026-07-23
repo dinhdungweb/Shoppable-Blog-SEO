@@ -36,19 +36,12 @@ export default function App() {
       <CrispChatLoader shop={shop} />
       <NavMenu>
         <Link to="/app" rel="home">
-          Dashboard
+          Overview
         </Link>
-        <Link to="/app/blogs">Blog Manager</Link>
-        <Link to="/app/catalog-seo?view=manager&type=product">Catalog Manager</Link>
-        <Link to="/app/seo">SEO Optimizer</Link>
-        <Link to="/app/performance">Performance</Link>
-        <Link to="/app/internal-links">Internal Linking</Link>
-        <Link to="/app/content-briefs">Content Briefs</Link>
-        <Link to="/app/image-seo">Image SEO</Link>
-        <Link to="/app/content-decay">Content Decay</Link>
-        <Link to="/app/analytics">Analytics</Link>
-        <Link to="/app/changelog">What's new</Link>
-        <Link to="/app/pricing">Pricing</Link>
+        <Link to="/app/blogs">Content Studio</Link>
+        <Link to="/app/seo">SEO Center</Link>
+        <Link to="/app/catalog-seo?view=manager&type=product">Catalog</Link>
+        <Link to="/app/analytics">Insights</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />

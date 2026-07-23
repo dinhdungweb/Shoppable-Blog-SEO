@@ -40,6 +40,10 @@ import {
 import prisma from "../db.server";
 import { getPublicNineRouterErrorMessage } from "../nine-router.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
+import {
+  CONTENT_WORKSPACE_TABS,
+  WorkspaceTabs,
+} from "../components/WorkspaceTabs";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 type SerializedBrief = {
@@ -284,7 +288,7 @@ export default function ContentBriefsPage() {
   const activeSection = String(fetcher.formData?.get("section") || "");
 
   if (!initial.canUse) {
-    return <Page><TitleBar title="AI Content Brief" /><Card><EmptyState heading="AI Content Brief is a Pro feature" action={{ content: "Upgrade plan", url: `/app/pricing?reason=content_brief&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Build keyword clusters, outlines, internal-link plans and product-placement ideas before drafting an article.</p></EmptyState></Card></Page>;
+    return <Page><TitleBar title="AI Content Brief" /><BlockStack gap="500"><WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="briefs" /><Card><EmptyState heading="AI Content Brief is a Pro feature" action={{ content: "Upgrade plan", url: `/app/pricing?reason=content_brief&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Build keyword clusters, outlines, internal-link plans and product-placement ideas before drafting an article.</p></EmptyState></Card></BlockStack></Page>;
   }
 
   const generate = () => fetcher.submit(
@@ -299,6 +303,7 @@ export default function ContentBriefsPage() {
   return <Page fullWidth>
     <TitleBar title="AI Content Brief & Keyword Cluster" />
     <BlockStack gap="500">
+      <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="briefs" />
       <InlineStack align="space-between" blockAlign="end" gap="400">
         <BlockStack gap="100">
           <Text as="h1" variant="headingXl" fontWeight="bold">Plan before you publish</Text>

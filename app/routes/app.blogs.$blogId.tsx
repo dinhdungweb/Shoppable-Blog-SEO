@@ -1456,6 +1456,7 @@ export default function ArticleDetail() {
     stripHtml(seoData?.metaDescription || article.summary || makeMetaDescription(article.title, article.body || "")),
   );
   const [body, setBody] = useState(article.body || "");
+  const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [aiAssistantOpen, setAiAssistantOpen] = useState(Boolean(briefPrefill && !briefPrefill.hasDraft));
   const [aiWritingMode, setAiWritingMode] = useState<AiWritingMode>(article.body ? "improve" : "draft");
   const [aiInstruction, setAiInstruction] = useState(briefPrefill?.instruction || "");
@@ -2553,14 +2554,78 @@ export default function ArticleDetail() {
           </BlockStack>
 
           <InlineStack gap="200" blockAlign="center">
-            <Button
-              icon={MagicIcon}
-              disabled={!aiEnabled}
-              onClick={openAiAssistant}
-              accessibilityLabel={aiEnabled ? "Open AI writing assistant" : "AI writing assistant is not configured"}
+            <Popover
+              active={aiCopilotOpen}
+              onClose={() => setAiCopilotOpen(false)}
+              preferredAlignment="right"
+              activator={
+                <Button
+                  icon={MagicIcon}
+                  disclosure
+                  disabled={!aiEnabled}
+                  onClick={() => setAiCopilotOpen((open) => !open)}
+                  accessibilityLabel={aiEnabled ? "Open AI Copilot" : "AI Copilot is not configured"}
+                >
+                  {aiEnabled ? "AI Copilot" : "AI not configured"}
+                </Button>
+              }
             >
-              {aiEnabled ? "AI assistant" : "AI not configured"}
-            </Button>
+              <ActionList
+                sections={[
+                  {
+                    title: "Create and optimize",
+                    items: [
+                      {
+                        content: "Write or rewrite content",
+                        onAction: () => {
+                          setAiCopilotOpen(false);
+                          openAiAssistant();
+                        },
+                      },
+                      {
+                        content: "Fix SEO issues",
+                        disabled: isSeoFixGenerating || !seoIssues.some((issue) => issue.severity !== "good"),
+                        onAction: () => {
+                          setAiCopilotOpen(false);
+                          handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all");
+                        },
+                      },
+                      {
+                        content: "Refresh declining content",
+                        disabled: isNewPost || isContentRefreshGenerating,
+                        onAction: () => {
+                          setAiCopilotOpen(false);
+                          openContentRefresh();
+                        },
+                      },
+                    ],
+                  },
+                  {
+                    title: "Products and links",
+                    items: [
+                      {
+                        content: "Suggest products",
+                        disabled: isNewPost || isAiProductLoading,
+                        onAction: () => {
+                          setAiCopilotOpen(false);
+                          setSelectedTab(1);
+                          handleSuggestAiProducts();
+                        },
+                      },
+                      {
+                        content: "Review internal links",
+                        disabled: !canInternalLinking,
+                        onAction: () => {
+                          setAiCopilotOpen(false);
+                          setSelectedTab(0);
+                          window.setTimeout(() => document.getElementById("internal-link-assistant")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+                        },
+                      },
+                    ],
+                  },
+                ]}
+              />
+            </Popover>
             <Button loading={isSubmitting && fetcherData?.action === "seo_analyzed"} onClick={handleRunSeoScan}>
               Run SEO scan
             </Button>
@@ -3073,7 +3138,7 @@ export default function ArticleDetail() {
         onClose={() => {
           if (!isAiGenerating) setAiAssistantOpen(false);
         }}
-        title="AI writing assistant"
+        title="AI Copilot · Writing"
         primaryAction={{
           content: aiWritingMode === "draft" ? "Generate draft" : "Generate revision",
           onAction: handleGenerateAiContent,

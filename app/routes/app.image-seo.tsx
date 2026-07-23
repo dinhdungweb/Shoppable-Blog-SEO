@@ -40,6 +40,10 @@ import {
 } from "../image-seo";
 import { getPublicNineRouterErrorMessage } from "../nine-router.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
+import {
+  SEO_WORKSPACE_TABS,
+  WorkspaceTabs,
+} from "../components/WorkspaceTabs";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const PAGE_SIZE = 20;
@@ -418,7 +422,7 @@ export default function ImageSeoPage() {
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   if (!initial.canUse) {
-    return <Page><TitleBar title="AI Image SEO" /><Card><EmptyState heading="AI Image SEO is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></Page>;
+    return <Page><TitleBar title="AI Image SEO" /><BlockStack gap="500"><WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="images" /><Card><EmptyState heading="AI Image SEO is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></BlockStack></Page>;
   }
 
   const toggle = (id: string, checked: boolean) => setSelectedIds((current) => checked ? [...new Set([...current, id])] : current.filter((value) => value !== id));
@@ -450,6 +454,7 @@ export default function ImageSeoPage() {
   return <Page fullWidth>
     <TitleBar title="AI Image SEO" />
     <BlockStack gap="500">
+      <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="images" />
       <InlineStack align="space-between" blockAlign="end" gap="400">
         <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Bulk image alt review</Text><Text as="p" tone="subdued">Generate context-aware alt suggestions for featured and inline images. Image files, URLs, dimensions and all non-alt HTML remain unchanged.</Text></BlockStack>
         <InlineStack gap="200"><Button disabled={!selectedIds.length} onClick={() => setSelectedIds([])}>Clear selection</Button><Button variant="primary" loading={aiFetcher.state !== "idle"} disabled={!initial.aiEnabled || !selectedIds.length || aiFetcher.state !== "idle"} onClick={generate}>{`Generate AI for selected (${Math.min(selectedIds.length, 50)})`}</Button></InlineStack>

@@ -324,6 +324,8 @@ export default function Settings() {
                 <Text as="span" tone="success">All changes saved</Text>
               </InlineStack>
             )}
+            <Button url="/app/changelog">What&apos;s new</Button>
+            <Button url="/app/pricing">Plans</Button>
             <Button onClick={handleDiscard} disabled={!hasChanges}>Discard changes</Button>
           </InlineStack>
         </InlineStack>

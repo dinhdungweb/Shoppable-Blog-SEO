@@ -15,25 +15,23 @@ import {
   BlockStack,
   InlineStack,
   IndexTable,
-  ProgressBar,
   useIndexResourceState,
-  ChoiceList,
   Icon,
   Button,
   TextField,
   Select,
-  Modal,
-  Checkbox,
 } from "@shopify/polaris";
 import { 
   SearchIcon, 
   EditIcon, 
-  AlertTriangleIcon, 
 } from "@shopify/polaris-icons";
-import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { formatLimit } from "../pricing-plans";
+import {
+  CONTENT_WORKSPACE_TABS,
+  WorkspaceTabs,
+} from "../components/WorkspaceTabs";
 
 function parseMoney(value: string) {
   const number = Number((value || "0").replace(/[^0-9.]/g, ""));
@@ -495,107 +493,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: true, linkedCount: products.length });
   }
 
-  if (intent === "bulk_optimize_batch") {
-    if (!limits.canBulkReview) {
-      return json({ error: "Bulk optimization requires the Growth plan.", planKey }, { status: 403 });
-    }
-    const idsJson = formData.get("ids") as string;
-    const optionsJson = formData.get("options") as string;
-    if (!idsJson || !optionsJson) return json({ error: "Missing data" }, { status: 400 });
-    
-    const ids = parseArticleIds(idsJson);
-    const options = parseOptimizeOptions(optionsJson);
-
-    for (const id of ids) {
-      const articleRes = await admin.graphql(`
-        query GetArticle($id: ID!) {
-          node(id: $id) {
-            ... on Article {
-              id
-              title
-              handle
-              body
-            }
-          }
-        }
-      `, { variables: { id } });
-      const articleParsed = await articleRes.json();
-      const article = articleParsed.data?.node;
-      
-      if (!article) continue;
-      
-      let newHandle = article.handle;
-      let newBodyHtml = article.body;
-      
-      if (options.alt_text && newBodyHtml) {
-        newBodyHtml = newBodyHtml.replace(/<img\s+(?!.*alt=)[^>]*>/gi, (match: string) => {
-          return match.replace('<img ', `<img alt="${article.title.replace(/"/g, '&quot;')}" `);
-        });
-      }
-      
-      if (options.url) {
-        newHandle = article.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-      }
-      
-      await admin.graphql(`
-        mutation UpdateArticle($id: ID!, $article: ArticleUpdateInput!) {
-          articleUpdate(id: $id, article: $article) {
-            article { id }
-            userErrors { field message }
-          }
-        }
-      `, {
-        variables: {
-          id,
-          article: {
-            handle: newHandle,
-            body: newBodyHtml
-          }
-        }
-      });
-      
-      const metafields = [];
-      if (options.meta_description && article.body) {
-        const text = article.body.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().substring(0, 160);
-        metafields.push({
-          namespace: "global",
-          key: "description_tag",
-          type: "single_line_text_field",
-          value: text || article.title
-        });
-      }
-      
-      if (options.title) {
-        metafields.push({
-          namespace: "global",
-          key: "title_tag",
-          type: "single_line_text_field",
-          value: article.title.substring(0, 70)
-        });
-      }
-      
-      if (metafields.length > 0) {
-        await admin.graphql(`
-          mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-            metafieldsSet(metafields: $metafields) {
-              metafields { id }
-              userErrors { field message }
-            }
-          }
-        `, {
-          variables: {
-            metafields: metafields.map((m: any) => ({ ...m, ownerId: id }))
-          }
-        });
-      }
-      
-      // Respect rate limits slightly
-      await new Promise(r => setTimeout(r, 200));
-    }
-
-    return json({ success_batch: true, count: ids.length });
-  }
-
   return json({ error: "Invalid intent" }, { status: 400 });
 };
 
@@ -618,18 +515,6 @@ function parseProductSelection(value: string) {
   return [...unique.values()] as Array<{ id: string }>;
 }
 
-function parseOptimizeOptions(value: string) {
-  let parsed: unknown;
-  try { parsed = JSON.parse(value); } catch { throw new Response("Invalid optimization options", { status: 400 }); }
-  const input = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
-  return {
-    alt_text: input.alt_text === true,
-    url: input.url === true,
-    meta_description: input.meta_description === true,
-    title: input.title === true,
-  };
-}
-
 const TabBadge = ({ label, count, isActive, onClick }: { label: string, count?: number | string, isActive?: boolean, onClick?: () => void }) => (
   <div onClick={onClick} style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: isActive ? '#EBEBEB' : 'transparent', cursor: 'pointer', display: 'flex', gap: '8px', alignItems: 'center' }}>
     <Text as="span" variant="bodyMd" fontWeight={isActive ? 'semibold' : 'regular'}>{label}</Text>
@@ -639,30 +524,10 @@ const TabBadge = ({ label, count, isActive, onClick }: { label: string, count?: 
 
 export default function BlogManager() {
   const { articles, blogs, tabCounts, filters, pagination, canBulkReview } = useLoaderData<typeof loader>();
-  const shopify = useAppBridge();
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   
-  // Modals state
-  const [isBulkOptimizeOpen, setIsBulkOptimizeOpen] = useState(false);
-  const [isConfirmBulkOpen, setIsConfirmBulkOpen] = useState(false);
-
-  // Bulk optimize chunking state
-  const [optimizeTarget, setOptimizeTarget] = useState<string[]>(['all']);
-  const [optimizeOptions, setOptimizeOptions] = useState({
-    meta_description: true,
-    alt_text: true,
-    title: true,
-    url: true,
-    canonical_url: true
-  });
-  
-  const [isOptimizing, setIsOptimizing] = useState(false);
-  const [optimizedCount, setOptimizedCount] = useState(0);
-  const [totalToOptimize, setTotalToOptimize] = useState(0);
-  const [batchQueue, setBatchQueue] = useState<string[][]>([]);
-
   const [searchValue, setSearchValue] = useState(filters.search);
 
   const getListUrl = useCallback(
@@ -723,8 +588,6 @@ export default function BlogManager() {
     { label: 'Blog', value: 'all' },
     ...blogs.map((blog: any) => ({ label: blog.title, value: blog.id })),
   ];
-  const currentListPath = `/app/blogs${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
-
   // Table selection state
   const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(articles as any);
 
@@ -732,73 +595,18 @@ export default function BlogManager() {
   const hasPublishedSelected = selectedArticlesData.some((a: any) => a.publishedAt);
   const hasDraftSelected = selectedArticlesData.some((a: any) => !a.publishedAt);
 
-  const startOptimization = () => {
-    let targetArticles = [];
-    if (optimizeTarget[0] === 'selected') {
-      targetArticles = articles.filter((a: any) => selectedResources.includes(a.id));
-    } else {
-      targetArticles = articles;
-    }
-
-    if (targetArticles.length === 0) {
-      shopify.toast.show('No posts found to optimize');
-      return;
-    }
-
-    const CHUNK_SIZE = 5;
-    const chunks = [];
-    for (let i = 0; i < targetArticles.length; i += CHUNK_SIZE) {
-      chunks.push(targetArticles.slice(i, i + CHUNK_SIZE).map((a: any) => a.id));
-    }
-    
-    setBatchQueue(chunks);
-    setTotalToOptimize(targetArticles.length);
-    setOptimizedCount(0);
-    setIsOptimizing(true);
-    
-    // submit first chunk
-    const firstChunk = chunks[0];
-    fetcher.submit(
-      { intent: 'bulk_optimize_batch', ids: JSON.stringify(firstChunk), options: JSON.stringify(optimizeOptions) },
-      { method: "POST" }
-    );
-  };
-
-  useEffect(() => {
-    if (isOptimizing && fetcher.state === 'idle' && fetcher.data && (fetcher.data as any).success_batch) {
-      const remainingChunks = batchQueue.slice(1);
-      setOptimizedCount(prev => prev + batchQueue[0].length);
-      
-      if (remainingChunks.length > 0) {
-        setBatchQueue(remainingChunks);
-        fetcher.submit(
-          { intent: 'bulk_optimize_batch', ids: JSON.stringify(remainingChunks[0]), options: JSON.stringify(optimizeOptions) },
-          { method: "POST" }
-        );
-      } else {
-        setIsOptimizing(false);
-        setBatchQueue([]);
-        setIsBulkOptimizeOpen(false);
-        shopify.toast.show('Bulk optimization completed');
-        clearSelection();
-        fetcher.load(currentListPath);
-      }
-    }
-  }, [batchQueue, clearSelection, currentListPath, fetcher, fetcher.data, fetcher.state, isOptimizing, optimizeOptions, shopify]);
-
   return (
     <Page fullWidth>
       <BlockStack gap="500">
+        <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="posts" />
         
         {/* HEADER */}
         <InlineStack align="space-between" blockAlign="center">
           <BlockStack gap="100">
-            <Text as="h1" variant="headingLg" fontWeight="bold">Blog Manager</Text>
+            <Text as="h1" variant="headingLg" fontWeight="bold">Blog posts</Text>
             <Text as="p" variant="bodyMd" tone="subdued">Manage and optimize all your blog posts in one place.</Text>
           </BlockStack>
           <InlineStack gap="200">
-            <Button disclosure>Import posts</Button>
-            <Button onClick={() => setIsBulkOptimizeOpen(true)}>Bulk optimize</Button>
             <Button variant="primary" onClick={() => navigate("/app/blogs/new")}>Create post</Button>
           </InlineStack>
         </InlineStack>
@@ -946,121 +754,6 @@ export default function BlogManager() {
           </BlockStack>
         </Card>
       </BlockStack>
-
-      {/* MODAL 2: Bulk optimize */}
-      <Modal 
-        open={isBulkOptimizeOpen} 
-        onClose={() => !isOptimizing && setIsBulkOptimizeOpen(false)} 
-        title="Bulk optimize"
-        primaryAction={{
-          content: isOptimizing ? 'Optimizing...' : 'Optimize', 
-          onAction: startOptimization,
-          loading: isOptimizing,
-          disabled: isOptimizing || (optimizeTarget[0] === 'selected' && selectedResources.length === 0)
-        }}
-        secondaryActions={[{
-          content: 'Cancel', 
-          onAction: () => setIsBulkOptimizeOpen(false),
-          disabled: isOptimizing
-        }]}
-      >
-        <Modal.Section>
-          <BlockStack gap="400">
-            {isOptimizing ? (
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd">Optimizing {optimizedCount} of {totalToOptimize} posts...</Text>
-                <ProgressBar progress={(optimizedCount / totalToOptimize) * 100} tone="success" />
-              </BlockStack>
-            ) : (
-              <>
-                <Text as="p" variant="bodyMd">This will apply SEO optimizations to multiple posts.</Text>
-                
-                <BlockStack gap="200">
-                  <Text as="span" variant="bodyMd" fontWeight="semibold">Posts to optimize</Text>
-                  <ChoiceList
-                    titleHidden
-                    title="Posts to optimize"
-                    choices={[
-                      {label: `Current page (${articles.length})`, value: 'all'},
-                      {label: `Selected posts (${selectedResources.length})`, value: 'selected'},
-                    ]}
-                    selected={optimizeTarget}
-                    onChange={setOptimizeTarget}
-                  />
-                </BlockStack>
-
-                <BlockStack gap="200">
-                  <Text as="span" variant="bodyMd" fontWeight="semibold">Optimize</Text>
-                  <Checkbox 
-                    label="Add missing meta descriptions" 
-                    checked={optimizeOptions.meta_description} 
-                    onChange={(val) => setOptimizeOptions(prev => ({...prev, meta_description: val}))} 
-                  />
-                  <Checkbox 
-                    label="Add image alt text" 
-                    checked={optimizeOptions.alt_text} 
-                    onChange={(val) => setOptimizeOptions(prev => ({...prev, alt_text: val}))} 
-                  />
-                  <Checkbox 
-                    label="Optimize titles" 
-                    checked={optimizeOptions.title} 
-                    onChange={(val) => setOptimizeOptions(prev => ({...prev, title: val}))} 
-                  />
-                  <Checkbox 
-                    label="Optimize URLs" 
-                    checked={optimizeOptions.url} 
-                    onChange={(val) => setOptimizeOptions(prev => ({...prev, url: val}))} 
-                  />
-                  <Checkbox 
-                    label="Set canonical URLs" 
-                    checked={optimizeOptions.canonical_url} 
-                    onChange={(val) => setOptimizeOptions(prev => ({...prev, canonical_url: val}))} 
-                  />
-                </BlockStack>
-              </>
-            )}
-          </BlockStack>
-        </Modal.Section>
-      </Modal>
-
-
-      {/* MODAL 4: Confirm bulk action */}
-      <Modal 
-        open={isConfirmBulkOpen} 
-        onClose={() => setIsConfirmBulkOpen(false)} 
-        title="Confirm bulk action"
-        primaryAction={{content: 'Continue', destructive: true, onAction: () => setIsConfirmBulkOpen(false)}}
-        secondaryActions={[{content: 'Cancel', onAction: () => setIsConfirmBulkOpen(false)}]}
-      >
-        <Modal.Section>
-           <BlockStack gap="400">
-              <div style={{ padding: '16px', backgroundColor: '#FFF5EA', borderLeft: '3px solid #B98900', borderRadius: '4px' }}>
-                <BlockStack gap="200">
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                    <div style={{ width: '20px' }}><Icon source={AlertTriangleIcon} tone="caution" /></div>
-                    <Text as="p" variant="bodyMd" fontWeight="bold">You are about to optimize 23 posts.</Text>
-                  </div>
-                  <div style={{ paddingLeft: '28px' }}>
-                    <Text as="p" variant="bodyMd">This action will:</Text>
-                    <ul style={{ paddingLeft: '20px', margin: '8px 0', lineHeight: '2' }}>
-                      <li><span style={{ color: '#29845A', fontWeight: 'bold', marginRight: '4px' }}>✓</span> Add or update meta descriptions</li>
-                      <li><span style={{ color: '#29845A', fontWeight: 'bold', marginRight: '4px' }}>✓</span> Add missing image alt text</li>
-                      <li><span style={{ color: '#29845A', fontWeight: 'bold', marginRight: '4px' }}>✓</span> Optimize titles and URLs</li>
-                      <li><span style={{ color: '#29845A', fontWeight: 'bold', marginRight: '4px' }}>✓</span> Set canonical URLs</li>
-                    </ul>
-                  </div>
-                  
-                  <div style={{ backgroundColor: '#FFF5EA', padding: '12px', borderRadius: '4px', marginTop: '12px', border: '1px solid #FFE4B5' }}>
-                     <InlineStack gap="200">
-                       <Icon source={AlertTriangleIcon} tone="caution" />
-                       <Text as="span" variant="bodyMd" tone="caution" fontWeight="semibold">This action cannot be undone.</Text>
-                     </InlineStack>
-                  </div>
-                </BlockStack>
-              </div>
-           </BlockStack>
-        </Modal.Section>
-      </Modal>
 
     </Page>
   );

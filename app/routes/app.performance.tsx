@@ -20,6 +20,10 @@ import {
   type PerformanceTarget,
   type StorefrontPerformanceReport,
 } from "../storefront-performance";
+import {
+  INSIGHTS_WORKSPACE_TABS,
+  WorkspaceTabs,
+} from "../components/WorkspaceTabs";
 
 export const links = () => [{ rel: "stylesheet", href: performanceStyles }];
 
@@ -181,9 +185,10 @@ export default function PerformancePage() {
   }, [initial.scans, revalidator]);
 
   return <Page fullWidth>
-    <TitleBar title="Storefront Performance"><button variant="primary" disabled={scanning || !target?.available} onClick={scan}>{scanning ? "Scanning..." : report ? "Recheck page" : "Run scan"}</button></TitleBar>
+    <TitleBar title="Site Speed"><button variant="primary" disabled={scanning || !target?.available} onClick={scan}>{scanning ? "Scanning..." : report ? "Recheck page" : "Run scan"}</button></TitleBar>
     <BlockStack gap="500">
-      <div className="bp-performance-hero"><InlineStack align="space-between" blockAlign="center" gap="400"><InlineStack gap="300" blockAlign="center"><div className="bp-performance-hero-icon"><Icon source={GaugeIcon} tone="base" /></div><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Storefront Performance</Text><Text as="p" tone="subdued">Lighthouse and real-user Core Web Vitals for your Shopify storefront.</Text></BlockStack></InlineStack>
+      <WorkspaceTabs tabs={INSIGHTS_WORKSPACE_TABS} activeId="site-speed" />
+      <div className="bp-performance-hero"><InlineStack align="space-between" blockAlign="center" gap="400"><InlineStack gap="300" blockAlign="center"><div className="bp-performance-hero-icon"><Icon source={GaugeIcon} tone="base" /></div><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Site Speed</Text><Text as="p" tone="subdued">Lighthouse and real-user Core Web Vitals for your Shopify storefront.</Text></BlockStack></InlineStack>
         <Button variant="primary" loading={scanning} disabled={!target?.available} onClick={scan}>{report ? "Recheck page" : "Run scan"}</Button>
       </InlineStack></div>
       {!initial.hasApiKey && <Banner tone="info" title="Using shared PageSpeed quota"><p>Add GOOGLE_PAGESPEED_API_KEY on the server for reliable recurring scans. Saved reports remain available if Google temporarily limits new requests.</p></Banner>}

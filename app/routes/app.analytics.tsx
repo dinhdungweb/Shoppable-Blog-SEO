@@ -43,6 +43,10 @@ import {
 } from "recharts";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
+import {
+  INSIGHTS_WORKSPACE_TABS,
+  WorkspaceTabs,
+} from "../components/WorkspaceTabs";
 
 type Metrics = {
   sessions: number;
@@ -273,6 +277,7 @@ export default function Analytics() {
     <Page fullWidth>
       <TitleBar title="Analytics" />
       <BlockStack gap="500">
+        <WorkspaceTabs tabs={INSIGHTS_WORKSPACE_TABS} activeId="analytics" />
         <InlineStack align="space-between" blockAlign="end">
           <BlockStack gap="100">
             <Text as="h1" variant="headingXl" fontWeight="bold">

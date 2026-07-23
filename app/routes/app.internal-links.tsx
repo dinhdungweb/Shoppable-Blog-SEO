@@ -14,6 +14,10 @@ import { getPublicNineRouterErrorMessage } from "../nine-router.server";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
+import {
+  CONTENT_WORKSPACE_TABS,
+  WorkspaceTabs,
+} from "../components/WorkspaceTabs";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 
@@ -354,15 +358,18 @@ export default function InternalLinksPage() {
     return (
       <Page>
         <TitleBar title="Internal Linking Assistant" />
-        <Card>
-          <EmptyState
-            heading="Internal Linking Assistant is a Pro feature"
-            action={{ content: "Upgrade to Pro", url: `/app/pricing?reason=internal_linking&plan=${initialData.planKey}` }}
-            image={EMPTY_IMAGE}
-          >
-            <p>Upgrade to analyze related Shopify articles, broken destinations, repeated anchors and topic clusters, then insert approved links.</p>
-          </EmptyState>
-        </Card>
+        <BlockStack gap="500">
+          <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="links" />
+          <Card>
+            <EmptyState
+              heading="Internal Linking Assistant is a Pro feature"
+              action={{ content: "Upgrade to Pro", url: `/app/pricing?reason=internal_linking&plan=${initialData.planKey}` }}
+              image={EMPTY_IMAGE}
+            >
+              <p>Upgrade to analyze related Shopify articles, broken destinations, repeated anchors and topic clusters, then insert approved links.</p>
+            </EmptyState>
+          </Card>
+        </BlockStack>
       </Page>
     );
   }
@@ -373,6 +380,7 @@ export default function InternalLinksPage() {
         <button variant="primary" disabled={analyzing || generatingAi} onClick={runAnalysis}>{analyzing ? "Analyzing..." : "Analyze links"}</button>
       </TitleBar>
       <BlockStack gap="500">
+        <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="links" />
         <InlineStack align="space-between" blockAlign="end">
           <BlockStack gap="100">
             <Text as="h1" variant="headingXl" fontWeight="bold">AI Internal Link Copilot</Text>

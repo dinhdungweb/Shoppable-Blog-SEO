@@ -48,6 +48,10 @@ import { SEARCH_CONSOLE_TOTAL_PAGE, createAuthorizationUrl, disconnectSearchCons
 import { applyCatalogDuplicateIssues, auditCatalogResource, type CatalogSeoAudit } from "../catalog-seo";
 import { fetchShopifyCatalogResources } from "../catalog-seo.server";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
+import {
+  SEO_WORKSPACE_TABS,
+  WorkspaceTabs,
+} from "../components/WorkspaceTabs";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -154,12 +158,6 @@ const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
   { id: "image", content: "Image SEO" },
   { id: "schema", content: "Schema" },
   { id: "content", content: "Content quality" },
-];
-
-const SEO_SCOPE_TABS = [
-  { id: "blogs", content: "Blog posts" },
-  { id: "products", content: "Products" },
-  { id: "collections", content: "Collections" },
 ];
 
 async function loadSearchConsoleMetrics(shop: string, siteUrl: string) {
@@ -757,7 +755,7 @@ export default function SEOOptimizer() {
 
   return (
     <Page fullWidth>
-      <TitleBar title="SEO Optimizer">
+      <TitleBar title="SEO Center">
         <button
           variant="primary"
           disabled={isScanning}
@@ -771,7 +769,7 @@ export default function SEOOptimizer() {
         <InlineStack align="space-between" blockAlign="end">
           <BlockStack gap="100">
             <Text as="h1" variant="headingXl" fontWeight="bold">
-              SEO Optimizer
+              SEO Center
             </Text>
             <Text as="p" variant="bodyMd" tone="subdued">
               Identify and resolve SEO issues across Shopify blog posts, products and collections.
@@ -795,7 +793,9 @@ export default function SEOOptimizer() {
           </InlineStack>
         </InlineStack>
 
-        <div className="bp-seo-scope-tabs"><Tabs tabs={SEO_SCOPE_TABS} selected={0} onSelect={(index) => { if (index > 0) navigate(`/app/catalog-seo?type=${index === 1 ? "product" : "collection"}`); }} /></div>
+        <div className="bp-seo-scope-tabs">
+          <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="blogs" />
+        </div>
 
         {shopifyError && (
           <Card padding="400">

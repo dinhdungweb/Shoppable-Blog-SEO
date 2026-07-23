@@ -10,6 +10,10 @@ import type { ContentDecayReport, DecayArticle, DecayIssue, DecayProduct } from 
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
+import {
+  CONTENT_WORKSPACE_TABS,
+  WorkspaceTabs,
+} from "../components/WorkspaceTabs";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const MAX_EXTERNAL_LINKS = 30;
@@ -95,11 +99,12 @@ export default function ContentDecayPage() {
 
   useEffect(() => { setPage(1); }, [filter, report]);
 
-  if (!initial.canContentDecay) return <Page><TitleBar title="Content Decay Monitor" /><Card><EmptyState heading="Content Decay is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></Card></Page>;
+  if (!initial.canContentDecay) return <Page><TitleBar title="Content Decay Monitor" /><BlockStack gap="500"><WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="decay" /><Card><EmptyState heading="Content Decay is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></Card></BlockStack></Page>;
 
   return <Page fullWidth>
     <TitleBar title="Content Decay Monitor"><button variant="primary" disabled={analyzing} onClick={run}>{analyzing ? "Analyzing..." : "Analyze content"}</button></TitleBar>
     <BlockStack gap="500">
+      <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="decay" />
       <InlineStack align="space-between" blockAlign="end">
         <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Content Decay Monitor</Text><Text as="p" tone="subdued">Find Shopify articles losing search performance or containing stale products, links and dates.</Text></BlockStack>
         <Button variant="primary" loading={analyzing} onClick={run}>{report ? "Refresh analysis" : "Analyze content"}</Button>
