@@ -61,6 +61,7 @@ export async function generateAiProductRecommendations(
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
+      stream: false,
       ...getNineRouterGenerationOptions(model, 0.15),
       response_format: { type: "json_object" },
       messages: [

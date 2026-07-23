@@ -45,6 +45,7 @@ export async function generateAiSeoSuggestion(input: SeoSuggestionInput): Promis
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
+      stream: false,
       ...getNineRouterGenerationOptions(model, 0.2),
       response_format: { type: "json_object" },
       messages: [

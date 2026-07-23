@@ -58,6 +58,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model,
+      stream: false,
       ...getNineRouterGenerationOptions(model, input.mode === "draft" ? 0.5 : 0.25),
       response_format: { type: "json_object" },
       messages: [

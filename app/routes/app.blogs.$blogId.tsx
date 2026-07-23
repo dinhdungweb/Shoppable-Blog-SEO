@@ -2462,14 +2462,6 @@ export default function ArticleDetail() {
           <main className="bp-detail-content">
             {selectedTab === 0 && (
               <BlockStack gap="600">
-                {!isNewPost && (
-                  <ContentRefreshCard
-                    context={contentRefresh}
-                    loading={isContentRefreshGenerating}
-                    onOpen={openContentRefresh}
-                  />
-                )}
-
                 {contentRefreshUndo && (
                   <Card padding="300">
                     <InlineStack align="space-between" blockAlign="center" gap="300">
@@ -2650,6 +2642,13 @@ export default function ArticleDetail() {
                 livePostUrl={postPreviewUrl}
                 isNewPost={isNewPost}
               />
+              {!isNewPost && (
+                <ContentRefreshCard
+                  context={contentRefresh}
+                  loading={isContentRefreshGenerating}
+                  onOpen={openContentRefresh}
+                />
+              )}
               {canInternalLinking ? <InternalLinkAssistantCard
                 suggestions={internalLinkSuggestions}
                 onReview={(suggestion) => {
@@ -5064,35 +5063,31 @@ function ContentRefreshCard({
   const available = context.signals.length + context.queries.length;
   return (
     <Card padding="400">
-      <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
+      <BlockStack gap="400">
         <InlineStack gap="300" blockAlign="start" wrap={false}>
           <span className="bp-action-icon"><Icon source={MagicIcon} tone="magic" /></span>
           <BlockStack gap="150">
-            <InlineStack gap="200" blockAlign="center">
-              <Text as="h2" variant="headingMd" fontWeight="bold">AI Content Refresh Copilot</Text>
-              <Badge tone={available ? "warning" : "info"}>{available ? `${available} signals` : "Needs signals"}</Badge>
-            </InlineStack>
+            <Text as="h2" variant="headingMd" fontWeight="bold">AI Content Refresh Copilot</Text>
             <Text as="p" variant="bodySm" tone="subdued">
               Refresh this article using saved Content Decay findings and real Search Console queries. Every change stays review-only.
             </Text>
-            {context.canUse && available > 0 && (
-              <InlineStack gap="200">
-                <Badge>{`${context.signals.length} decay issues`}</Badge>
-                <Badge>{`${context.queries.length} search queries`}</Badge>
-              </InlineStack>
-            )}
           </BlockStack>
         </InlineStack>
+        <InlineStack gap="200">
+          <Badge tone={available ? "warning" : "info"}>{available ? `${available} signals` : "Needs signals"}</Badge>
+          {context.canUse && available > 0 && <Badge>{`${context.signals.length} decay issues`}</Badge>}
+          {context.canUse && available > 0 && <Badge>{`${context.queries.length} search queries`}</Badge>}
+        </InlineStack>
         {!context.canUse ? (
-          <Button onClick={onOpen}>Upgrade to Growth</Button>
+          <Button fullWidth onClick={onOpen}>Upgrade to Growth</Button>
         ) : available === 0 ? (
-          <Button url="/app/content-decay">Analyze content</Button>
+          <Button fullWidth url="/app/content-decay">Analyze content</Button>
         ) : (
-          <Button variant="primary" icon={MagicIcon} loading={loading} disabled={!context.aiEnabled} onClick={onOpen}>
+          <Button fullWidth variant="primary" icon={MagicIcon} loading={loading} disabled={!context.aiEnabled} onClick={onOpen}>
             Plan refresh
           </Button>
         )}
-      </InlineStack>
+      </BlockStack>
     </Card>
   );
 }

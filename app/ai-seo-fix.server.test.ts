@@ -39,6 +39,7 @@ describe("AI SEO Fix Copilot", () => {
     expect(result.changes.map((change) => change.field)).toEqual(["body", "metaTitle"]);
     expect(result.changes[0].after).toContain("[[SBS_PRODUCTS:featured]]");
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(request.stream).toBe(false);
     expect(request.reasoning_effort).toBe("low");
     expect(request.temperature).toBeUndefined();
   });
