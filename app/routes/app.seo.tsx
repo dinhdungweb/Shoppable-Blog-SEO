@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import crypto from "node:crypto";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate, useRevalidator, useSearchParams } from "@remix-run/react";
 import {
   Badge,
   BlockStack,
@@ -639,6 +639,7 @@ export default function SEOOptimizer() {
     searchConsole,
   } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const revalidator = useRevalidator();
   const shopify = useAppBridge();
   const scanFetcher = useFetcher<typeof action>();
@@ -646,6 +647,7 @@ export default function SEOOptimizer() {
   const handledActionData = useRef<unknown>(null);
   const handledCompletedJobId = useRef<string | null>(null);
   const handledFailedJobId = useRef<string | null>(null);
+  const handledNotice = useRef("");
   const [selectedTab, setSelectedTab] = useState(0);
   const [activeIssue, setActiveIssue] = useState<IssueGroup | null>(null);
   const selectedCategory = CATEGORY_TABS[selectedTab]?.id || "all";
@@ -708,6 +710,14 @@ export default function SEOOptimizer() {
     handledFailedJobId.current = failedJobId;
     shopify.toast.show(currentJob?.error || "SEO scan failed", { isError: true });
   }, [failedJobId, currentJob?.error, shopify]);
+  useEffect(() => {
+    const notice = searchParams.get("notice") || "";
+    if (!notice || handledNotice.current === notice) return;
+    handledNotice.current = notice;
+    if (notice === "article-not-found") {
+      shopify.toast.show("This article no longer exists in Shopify. Run an SEO scan to refresh the report.", { isError: true });
+    }
+  }, [searchParams, shopify]);
 
   const selectedIssueCount = allResourcesSelected ? visibleIssues.length : selectedResources.length;
   const selectedIssues = visibleIssues.filter((issue) => allResourcesSelected || selectedResources.includes(issue.id));

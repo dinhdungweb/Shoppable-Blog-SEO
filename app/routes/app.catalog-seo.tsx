@@ -144,7 +144,7 @@ export default function CatalogSeoPage() {
 }
 
 function StatCard({ label, value, icon, tone }: { label: string; value: string; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; tone: "success" | "warning" | "critical" | "info" }) {
-  return <Card><InlineStack align="space-between" blockAlign="start"><BlockStack gap="200"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><Text as="p" variant="headingXl" fontWeight="bold">{value}</Text></BlockStack><Icon source={icon} tone={tone === "info" ? "info" : tone} /></InlineStack></Card>;
+  return <Card><BlockStack gap="200"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><div className="bp-catalog-stat-value"><Text as="p" variant="headingXl" fontWeight="bold">{value}</Text><Icon source={icon} tone={tone === "info" ? "info" : tone} /></div></BlockStack></Card>;
 }
 
 function parseIssues(value: string | null): CatalogSeoIssue[] {

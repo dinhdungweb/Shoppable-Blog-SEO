@@ -5,7 +5,7 @@ import type {
   MouseEvent as ReactMouseEvent,
 } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import {
   Badge,
@@ -388,11 +388,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     { variables: { id: articleId } },
   );
 
-  const articleJson = await articleResponse.json();
+  const articleJson: any = await articleResponse.json();
   const article = articleJson.data?.article;
 
   if (!article) {
-    throw new Response("Article not found", { status: 404 });
+    if (articleJson.errors?.length) {
+      throw new Response("Shopify could not load this article.", { status: 502 });
+    }
+    return redirect("/app/seo?notice=article-not-found");
   }
 
   const [linkedProducts, seoData, eventGroups, contentRefresh] = await Promise.all([

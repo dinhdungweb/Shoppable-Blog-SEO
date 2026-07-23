@@ -29,6 +29,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "AI requests use non-streaming responses to prevent successful provider requests from appearing as empty or failed app responses." },
       { type: "Fixed", text: "AI-generated article and SEO changes preserve existing links, images, image alt text, tables and product blocks, while unsafe markup is rejected." },
       { type: "Fixed", text: "Selected-text Chat with AI now appears as a compact floating action above the selection instead of a full-width button below the editor." },
+      { type: "Fixed", text: "SEO Optimizer and Catalog Manager tabs no longer reserve an empty measurement row, and Catalog Manager metric icons now stay aligned beside their values." },
+      { type: "Fixed", text: "Opening a saved SEO issue for an article that was deleted in Shopify now returns to SEO Optimizer with refresh guidance instead of showing an in-app 404 page." },
     ],
   },
   {

@@ -1,7 +1,8 @@
 .bp-seo-scope-tabs { overflow: hidden; border: 1px solid var(--p-color-border); border-radius: 12px; background: var(--p-color-bg-surface); }
 .bp-seo-scope-tabs .Polaris-Tabs__Outer { padding: 0; }
 .bp-seo-scope-tabs .Polaris-Tabs__Outer > div { padding: 8px !important; }
-.bp-seo-scope-tabs .Polaris-Tabs { min-height: 36px; padding: 0; align-items: center; }
+.bp-seo-scope-tabs .Polaris-Tabs:not(.Polaris-Tabs__TabsMeasurer) { min-height: 36px; padding: 0; align-items: center; }
+.bp-seo-scope-tabs .Polaris-Tabs__TabsMeasurer { min-height: 0; }
 .bp-seo-scope-tabs .Polaris-Tabs__Tab { height: 36px; min-height: 36px; margin-block: 0; padding-block: 7px; }
 .bp-catalog-issue-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .bp-catalog-issue-summary { display: grid; grid-template-columns: 5px minmax(0, 1fr); gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--p-color-border-secondary); border-radius: 9px; background: var(--p-color-bg-surface-secondary); }
@@ -65,5 +66,7 @@
 .bp-icon-heading { display: flex; min-width: 0; align-items: center; justify-content: flex-start; gap: 8px; }
 .bp-icon-heading > .Polaris-Icon { flex: 0 0 20px; width: 20px; height: 20px; margin: 0; }
 .bp-icon-heading--metric { gap: 6px; }
+.bp-catalog-stat-value { display: inline-flex; align-items: center; gap: 8px; }
+.bp-catalog-stat-value > .Polaris-Icon { flex: 0 0 18px; width: 18px; height: 18px; margin: 0; }
 .bp-card-heading { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; }
 @media (max-width: 767px) { .bp-catalog-issue-grid, .bp-catalog-filters { grid-template-columns: 1fr; } }
