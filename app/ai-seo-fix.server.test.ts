@@ -146,6 +146,76 @@ describe("AI SEO Fix Copilot", () => {
     expect(result.manualActions).toEqual([expect.objectContaining({ issueType: "kw_early" })]);
   });
 
+  it("replaces an empty paragraph response with a safe sentence-boundary split", async () => {
+    configure();
+    stubResult({
+      summary: "Split the paragraph.",
+      changes: [{
+        field: "body",
+        after: "",
+        replacements: [{ find: "First sentence has useful detail. Second sentence keeps the original meaning.", replace: "" }],
+        explanation: "Splits the paragraph.",
+        issueTypes: ["paragraph_length"],
+      }],
+      manualActions: [],
+    });
+
+    const result = await generateAiSeoFix({
+      ...baseInput(),
+      body: "<p>First sentence has useful detail. Second sentence keeps the original meaning.</p>",
+      issues: [{
+        type: "paragraph_length",
+        label: "Paragraph Length",
+        message: "1 paragraph is over 120 words.",
+        severity: "warning",
+        details: [{
+          index: 1,
+          wordCount: 133,
+          preview: "First sentence has useful detail. Second sentence keeps the original meaning.",
+        }],
+      }],
+    });
+
+    expect(result.changes).toEqual([expect.objectContaining({
+      field: "body",
+      after: "<p>First sentence has useful detail.</p><p>Second sentence keeps the original meaning.</p>",
+    })]);
+    expect(result.changes[0]?.replacements?.[0]?.replace).not.toBe("");
+    expect(result.manualActions).toEqual([]);
+  });
+
+  it("accepts a moderately shorter paragraph that preserves facts and numbers", async () => {
+    configure();
+    const original = "This detailed guide repeats several ideas about choosing a travel bag for a 7 day trip. It explains that readers should compare size, comfort, material, warranty, and airline limits before making a careful purchase.";
+    const concise = "For a 7 day trip, compare travel bag size, comfort, material, warranty, and airline limits before making a careful purchase.";
+    stubResult({
+      summary: "Made the paragraph concise.",
+      changes: [{
+        field: "body",
+        after: "",
+        replacements: [{ find: original, replace: concise }],
+        explanation: "Removes repetition while preserving the useful details.",
+        issueTypes: ["paragraph_length"],
+      }],
+      manualActions: [],
+    });
+
+    const result = await generateAiSeoFix({
+      ...baseInput(),
+      body: `<p>${original}</p>`,
+      issues: [{
+        type: "paragraph_length",
+        label: "Paragraph Length",
+        message: "1 paragraph is over 120 words.",
+        severity: "warning",
+        details: [{ index: 1, wordCount: 133, preview: original }],
+      }],
+    });
+
+    expect(result.changes[0]?.replacements?.[0]?.replace).toBe(concise);
+    expect(result.manualActions).toEqual([]);
+  });
+
   it("keeps valid metadata when an unsafe body change is rejected", async () => {
     configure();
     stubResult({

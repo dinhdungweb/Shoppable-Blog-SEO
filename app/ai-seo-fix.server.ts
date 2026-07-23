@@ -195,7 +195,7 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
             "You may edit inline image alt attributes only when an image-alt issue was selected. Do not remove images, links, tables, or product blocks.",
             "Use natural keywords; do not stuff or force exact matches. Do not expand content with unsupported claims merely to reach a word count.",
             "Metadata fixes must accurately describe the supplied article. Use the focus keyword naturally only when one is supplied. Body fixes should address search intent, clarity, heading structure, readability, or early topical relevance only when the selected issue requires it.",
-            "For paragraph_length, modify only the paragraphs identified in issue details. Preserve every fact, link, image, and the original meaning; split each long paragraph into two or three shorter paragraphs at natural transitions instead of rewriting the article.",
+            "For paragraph_length, modify only the paragraphs identified in issue details. Either split the paragraph into two or three shorter paragraphs at natural transitions, or make it moderately more concise by removing repetition and filler. Preserve every fact, number, quotation, link, image, and the original meaning. Never return an empty replacement or delete the paragraph.",
             "Image alt fixes must describe what the supplied image context actually supports; never turn alt text into a keyword list.",
             "metaTitle must be at most 70 characters, metaDescription at most 160, excerpt at most 400, and featuredImageAlt at most 255.",
             "Return only fields that actually change. Every change and manual action must reference only supplied issue types.",
@@ -242,13 +242,19 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
 
   const parsed = parseJsonObject(content);
   const parsedChanges = parseChanges(parsed.changes, selectedTypes, input);
-  const rejectedBodyActions = parsedChanges.rejectedIssueTypes.map((issueType) => ({
+  const paragraphFallback = !parsedChanges.changes.some((change) => change.field === "body")
+    && parsedChanges.rejectedIssueTypes.includes("paragraph_length")
+    ? buildParagraphLengthFallback(input, issues)
+    : null;
+  const rejectedIssueTypes = parsedChanges.rejectedIssueTypes
+    .filter((issueType) => !(issueType === "paragraph_length" && paragraphFallback));
+  const rejectedBodyActions = rejectedIssueTypes.map((issueType) => ({
     issueType,
     explanation: "The AI-proposed article markup did not pass the app's safety and structure checks.",
     action: "Review this issue and edit the article content manually. No unsafe AI markup was added to the draft.",
     suggestedLinks: [],
   }));
-  const changes = parsedChanges.changes;
+  const changes = paragraphFallback ? [...parsedChanges.changes, paragraphFallback] : parsedChanges.changes;
   const manualActions = ensureManualActions([
     ...parseManualActions(parsed.manualActions, selectedTypes),
     ...rejectedBodyActions,
@@ -258,7 +264,7 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
   }
 
   return {
-    summary: parsedChanges.rejectedIssueTypes.length
+    summary: rejectedIssueTypes.length
       ? "Safe SEO changes are ready for review. Some article-content suggestions were moved to manual actions because they did not pass safety checks."
       : cleanLine(parsed.summary).slice(0, 500) || "Review the proposed SEO improvements below.",
     changes,
@@ -335,6 +341,12 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
 
     if (field === "body") {
       try {
+        if (issueTypes.includes("paragraph_length")) {
+          if (!bodyReplacement?.replacements.length) throw new Error("9Router did not return an exact paragraph replacement");
+          bodyReplacement.replacements.forEach((replacement) => {
+            validateParagraphLengthChange(replacement.find, replacement.replace);
+          });
+        }
         validateBodyChange(input.body, after, issueTypes);
       } catch (error) {
         issueTypes.forEach((type) => rejectedIssueTypes.add(type));
@@ -472,6 +484,95 @@ function validateBodyChange(original: string, proposed: string, issueTypes: stri
   if (!altIssueSelected && !sameStringMultiset(extractAttributeValues(original, "alt"), extractAttributeValues(proposed, "alt"))) {
     throw new Error("9Router changed image alt text for an unrelated issue");
   }
+}
+
+function validateParagraphLengthChange(original: string, proposed: string) {
+  const originalText = normalizeArticleText(original);
+  const proposedText = normalizeArticleText(proposed);
+  const originalWords = originalText.split(" ").filter(Boolean);
+  const proposedWords = proposedText.split(" ").filter(Boolean);
+  const minimumWords = Math.max(3, Math.min(20, Math.floor(originalWords.length * 0.55)));
+  if (!proposedText || proposedWords.length < minimumWords) {
+    throw new Error("9Router removed too much text from the long paragraph");
+  }
+  if (proposedWords.length > Math.ceil(originalWords.length * 1.1)) {
+    throw new Error("9Router expanded the long paragraph instead of improving readability");
+  }
+  if (!sameStringMultiset(extractNumbers(originalText), extractNumbers(proposedText))) {
+    throw new Error("9Router changed or removed a number from the long paragraph");
+  }
+  const originalQuotes = extractQuotedText(originalText);
+  if (originalQuotes.some((quote) => !proposedText.includes(quote))) {
+    throw new Error("9Router changed or removed quoted text from the long paragraph");
+  }
+}
+
+function extractNumbers(value: string) {
+  return value.match(/\b\d+(?:[.,]\d+)*(?:%|[a-zA-Z]+)?\b/g) || [];
+}
+
+function extractQuotedText(value: string) {
+  return [...value.matchAll(/["“”']([^"“”']{8,})["“”']/g)].map((match) => match[1].trim());
+}
+
+function buildParagraphLengthFallback(input: AiSeoFixInput, issues: SeoAuditIssue[]): AiSeoFixChange | null {
+  const issue = issues.find((candidate) => candidate.type === "paragraph_length");
+  const indexes = new Set((issue?.details || []).map((detail) => detail.index));
+  if (!indexes.size) return null;
+  const paragraphs = [...input.body.matchAll(/<p\b[^>]*>[\s\S]*?<\/p>/gi)];
+  const replacements: AiSeoFixReplacement[] = [];
+  for (const [zeroIndex, match] of paragraphs.entries()) {
+    if (!indexes.has(zeroIndex + 1)) continue;
+    const fullParagraph = match[0];
+    const parts = fullParagraph.match(/^(<p\b[^>]*>)([\s\S]*)(<\/p>)$/i);
+    if (!parts || /<[^>]+>/.test(parts[2])) continue;
+    const split = splitLongPlainParagraph(parts[2]);
+    if (split.length < 2) continue;
+    replacements.push({
+      find: fullParagraph,
+      replace: split.map((part, index) => `${index === 0 ? parts[1] : "<p>"}${part}</p>`).join(""),
+    });
+  }
+  if (!replacements.length) return null;
+  const parsed = parseBodyReplacements(input.body, replacements);
+  if (!parsed) return null;
+  validateBodyChange(input.body, parsed.after, ["paragraph_length"]);
+  return {
+    field: "body",
+    after: parsed.after,
+    replacements: parsed.replacements,
+    explanation: "Splits only the identified long paragraph at natural sentence boundaries without rewriting or deleting its text.",
+    issueTypes: ["paragraph_length"],
+  };
+}
+
+function splitLongPlainParagraph(value: string) {
+  const sentences = value.match(/[^.!?。！？]+(?:[.!?。！？]+|$)/g)?.map((sentence) => sentence.trim()).filter(Boolean) || [];
+  if (sentences.length < 2) return [];
+  const totalWords = normalizeArticleText(value).split(" ").filter(Boolean).length;
+  const targetParts = totalWords > 220 ? 3 : 2;
+  const targetWords = Math.ceil(totalWords / targetParts);
+  const parts: string[] = [];
+  let current: string[] = [];
+  let currentWords = 0;
+  for (const sentence of sentences) {
+    const sentenceWords = normalizeArticleText(sentence).split(" ").filter(Boolean).length;
+    if (current.length
+      && (currentWords >= targetWords || currentWords + sentenceWords > targetWords)
+      && parts.length < targetParts - 1) {
+      parts.push(current.join(" "));
+      current = [];
+      currentWords = 0;
+    }
+    current.push(sentence);
+    currentWords += sentenceWords;
+  }
+  if (current.length) parts.push(current.join(" "));
+  return parts.length >= 2 ? parts : [];
+}
+
+function normalizeArticleText(value: string) {
+  return value.replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim();
 }
 
 function hasNewUnsafeMarkup(original: string, proposed: string) {
