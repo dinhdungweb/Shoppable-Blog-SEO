@@ -62,6 +62,7 @@ const PRICING_PLANS: PricingPlan[] = [
       "Blog manager and product linking",
       "Basic storefront product widget",
       "Rule-based SEO scan",
+      `${PLAN_LIMITS.free.aiRequestsPerMonth} AI generations per month`,
       "Basic analytics dashboard",
     ],
   },
@@ -84,6 +85,7 @@ const PRICING_PLANS: PricingPlan[] = [
       "SEO optimizer with post-level actions",
       "Internal Linking Assistant",
       "AI Content Brief & Keyword Cluster",
+      "Unlimited AI generations",
       "Conversion tracking and attribution",
       "3-day free trial",
     ],
@@ -127,6 +129,7 @@ const UPGRADE_REASON_MESSAGES: Record<string, string> = {
   image_seo: "AI Image SEO is a Growth plan feature. Upgrade to review featured and inline image alt text across multiple Shopify articles with batch Apply and Undo.",
   custom_css: "Custom widget CSS is a Growth plan feature. Upgrade to control your widget styling.",
   content_decay: "Content Decay Monitor is a Growth plan feature. Upgrade to monitor declining traffic, stale content, unavailable products and broken links.",
+  ai_limit: `Your Free plan includes ${PLAN_LIMITS.free.aiRequestsPerMonth} AI generations per month. Upgrade to Pro for unlimited AI generations.`,
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

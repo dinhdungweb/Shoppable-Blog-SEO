@@ -28,6 +28,7 @@ Các nền tảng hỗ trợ đã hoàn thành thêm:
 - AI Bulk SEO cho meta title, meta description và alt ảnh đại diện.
 - Content Decay Monitor và Google Search Console làm nguồn dữ liệu cho Content Refresh.
 - Content Brief xác minh sản phẩm Shopify, chèn product block và liên kết sản phẩm tự động khi lưu bài.
+- Quota AI theo tháng: Free có 10 lượt tạo thành công; Pro/Growth không giới hạn; server trừ lượt nguyên tử và hoàn lượt khi AI lỗi.
 
 ## 3. Roadmap gốc và trạng thái hiện tại
 
@@ -53,8 +54,11 @@ Trạng thái: **Hoàn thành**.
 - Model reasoning không nhận `temperature`; hệ thống dùng `reasoning_effort` mặc định là `low`.
 - Đã sửa trường hợp `minimal` không được GPT-5.5 hỗ trợ.
 - Không ghi API key vào mã nguồn hoặc file roadmap này.
+- Gói Free được giới hạn 10 lượt AI thành công mỗi tháng UTC tại server; không thể vượt giới hạn bằng cách gọi action trực tiếp.
+- Lượt đang xử lý được đặt chỗ nguyên tử để chống request đồng thời; lỗi provider hoặc output không hợp lệ sẽ tự hoàn lượt.
+- Blog Editor hiển thị lượt còn lại và chuyển tới Pricing khi đã hết quota; Pro/Growth không giới hạn.
 
-Bằng chứng: `app/nine-router.server.ts`, commit `6dc0150`.
+Bằng chứng: `app/nine-router.server.ts`, `app/ai-usage.server.ts`, `AiUsage`, commit `6dc0150`.
 
 ### 4.2. AI Bulk SEO metadata
 
@@ -263,7 +267,7 @@ Các hạng mục vận hành storefront đã hoàn thành:
 Sau khi hoàn thành AI FAQ + Schema Generator ngày 2026-07-23:
 
 - `npx prisma validate`: pass.
-- `npm test -- --run`: **137/137 test pass**, 30 test files.
+- `npm test -- --run`: **142/142 test pass**, 31 test files.
 - `npm run typecheck`: pass.
 - `npm run lint`: pass.
 - `npm run build`: pass.
@@ -283,3 +287,4 @@ Các cảnh báo build còn thấy là cảnh báo có sẵn từ CSS/Remix depe
 - **2026-07-23**: sửa App Proxy storefront về `/apps/shoppable-blog-seo` và ẩn lỗi kỹ thuật của widget khỏi giao diện khách hàng.
 - **2026-07-23**: hoàn thành AI FAQ + Schema Generator với evidence validation, query allowlist, review/edit/reorder, guarded Apply/Undo và storefront `FAQPage` JSON-LD khớp nội dung hiển thị.
 - **2026-07-23**: xác nhận toàn bộ 8/8 hạng mục AI trong roadmap gốc đã hoàn thành; lượt tiếp theo là hardening invariant cho body HTML.
+- **2026-07-23**: thêm quota AI theo tháng cho Free (10 lượt thành công), server-side atomic enforcement, hoàn lượt khi lỗi, chỉ báo lượt còn lại và upgrade path; Pro/Growth không giới hạn.

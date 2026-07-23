@@ -16,6 +16,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
     summary: "Plan, write, interlink and optimize Shopify content and images with review-first 9Router-powered AI workflows.",
     tags: ["New", "Improved", "Fixed"],
     changes: [
+      { type: "Improved", text: "The Free plan includes 10 successful AI generations per UTC calendar month, while Pro and Growth retain unlimited AI generations." },
+      { type: "Fixed", text: "AI usage is enforced atomically on the server, failed provider requests automatically return the reserved generation, and the article editor shows the remaining Free-plan balance." },
       { type: "New", text: "AI FAQ Copilot generates evidence-backed questions and answers from the current article, with optional verified Search Console query hints." },
       { type: "New", text: "Merchants can select, edit, remove and reorder generated FAQs before applying a semantic accordion to the local article draft, with Refresh, Remove and Undo controls." },
       { type: "Improved", text: "The storefront creates FAQPage structured data directly from the visible FAQ text and omits the schema when no valid visible FAQ is present." },

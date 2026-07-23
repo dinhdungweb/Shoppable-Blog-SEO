@@ -5,6 +5,7 @@ describe("pricing plan enforcement", () => {
   it("fails closed for unknown plan names", () => {
     expect(getPlanKey("Unknown enterprise plan")).toBe("free");
     expect(getLimitsForPlan("").shoppableArticles).toBe(3);
+    expect(getLimitsForPlan("").aiRequestsPerMonth).toBe(10);
     expect(getLimitsForPlan("").canContentDecay).toBe(false);
     expect(getLimitsForPlan("").canInternalLinking).toBe(false);
   });
@@ -16,6 +17,8 @@ describe("pricing plan enforcement", () => {
     expect(getLimitsForPlan("Growth").canContentDecay).toBe(true);
     expect(getLimitsForPlan("Pro").canInternalLinking).toBe(true);
     expect(getLimitsForPlan("Growth").canInternalLinking).toBe(true);
+    expect(getLimitsForPlan("Pro").aiRequestsPerMonth).toBe(Infinity);
+    expect(getLimitsForPlan("Growth").aiRequestsPerMonth).toBe(Infinity);
     expect(formatLimit(Infinity)).toBe("Unlimited");
   });
 

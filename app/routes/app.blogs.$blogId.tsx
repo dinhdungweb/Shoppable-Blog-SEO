@@ -120,6 +120,12 @@ import {
 } from "../faq-content";
 import { isNineRouterConfigured } from "../ai-seo.server";
 import { getPublicNineRouterErrorMessage } from "../nine-router.server";
+import {
+  getAiUsageStatus,
+  isAiQuotaExceededError,
+  runWithAiUsage,
+  type AiUsageStatus,
+} from "../ai-usage.server";
 
 type SeoIssue = SeoAuditIssue;
 
@@ -305,6 +311,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const shop = session.shop;
   const shopDomains = await fetchShopDomains(admin, shop);
   const { limits, planKey } = await getActivePlanAndLimits(billing, shop);
+  const aiUsage = await getAiUsageStatus(shop, limits.aiRequestsPerMonth);
   const tocAuditOptions = await getSeoTocAuditOptions(shop, limits.canContentNavigation);
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
@@ -438,6 +445,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       canInternalLinking: limits.canInternalLinking,
       planKey,
       aiEnabled: isNineRouterConfigured(),
+      aiUsage,
       contentRefresh: emptyContentRefreshContext(limits.canContentDecay),
       contentRefreshRequested: false,
       briefPrefill,
@@ -592,6 +600,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     canInternalLinking: limits.canInternalLinking,
     planKey,
     aiEnabled: isNineRouterConfigured(),
+    aiUsage,
     contentRefresh,
     contentRefreshRequested,
     briefPrefill: null,
@@ -607,6 +616,31 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const getActivePlan = () => {
     activePlanPromise ||= getActivePlanAndLimits(billing, shop);
     return activePlanPromise;
+  };
+  const runAi = async <T,>(generate: () => Promise<T>) => {
+    const { limits } = await getActivePlan();
+    return runWithAiUsage(
+      { shop, limit: limits.aiRequestsPerMonth },
+      generate,
+    );
+  };
+  const aiFailure = (error: unknown, fallback: string) => {
+    if (isAiQuotaExceededError(error)) {
+      return json(
+        {
+          success: false,
+          action: "ai_quota_reached",
+          error: `${error.message} Upgrade to Pro for unlimited AI.`,
+          aiUsage: error.status,
+          upgradeUrl: "/app/pricing?reason=ai_limit",
+        },
+        { status: 429 },
+      );
+    }
+    return json(
+      { success: false, error: getPublicNineRouterErrorMessage(error, fallback) },
+      { status: 502 },
+    );
   };
   const getTocAuditOptions = () => {
     tocAuditOptionsPromise ||= getActivePlan().then(({ limits }) =>
@@ -649,19 +683,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     try {
-      const suggestion = await generateAiBlogDraft({
-        mode: modeValue,
-        title,
-        body: cleanString(formData.get("body")),
-        excerpt: cleanString(formData.get("excerpt")),
-        primaryKeyword,
-        secondaryKeywords: parseKeywordList(cleanString(formData.get("secondaryKeywords"))),
-        instruction,
-      });
-      return json({ success: true, action: "ai_content_generated", suggestion });
+      const { result: suggestion, aiUsage } = await runAi(() =>
+        generateAiBlogDraft({
+          mode: modeValue,
+          title,
+          body: cleanString(formData.get("body")),
+          excerpt: cleanString(formData.get("excerpt")),
+          primaryKeyword,
+          secondaryKeywords: parseKeywordList(cleanString(formData.get("secondaryKeywords"))),
+          instruction,
+        }),
+      );
+      return json({ success: true, action: "ai_content_generated", suggestion, aiUsage });
     } catch (error) {
-      const message = getPublicNineRouterErrorMessage(error, "AI could not generate the article draft. Please try again.");
-      return json({ success: false, error: message }, { status: 502 });
+      return aiFailure(error, "AI could not generate the article draft. Please try again.");
     }
   }
 
@@ -672,18 +707,19 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const task = cleanString(formData.get("task"));
     if (!isAiSelectionTask(task)) return json({ success: false, error: "Choose a valid rewrite task." }, { status: 400 });
     try {
-      const suggestion = await rewriteAiSelection({
-        task,
-        selectionHtml: String(formData.get("selectionHtml") || ""),
-        selectionText: cleanString(formData.get("selectionText")),
-        articleContext: String(formData.get("articleContext") || ""),
-        keywordContext: cleanString(formData.get("keywordContext")),
-        instruction: cleanString(formData.get("instruction")),
-      });
-      return json({ success: true, action: "ai_selection_rewritten", suggestion });
+      const { result: suggestion, aiUsage } = await runAi(() =>
+        rewriteAiSelection({
+          task,
+          selectionHtml: String(formData.get("selectionHtml") || ""),
+          selectionText: cleanString(formData.get("selectionText")),
+          articleContext: String(formData.get("articleContext") || ""),
+          keywordContext: cleanString(formData.get("keywordContext")),
+          instruction: cleanString(formData.get("instruction")),
+        }),
+      );
+      return json({ success: true, action: "ai_selection_rewritten", suggestion, aiUsage });
     } catch (error) {
-      const message = getPublicNineRouterErrorMessage(error, "AI could not rewrite the selected text. Please try again.");
-      return json({ success: false, error: message }, { status: 502 });
+      return aiFailure(error, "AI could not rewrite the selected text. Please try again.");
     }
   }
 
@@ -698,21 +734,22 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     try {
-      const suggestion = await generateAiSeoFix({
-        issues,
-        title: cleanString(formData.get("title")),
-        body: cleanString(formData.get("body")),
-        excerpt: cleanString(formData.get("excerpt")),
-        metaTitle: cleanString(formData.get("metaTitle")),
-        metaDescription: cleanString(formData.get("metaDescription")),
-        featuredImageAlt: cleanString(formData.get("featuredImageAlt")),
-        hasFeaturedImage: formData.get("hasFeaturedImage") === "true",
-        focusKeyword: cleanString(formData.get("focusKeyword")),
-      });
-      return json({ success: true, action: "ai_seo_fix_generated", suggestion });
+      const { result: suggestion, aiUsage } = await runAi(() =>
+        generateAiSeoFix({
+          issues,
+          title: cleanString(formData.get("title")),
+          body: cleanString(formData.get("body")),
+          excerpt: cleanString(formData.get("excerpt")),
+          metaTitle: cleanString(formData.get("metaTitle")),
+          metaDescription: cleanString(formData.get("metaDescription")),
+          featuredImageAlt: cleanString(formData.get("featuredImageAlt")),
+          hasFeaturedImage: formData.get("hasFeaturedImage") === "true",
+          focusKeyword: cleanString(formData.get("focusKeyword")),
+        }),
+      );
+      return json({ success: true, action: "ai_seo_fix_generated", suggestion, aiUsage });
     } catch (error) {
-      const message = getPublicNineRouterErrorMessage(error, "AI could not generate SEO fixes. Please try again.");
-      return json({ success: false, error: message }, { status: 502 });
+      return aiFailure(error, "AI could not generate SEO fixes. Please try again.");
     }
   }
 
@@ -741,20 +778,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     try {
-      const suggestion = await generateContentRefresh({
-        title: cleanString(formData.get("title")),
-        body: cleanString(formData.get("body")),
-        excerpt: cleanString(formData.get("excerpt")),
-        metaTitle: cleanString(formData.get("metaTitle")),
-        metaDescription: cleanString(formData.get("metaDescription")),
-        focusKeyword: cleanString(formData.get("focusKeyword")),
-        signals,
-        queries,
-      });
-      return json({ success: true, action: "ai_content_refresh_generated", suggestion });
+      const { result: suggestion, aiUsage } = await runAi(() =>
+        generateContentRefresh({
+          title: cleanString(formData.get("title")),
+          body: cleanString(formData.get("body")),
+          excerpt: cleanString(formData.get("excerpt")),
+          metaTitle: cleanString(formData.get("metaTitle")),
+          metaDescription: cleanString(formData.get("metaDescription")),
+          focusKeyword: cleanString(formData.get("focusKeyword")),
+          signals,
+          queries,
+        }),
+      );
+      return json({ success: true, action: "ai_content_refresh_generated", suggestion, aiUsage });
     } catch (error) {
-      const message = getPublicNineRouterErrorMessage(error, "AI could not generate a content refresh. Please try again.");
-      return json({ success: false, error: message }, { status: 502 });
+      return aiFailure(error, "AI could not generate a content refresh. Please try again.");
     }
   }
 
@@ -779,16 +817,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       queries = context.queries.filter((query) => requestedQueries.has(query.query)).slice(0, 15);
     }
     try {
-      const suggestion = await generateAiFaq({
-        title: cleanString(formData.get("title")),
-        body,
-        queries,
-        maxItems: Number(formData.get("maxItems") || "5"),
-      });
-      return json({ success: true, action: "ai_faq_generated", suggestion });
+      const { result: suggestion, aiUsage } = await runAi(() =>
+        generateAiFaq({
+          title: cleanString(formData.get("title")),
+          body,
+          queries,
+          maxItems: Number(formData.get("maxItems") || "5"),
+        }),
+      );
+      return json({ success: true, action: "ai_faq_generated", suggestion, aiUsage });
     } catch (error) {
-      const message = getPublicNineRouterErrorMessage(error, "AI could not generate safe article-backed FAQs. Please try again.");
-      return json({ success: false, error: message }, { status: 502 });
+      return aiFailure(error, "AI could not generate safe article-backed FAQs. Please try again.");
     }
   }
 
@@ -1276,24 +1315,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
 
     try {
-      const recommendations = await generateAiProductRecommendations({
-        articleTitle,
-        articleBody,
-        focusKeyword,
-        products: candidates,
-      });
+      const { result: recommendations, aiUsage } = await runAi(() =>
+        generateAiProductRecommendations({
+          articleTitle,
+          articleBody,
+          focusKeyword,
+          products: candidates,
+        }),
+      );
       const productMap = new Map(candidates.map((product) => [product.id, product]));
       return json({
         success: true,
         action: "ai_product_recommendations",
+        aiUsage,
         recommendations: recommendations.map((recommendation) => ({
           ...recommendation,
           product: productMap.get(recommendation.productId),
         })).filter((recommendation) => Boolean(recommendation.product)),
       });
     } catch (error) {
-      const message = getPublicNineRouterErrorMessage(error, "AI could not recommend products. Please try again.");
-      return json({ success: false, error: message }, { status: 502 });
+      return aiFailure(error, "AI could not recommend products. Please try again.");
     }
   }
 
@@ -1626,7 +1667,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey, aiEnabled, contentRefresh, contentRefreshRequested, briefPrefill } =
+  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey, aiEnabled, aiUsage, contentRefresh, contentRefreshRequested, briefPrefill } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const aiFetcher = useFetcher<typeof action>();
@@ -1641,6 +1682,7 @@ export default function ArticleDetail() {
   const uploadFetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   const navigate = useNavigate();
+  const [currentAiUsage, setCurrentAiUsage] = useState<AiUsageStatus>(aiUsage);
 
   const [selectedTab, setSelectedTab] = useState(0);
   const [title, setTitle] = useState(article.title || "");
@@ -1746,6 +1788,32 @@ export default function ArticleDetail() {
   );
   const displayedProductCount = embeddedProducts.length + pendingBriefProducts.length;
   const currentFaq = useMemo(() => extractFaqSection(body), [body]);
+  const aiQuotaExhausted =
+    currentAiUsage.limited && (currentAiUsage.remaining || 0) <= 0;
+
+  useEffect(() => {
+    setCurrentAiUsage(aiUsage);
+  }, [aiUsage]);
+
+  useEffect(() => {
+    const responses = [
+      aiFetcher.data,
+      seoFixFetcher.data,
+      contentRefreshFetcher.data,
+      faqFetcher.data,
+      productAiFetcher.data,
+    ];
+    for (const response of responses) {
+      const nextUsage = (response as { aiUsage?: AiUsageStatus } | undefined)?.aiUsage;
+      if (nextUsage) setCurrentAiUsage(nextUsage);
+    }
+  }, [
+    aiFetcher.data,
+    contentRefreshFetcher.data,
+    faqFetcher.data,
+    productAiFetcher.data,
+    seoFixFetcher.data,
+  ]);
 
   const { score: seoScore, issues: seoIssues, keywordScores } = useMemo(() => {
     if (!article) return { score: 0, issues: [], keywordScores: {} };
@@ -2877,6 +2945,11 @@ export default function ArticleDetail() {
           </BlockStack>
 
           <InlineStack gap="200" blockAlign="center">
+            {currentAiUsage.limited && (
+              <Badge tone={aiQuotaExhausted ? "critical" : "info"}>
+                {`${currentAiUsage.remaining}/${currentAiUsage.limit} AI left`}
+              </Badge>
+            )}
             <Popover
               active={aiCopilotOpen}
               onClose={() => setAiCopilotOpen(false)}
@@ -2886,10 +2959,26 @@ export default function ArticleDetail() {
                   icon={MagicIcon}
                   disclosure
                   disabled={!aiEnabled}
-                  onClick={() => setAiCopilotOpen((open) => !open)}
-                  accessibilityLabel={aiEnabled ? "Open AI Copilot" : "AI Copilot is not configured"}
+                  onClick={() => {
+                    if (aiQuotaExhausted) {
+                      navigate("/app/pricing?reason=ai_limit");
+                      return;
+                    }
+                    setAiCopilotOpen((open) => !open);
+                  }}
+                  accessibilityLabel={
+                    !aiEnabled
+                      ? "AI Copilot is not configured"
+                      : aiQuotaExhausted
+                        ? "AI limit reached; view upgrade options"
+                        : "Open AI Copilot"
+                  }
                 >
-                  {aiEnabled ? "AI Copilot" : "AI not configured"}
+                  {!aiEnabled
+                    ? "AI not configured"
+                    : aiQuotaExhausted
+                      ? "Upgrade AI"
+                      : "AI Copilot"}
                 </Button>
               }
             >

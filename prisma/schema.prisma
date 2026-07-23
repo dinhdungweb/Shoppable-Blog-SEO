@@ -427,3 +427,15 @@ model ImageSeoChange {
 
   @@index([shop, appliedAt])
 }
+
+model AiUsage {
+  id          String   @id @default(cuid())
+  shop        String
+  periodStart DateTime
+  requests    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, periodStart])
+  @@index([periodStart])
+}

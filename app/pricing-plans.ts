@@ -3,6 +3,7 @@ export const GROWTH_PLAN = "Growth";
 export const LEGACY_PRO_PLAN = "Shoppable Blog Pro";
 export const LEGACY_GROWTH_PLAN = "Shoppable Blog Growth";
 export const PAID_PLANS = [PRO_PLAN, GROWTH_PLAN] as const;
+export const FREE_AI_REQUESTS_PER_MONTH = 10;
 
 export type PlanKey = "free" | "pro" | "growth";
 
@@ -16,11 +17,13 @@ export type PlanKey = "free" | "pro" | "growth";
  * - canBulkReview: access to Bulk Review workflow (Growth only).
  * - canCustomCss: access to Custom CSS field in widget settings (Growth only).
  * - canContentDecay: access to Content Decay Monitor (Growth only).
+ * - aiRequestsPerMonth: reviewable AI generations allowed in one UTC calendar month.
  */
 export const PLAN_LIMITS = {
   free: {
     shoppableArticles: 3,
     analyticsWindowDays: 7,
+    aiRequestsPerMonth: FREE_AI_REQUESTS_PER_MONTH,
     canContentNavigation: false,
     canInternalLinking: false,
     canBulkReview: false,
@@ -30,6 +33,7 @@ export const PLAN_LIMITS = {
   pro: {
     shoppableArticles: 100,
     analyticsWindowDays: 30,
+    aiRequestsPerMonth: Infinity,
     canContentNavigation: true,
     canInternalLinking: true,
     canBulkReview: false,
@@ -39,6 +43,7 @@ export const PLAN_LIMITS = {
   growth: {
     shoppableArticles: Infinity,
     analyticsWindowDays: 90,
+    aiRequestsPerMonth: Infinity,
     canContentNavigation: true,
     canInternalLinking: true,
     canBulkReview: true,
@@ -48,6 +53,7 @@ export const PLAN_LIMITS = {
 } as const satisfies Record<PlanKey, {
   shoppableArticles: number;
   analyticsWindowDays: number;
+  aiRequestsPerMonth: number;
   canContentNavigation: boolean;
   canInternalLinking: boolean;
   canBulkReview: boolean;
