@@ -1737,7 +1737,7 @@ export default function ArticleDetail() {
     if (!data || contentDecayAnalysisHandled.current === data) return;
     contentDecayAnalysisHandled.current = data;
     if (data.success) {
-      shopify.toast.show("Content analysis completed for this article.");
+      shopify.toast.show("Content analysis completed. Refresh signals are updating.");
       revalidator.revalidate();
     } else if (data.error) {
       shopify.toast.show(data.error, { isError: true });
@@ -5132,6 +5132,7 @@ function ContentRefreshCard({
   onAnalyze: () => void;
 }) {
   const available = context.signals.length + context.queries.length;
+  const hasAnalysis = Boolean(context.analyzedAt);
   return (
     <Card padding="400">
       <BlockStack gap="400">
@@ -5140,19 +5141,26 @@ function ContentRefreshCard({
           <BlockStack gap="150">
             <Text as="h2" variant="headingMd" fontWeight="bold">AI Content Refresh Copilot</Text>
             <Text as="p" variant="bodySm" tone="subdued">
-              Refresh this article using saved Content Decay findings and real Search Console queries. Every change stays review-only.
+              {available
+                ? "Refresh this article using saved Content Decay findings and real Search Console queries. Every change stays review-only."
+                : hasAnalysis
+                  ? "Analysis is complete, but this article has no decay issues or matching Search Console queries to refresh."
+                  : "Analyze content to find decay issues and real Search Console queries for this article."}
             </Text>
           </BlockStack>
         </InlineStack>
         <InlineStack gap="200">
-          <Badge tone={available ? "warning" : "info"}>{available ? `${available} signals` : "Needs signals"}</Badge>
+          <Badge tone={available ? "warning" : hasAnalysis ? "success" : "info"}>
+            {available ? `${available} signals` : hasAnalysis ? "No signals found" : "Not analyzed"}
+          </Badge>
           {context.canUse && available > 0 && <Badge>{`${context.signals.length} decay issues`}</Badge>}
           {context.canUse && available > 0 && <Badge>{`${context.queries.length} search queries`}</Badge>}
+          {context.canUse && hasAnalysis && <Badge>{`Analyzed ${formatDateTime(context.analyzedAt)}`}</Badge>}
         </InlineStack>
         {!context.canUse ? (
           <InlineStack align="end"><Button size="micro" onClick={onOpen}>Upgrade to Growth</Button></InlineStack>
         ) : available === 0 ? (
-          <InlineStack align="end"><Button size="micro" loading={loading} disabled={loading} onClick={onAnalyze}>Analyze content</Button></InlineStack>
+          <InlineStack align="end"><Button size="micro" loading={loading} disabled={loading} onClick={onAnalyze}>{hasAnalysis ? "Analyze again" : "Analyze content"}</Button></InlineStack>
         ) : (
           <InlineStack align="end"><Button size="micro" variant="primary" icon={MagicIcon} loading={loading} disabled={!context.aiEnabled} onClick={onOpen}>
             Plan refresh
