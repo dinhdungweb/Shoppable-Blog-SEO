@@ -1,6 +1,7 @@
 import type { SeoAuditIssue } from "./seo-audit";
 import { isNineRouterConfigured } from "./ai-seo.server";
 import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
+import { extractFaqSectionHtml } from "./faq-content";
 
 export const AI_SEO_FIX_FIELDS = ["title", "body", "excerpt", "metaTitle", "metaDescription", "featuredImageAlt"] as const;
 
@@ -191,7 +192,7 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
             "Treat metadata, content, media, authority, linking, and settings issue groups independently. Do not rewrite body content to solve a metadata, media, linking, authority, or settings-only issue.",
             "For body changes, never return the complete article in after. Set after to an empty string and return at most 12 small replacements, each with an exact find substring copied verbatim from bodyHtml and its replacement HTML. Each find must occur exactly once.",
             "If a safe exact body replacement is not possible, do not return a body change; return a manual action. Do not use h1, scripts, styles, iframes, forms, SVG, event attributes, inline CSS, or markdown fences.",
-            "Preserve every existing href and img src exactly. Preserve every [[SBS_PRODUCTS...]] and [[SBS_TOC...]] marker exactly.",
+            "Preserve every existing href and img src exactly. Preserve every [[SBS_PRODUCTS...]] and [[SBS_TOC...]] marker exactly. Preserve the complete section whose id is sbs-faq exactly.",
             "You may edit inline image alt attributes only when an image-alt issue was selected. Do not remove images, links, tables, or product blocks.",
             "Use natural keywords; do not stuff or force exact matches. Do not expand content with unsupported claims merely to reach a word count.",
             "Metadata fixes must accurately describe the supplied article. Use the focus keyword naturally only when one is supplied. Body fixes should address search intent, clarity, heading structure, readability, or early topical relevance only when the selected issue requires it.",
@@ -479,6 +480,9 @@ function validateBodyChange(original: string, proposed: string, issueTypes: stri
   }
   if (!sameStringMultiset(original.match(MARKER_PATTERN) || [], proposed.match(MARKER_PATTERN) || [])) {
     throw new Error("9Router did not preserve the article blocks");
+  }
+  if (extractFaqSectionHtml(original) !== extractFaqSectionHtml(proposed)) {
+    throw new Error("9Router did not preserve the article FAQ section");
   }
   const altIssueSelected = issueTypes.some((type) => ["inline_images_missing_alt", "image_alt_stuffing", "decorative_image_alt", "kw_alt"].includes(type));
   if (!altIssueSelected && !sameStringMultiset(extractAttributeValues(original, "alt"), extractAttributeValues(proposed, "alt"))) {

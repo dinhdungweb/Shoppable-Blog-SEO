@@ -1,6 +1,7 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
 import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 import { stripInvalidProductMarkers } from "./content-brief-products";
+import { extractFaqSectionHtml, removeFaqSection } from "./faq-content";
 
 export type AiWritingMode = "draft" | "improve" | "expand" | "shorten";
 
@@ -60,6 +61,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
     : DEFAULT_TIMEOUT_MS;
   const currentBody = input.body.slice(0, MAX_ARTICLE_CHARS);
   const requiredProductMarkers = currentBody.match(PRODUCT_MARKER_PATTERN) || [];
+  const existingFaq = extractFaqSectionHtml(currentBody);
 
   const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -118,6 +120,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
             "Do not invent products, prices, statistics, testimonials, guarantees, or factual claims.",
             "Do not add new links inside bodyHtml. Preserve every existing href exactly. Put up to 3 optional authoritative HTTPS source suggestions in suggestedLinks with url, title, anchorText, and reason. Prefer primary sources and return an empty array when no source is confidently relevant.",
             "Preserve every existing [[SBS_PRODUCTS...]] marker exactly, including its position near relevant content. Never create a new SBS_PRODUCTS marker and never put a product title inside one; the application manages product blocks separately.",
+            "Do not create, rewrite, or remove the section whose id is sbs-faq; the application manages FAQ content separately.",
             "title must be at most 255 characters. excerpt must be a plain-text summary. metaTitle must be at most 70 characters and metaDescription at most 160 characters.",
             MODE_INSTRUCTIONS[input.mode],
           ].join(" "),
@@ -158,6 +161,9 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
   const returnedProductMarkers = bodyHtml.match(PRODUCT_MARKER_PATTERN) || [];
   if (!sameStringMultiset(requiredProductMarkers, returnedProductMarkers)) {
     throw new Error("9Router did not preserve the article product blocks");
+  }
+  if (existingFaq) {
+    bodyHtml = `${removeFaqSection(bodyHtml).trim()}\n${existingFaq}`.trim();
   }
   bodyHtml = restoreExistingLinks(currentBody, bodyHtml);
 

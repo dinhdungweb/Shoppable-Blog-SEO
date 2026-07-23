@@ -16,6 +16,10 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
     summary: "Plan, write, interlink and optimize Shopify content and images with review-first 9Router-powered AI workflows.",
     tags: ["New", "Improved", "Fixed"],
     changes: [
+      { type: "New", text: "AI FAQ Copilot generates evidence-backed questions and answers from the current article, with optional verified Search Console query hints." },
+      { type: "New", text: "Merchants can select, edit, remove and reorder generated FAQs before applying a semantic accordion to the local article draft, with Refresh, Remove and Undo controls." },
+      { type: "Improved", text: "The storefront creates FAQPage structured data directly from the visible FAQ text and omits the schema when no valid visible FAQ is present." },
+      { type: "Fixed", text: "AI Writing, SEO Fix and Content Refresh preserve an existing generated FAQ section instead of silently rewriting or removing it." },
       { type: "New", text: "AI Image SEO scans featured and inline images across Shopify articles for missing alt text, keyword-stuffed descriptions and decorative images that should use empty alt text." },
       { type: "New", text: "Merchants can generate context-aware alt suggestions for selected images, edit each result, preview exact before-and-after values, apply up to 100 reviewed changes and undo the full batch." },
       { type: "Fixed", text: "Image SEO revalidates the article body, image index, source URL, decorative state and current alt text immediately before Apply or Undo, while preserving image files, URLs, dimensions and every non-alt HTML attribute." },

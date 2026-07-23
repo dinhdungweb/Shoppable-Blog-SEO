@@ -73,6 +73,32 @@ describe("9Router blog writing assistant", () => {
     })).rejects.toThrow("preserve the article product blocks");
   });
 
+  it("restores the exact app-managed FAQ after a writing revision", async () => {
+    configure();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        title: "Title",
+        bodyHtml: "<p>Improved article body.</p>",
+        excerpt: "Excerpt",
+        metaTitle: "Title",
+        metaDescription: "Description",
+        suggestedLinks: [],
+      }) } }],
+    }), { status: 200 })));
+    const faq = '<section id="sbs-faq" class="sbs-faq"><h2 class="sbs-faq__title">FAQ</h2><details class="sbs-faq__item"><summary class="sbs-faq__question">Question?</summary><p class="sbs-faq__answer">Article-backed answer.</p></details></section>';
+    const result = await generateAiBlogDraft({
+      mode: "improve",
+      title: "Title",
+      body: `<p>Original body.</p>${faq}`,
+      excerpt: "",
+      primaryKeyword: "title",
+      secondaryKeywords: [],
+      instruction: "",
+    });
+    expect(result.bodyHtml).toContain("<p>Improved article body.</p>");
+    expect(result.bodyHtml.endsWith(faq)).toBe(true);
+  });
+
   it("removes unsupported product-title markers invented by the model", async () => {
     configure();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({

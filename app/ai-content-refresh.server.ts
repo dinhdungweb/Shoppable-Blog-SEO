@@ -1,5 +1,6 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
 import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
+import { extractFaqSectionHtml } from "./faq-content";
 
 export const CONTENT_REFRESH_FIELDS = ["title", "body", "excerpt", "metaTitle", "metaDescription"] as const;
 export type ContentRefreshField = typeof CONTENT_REFRESH_FIELDS[number];
@@ -108,7 +109,7 @@ export async function generateContentRefresh(input: ContentRefreshInput): Promis
             "Signals marked manualOnly require a manual action and must not cause an automatic field change.",
             "For stale content, improve structure and clarity only from existing facts and add a manual fact-verification checklist.",
             "When changing body, return the complete HTML fragment without h1, scripts, styles, iframes, forms, SVG, event attributes, inline CSS, or markdown fences.",
-            "Preserve every existing href, img src, and img alt value exactly. Preserve every [[SBS_PRODUCTS...]] and [[SBS_TOC...]] marker exactly. Do not remove links, images, tables, or product blocks.",
+            "Preserve every existing href, img src, and img alt value exactly. Preserve every [[SBS_PRODUCTS...]] and [[SBS_TOC...]] marker exactly. Preserve the complete section whose id is sbs-faq exactly. Do not remove links, images, tables, product blocks, or FAQ content.",
             "title and metaTitle must each be at most 70 characters, metaDescription at most 160, and excerpt at most 400.",
             "Return only fields that actually change, and reference only supplied signal IDs and query strings.",
           ].join(" "),
@@ -268,6 +269,7 @@ function validateBody(original: string, proposed: string) {
   if (!sameStringMultiset(tagAttributes(original, "img", "src"), tagAttributes(proposed, "img", "src"))) throw new Error("9Router did not preserve the article images");
   if (!sameStringMultiset(tagAttributes(original, "img", "alt"), tagAttributes(proposed, "img", "alt"))) throw new Error("9Router did not preserve the article image alt text");
   if (!sameStringMultiset(original.match(MARKER_PATTERN) || [], proposed.match(MARKER_PATTERN) || [])) throw new Error("9Router did not preserve the article blocks");
+  if (extractFaqSectionHtml(original) !== extractFaqSectionHtml(proposed)) throw new Error("9Router did not preserve the article FAQ section");
 }
 
 function currentValue(input: ContentRefreshInput, field: ContentRefreshField) {

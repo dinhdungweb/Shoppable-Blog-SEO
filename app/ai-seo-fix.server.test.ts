@@ -64,6 +64,27 @@ describe("AI SEO Fix Copilot", () => {
     expect(result.manualActions).toEqual([expect.objectContaining({ issueType: "kw_early" })]);
   });
 
+  it("turns a body fix that removes the visible FAQ into a manual action", async () => {
+    configure();
+    stubResult({
+      summary: "Changed the body.",
+      changes: [{
+        field: "body",
+        after: '<p>A practical travel bag introduction.</p><img src="https://cdn.example.com/a.jpg">[[SBS_PRODUCTS:featured]]',
+        explanation: "Improves the opening.",
+        issueTypes: ["kw_early"],
+      }],
+      manualActions: [],
+    });
+    const faq = '<section id="sbs-faq"><h2>FAQ</h2><details><summary>Question?</summary><p>Article-backed answer.</p></details></section>';
+    const result = await generateAiSeoFix({
+      ...baseInput(),
+      body: `${baseInput().body}${faq}`,
+    });
+    expect(result.changes).toEqual([]);
+    expect(result.manualActions).toEqual([expect.objectContaining({ issueType: "kw_early" })]);
+  });
+
   it("applies small exact body replacements without regenerating the article", async () => {
     configure();
     stubResult({

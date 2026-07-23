@@ -111,6 +111,13 @@ import {
   rankCatalogProductsForArticle,
   type AiCatalogProduct,
 } from "../ai-product-placement.server";
+import { generateAiFaq, type AiFaqItem, type AiFaqSuggestion } from "../ai-faq.server";
+import {
+  extractFaqSection,
+  normalizeFaqSection,
+  removeFaqSection,
+  upsertFaqSection,
+} from "../faq-content";
 import { isNineRouterConfigured } from "../ai-seo.server";
 import { getPublicNineRouterErrorMessage } from "../nine-router.server";
 
@@ -145,6 +152,15 @@ type ContentRefreshSnapshot = {
   metaTitleTouched: boolean;
   metaDescription: string;
   isDirty: boolean;
+};
+
+type FaqSnapshot = {
+  body: string;
+  isDirty: boolean;
+};
+
+type EditableFaqItem = AiFaqItem & {
+  selected: boolean;
 };
 
 type SeoTocAuditOptions = {
@@ -208,7 +224,6 @@ const EDITOR_PASTE_UNWRAP_TAGS = new Set([
   "span",
   "font",
   "div",
-  "section",
   "article",
   "main",
   "header",
@@ -244,6 +259,9 @@ const EDITOR_PASTE_ALLOWED_TAG_MAP = new Map([
   ["tr", "tr"],
   ["td", "td"],
   ["th", "th"],
+  ["section", "section"],
+  ["details", "details"],
+  ["summary", "summary"],
 ]);
 
 const DEFAULT_PRODUCT_BLOCK_ID = "default";
@@ -605,7 +623,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (
     isNewPost &&
-    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions", "generate_ai_content", "generate_ai_seo_fix", "rewrite_ai_selection"].includes(intent)
+    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions", "generate_ai_content", "generate_ai_seo_fix", "generate_ai_faq", "rewrite_ai_selection"].includes(intent)
   ) {
     return json(
       { success: false, error: "Save this post before using this action." },
@@ -736,6 +754,40 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ success: true, action: "ai_content_refresh_generated", suggestion });
     } catch (error) {
       const message = getPublicNineRouterErrorMessage(error, "AI could not generate a content refresh. Please try again.");
+      return json({ success: false, error: message }, { status: 502 });
+    }
+  }
+
+  if (intent === "generate_ai_faq") {
+    if (!isNineRouterConfigured()) {
+      return json({ success: false, error: "9Router is not configured on the server." }, { status: 503 });
+    }
+    const body = cleanString(formData.get("body"));
+    if (stripHtml(body).length < 120) {
+      return json({ success: false, error: "Add more article content before generating FAQs." }, { status: 400 });
+    }
+    const requestedQueries = new Set(parseStringArray(cleanString(formData.get("queries")), 15));
+    let queries: ContentRefreshQuery[] = [];
+    if (!isNewPost && requestedQueries.size) {
+      const context = await loadContentRefreshContext({
+        shop,
+        articleId,
+        blogHandle: cleanString(formData.get("blogHandle")),
+        articleHandle: cleanString(formData.get("articleHandle")),
+        canUse: true,
+      });
+      queries = context.queries.filter((query) => requestedQueries.has(query.query)).slice(0, 15);
+    }
+    try {
+      const suggestion = await generateAiFaq({
+        title: cleanString(formData.get("title")),
+        body,
+        queries,
+        maxItems: Number(formData.get("maxItems") || "5"),
+      });
+      return json({ success: true, action: "ai_faq_generated", suggestion });
+    } catch (error) {
+      const message = getPublicNineRouterErrorMessage(error, "AI could not generate safe article-backed FAQs. Please try again.");
       return json({ success: false, error: message }, { status: 502 });
     }
   }
@@ -1580,6 +1632,7 @@ export default function ArticleDetail() {
   const aiFetcher = useFetcher<typeof action>();
   const seoFixFetcher = useFetcher<typeof action>();
   const contentRefreshFetcher = useFetcher<typeof action>();
+  const faqFetcher = useFetcher<typeof action>();
   const contentDecayAnalysisFetcher = useFetcher<{ success?: boolean; error?: string }>();
   const contentDecayAnalysisHandled = useRef<unknown>(null);
   const revalidator = useRevalidator();
@@ -1618,6 +1671,15 @@ export default function ArticleDetail() {
   const [selectedRefreshFields, setSelectedRefreshFields] = useState<ContentRefreshField[]>([]);
   const [contentRefreshBase, setContentRefreshBase] = useState<ContentRefreshSnapshot | null>(null);
   const [contentRefreshUndo, setContentRefreshUndo] = useState<ContentRefreshSnapshot | null>(null);
+  const [faqSetupOpen, setFaqSetupOpen] = useState(false);
+  const [faqReviewOpen, setFaqReviewOpen] = useState(false);
+  const [faqSuggestion, setFaqSuggestion] = useState<AiFaqSuggestion | null>(null);
+  const [faqItems, setFaqItems] = useState<EditableFaqItem[]>([]);
+  const [faqSectionTitle, setFaqSectionTitle] = useState("Frequently asked questions");
+  const [faqMaxItems, setFaqMaxItems] = useState("5");
+  const [selectedFaqQueries, setSelectedFaqQueries] = useState<string[]>(contentRefresh.queries.slice(0, 10).map((query) => query.query));
+  const [faqBase, setFaqBase] = useState<FaqSnapshot | null>(null);
+  const [faqUndo, setFaqUndo] = useState<FaqSnapshot | null>(null);
   const [aiProductModalOpen, setAiProductModalOpen] = useState(false);
   const [aiProductRecommendations, setAiProductRecommendations] = useState<any[]>([]);
   const [selectedAiProductIds, setSelectedAiProductIds] = useState<string[]>([]);
@@ -1664,6 +1726,7 @@ export default function ArticleDetail() {
   const handledAiFetcherDataRef = useRef<any>(null);
   const handledSeoFixFetcherDataRef = useRef<any>(null);
   const handledContentRefreshFetcherDataRef = useRef<any>(null);
+  const handledFaqFetcherDataRef = useRef<any>(null);
   const handledProductAiFetcherDataRef = useRef<any>(null);
   const [focusKeyword, setFocusKeyword] = useState(
     briefPrefill
@@ -1682,6 +1745,7 @@ export default function ArticleDetail() {
     [briefPrefill?.pendingProducts, isNewPost],
   );
   const displayedProductCount = embeddedProducts.length + pendingBriefProducts.length;
+  const currentFaq = useMemo(() => extractFaqSection(body), [body]);
 
   const { score: seoScore, issues: seoIssues, keywordScores } = useMemo(() => {
     if (!article) return { score: 0, issues: [], keywordScores: {} };
@@ -1765,6 +1829,7 @@ export default function ArticleDetail() {
   const isAiGenerating = aiFetcher.state !== "idle";
   const isSeoFixGenerating = seoFixFetcher.state !== "idle";
   const isContentRefreshGenerating = contentRefreshFetcher.state !== "idle";
+  const isFaqGenerating = faqFetcher.state !== "idle";
   const isAiProductLoading = productAiFetcher.state !== "idle";
   const activeImage = imageRemoved ? null : featuredImageUrl;
   const normalizedImageQuery = imageSearchQuery.trim().toLowerCase();
@@ -1977,6 +2042,23 @@ export default function ArticleDetail() {
     setContentRefreshOpen(false);
     setContentRefreshReviewOpen(true);
   }, [contentRefreshFetcher.data, shopify]);
+
+  useEffect(() => {
+    const data = faqFetcher.data as any;
+    if (!data || handledFaqFetcherDataRef.current === data) return;
+    handledFaqFetcherDataRef.current = data;
+    if (!data.success) {
+      shopify.toast.show(data.error || "AI FAQ generation failed.", { isError: true });
+      return;
+    }
+    if (data.action !== "ai_faq_generated" || !data.suggestion) return;
+    const suggestion = data.suggestion as AiFaqSuggestion;
+    setFaqSuggestion(suggestion);
+    setFaqSectionTitle(suggestion.sectionTitle);
+    setFaqItems(suggestion.items.map((item) => ({ ...item, selected: true })));
+    setFaqSetupOpen(false);
+    setFaqReviewOpen(true);
+  }, [faqFetcher.data, shopify]);
 
   useEffect(() => {
     const data = contentDecayAnalysisFetcher.data;
@@ -2491,6 +2573,84 @@ export default function ArticleDetail() {
     shopify.toast.show("Content refresh undone.");
   }, [contentRefreshUndo, shopify]);
 
+  const openFaqCopilot = useCallback(() => {
+    if (!aiEnabled) {
+      shopify.toast.show("Configure 9Router before using AI FAQ Copilot.", { isError: true });
+      return;
+    }
+    if (stripHtml(removeFaqSection(body)).trim().length < 120) {
+      shopify.toast.show("Add more article content before generating FAQs.", { isError: true });
+      return;
+    }
+    setFaqSetupOpen(true);
+  }, [aiEnabled, body, shopify]);
+
+  const handleGenerateFaq = useCallback(() => {
+    setFaqBase({ body, isDirty });
+    const formData = new FormData();
+    formData.append("intent", "generate_ai_faq");
+    formData.append("title", title);
+    formData.append("body", body);
+    formData.append("queries", JSON.stringify(selectedFaqQueries));
+    formData.append("maxItems", faqMaxItems);
+    formData.append("blogHandle", currentBlog?.handle || "");
+    formData.append("articleHandle", handle);
+    faqFetcher.submit(formData, { method: "POST" });
+  }, [body, currentBlog?.handle, faqFetcher, faqMaxItems, handle, isDirty, selectedFaqQueries, title]);
+
+  const handleMoveFaq = useCallback((index: number, direction: "up" | "down") => {
+    setFaqItems((current) => {
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }, []);
+
+  const handleApplyFaq = useCallback(() => {
+    if (!faqBase || body !== faqBase.body) {
+      shopify.toast.show("The draft changed while FAQ Copilot was working. Close this review and generate the FAQs again.", { isError: true });
+      return;
+    }
+    const selected = normalizeFaqSection(
+      faqSectionTitle,
+      faqItems.filter((item) => item.selected),
+    );
+    if (!selected.items.length) {
+      shopify.toast.show("Select at least one complete question and answer.", { isError: true });
+      return;
+    }
+    let nextBody = "";
+    try {
+      nextBody = upsertFaqSection(body, selected.sectionTitle, selected.items);
+    } catch (error) {
+      shopify.toast.show(error instanceof Error ? error.message : "FAQ content is invalid.", { isError: true });
+      return;
+    }
+    setFaqUndo({ body, isDirty });
+    setBody(nextBody);
+    setIsDirty(true);
+    setFaqReviewOpen(false);
+    shopify.toast.show(`${selected.items.length} FAQ item${selected.items.length === 1 ? "" : "s"} added to the draft. Save the post to publish them.`);
+  }, [body, faqBase, faqItems, faqSectionTitle, isDirty, shopify]);
+
+  const handleUndoFaq = useCallback(() => {
+    if (!faqUndo) return;
+    setBody(faqUndo.body);
+    setIsDirty(faqUndo.isDirty);
+    setFaqUndo(null);
+    shopify.toast.show("FAQ changes undone.");
+  }, [faqUndo, shopify]);
+
+  const handleRemoveFaq = useCallback(() => {
+    if (!currentFaq) return;
+    setFaqUndo({ body, isDirty });
+    setBody(removeFaqSection(body));
+    setIsDirty(true);
+    shopify.toast.show("FAQ section removed from the draft. Save the post to publish this change.");
+  }, [body, currentFaq, isDirty, shopify]);
+
   const openAiAssistant = useCallback(() => {
     setAiWritingMode(stripHtml(body).trim() ? "improve" : "draft");
     setAiPrimaryKeyword(focusKeywordValue(focusKeyword, 0));
@@ -2658,6 +2818,9 @@ export default function ArticleDetail() {
     setImageRemoved(false);
     setSeoFixUndo(null);
     setContentRefreshUndo(null);
+    setFaqUndo(null);
+    setFaqSetupOpen(false);
+    setFaqReviewOpen(false);
     setIsDirty(false);
   };
 
@@ -2756,6 +2919,14 @@ export default function ArticleDetail() {
                         onAction: () => {
                           setAiCopilotOpen(false);
                           openContentRefresh();
+                        },
+                      },
+                      {
+                        content: currentFaq ? "Refresh FAQ and schema" : "Generate FAQ and schema",
+                        disabled: isFaqGenerating,
+                        onAction: () => {
+                          setAiCopilotOpen(false);
+                          openFaqCopilot();
                         },
                       },
                     ],
@@ -3031,6 +3202,15 @@ export default function ArticleDetail() {
                   onAnalyze={handleAnalyzeContentDecay}
                 />
               )}
+              <FaqCopilotCard
+                aiEnabled={aiEnabled}
+                faqCount={currentFaq?.items.length || 0}
+                loading={isFaqGenerating}
+                undoAvailable={Boolean(faqUndo)}
+                onOpen={openFaqCopilot}
+                onUndo={handleUndoFaq}
+                onRemove={handleRemoveFaq}
+              />
               {canInternalLinking ? <div id="internal-link-assistant">
                 <InternalLinkAssistantCard
                   suggestions={internalLinkSuggestions}
@@ -3133,6 +3313,176 @@ export default function ArticleDetail() {
           </InlineStack>
         </div>
       )}
+
+      <Modal
+        open={faqSetupOpen}
+        onClose={() => {
+          if (!isFaqGenerating) setFaqSetupOpen(false);
+        }}
+        title={currentFaq ? "Refresh FAQ and schema" : "Generate FAQ and schema"}
+        primaryAction={{
+          content: "Generate FAQs",
+          onAction: handleGenerateFaq,
+          loading: isFaqGenerating,
+          disabled: isFaqGenerating,
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setFaqSetupOpen(false), disabled: isFaqGenerating }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="500">
+            <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+              <BlockStack gap="100">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">Only article-backed answers are accepted</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Every generated answer must include an exact supporting excerpt from this draft. Search Console queries guide question wording but are never treated as factual evidence.
+                </Text>
+              </BlockStack>
+            </Box>
+            <Select
+              label="Maximum FAQ items"
+              options={[
+                { label: "3 questions", value: "3" },
+                { label: "4 questions", value: "4" },
+                { label: "5 questions", value: "5" },
+                { label: "6 questions", value: "6" },
+                { label: "7 questions", value: "7" },
+                { label: "8 questions", value: "8" },
+              ]}
+              value={faqMaxItems}
+              onChange={setFaqMaxItems}
+              disabled={isFaqGenerating}
+            />
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingMd">Optional Search Console questions</Text>
+              {contentRefresh.queries.length ? contentRefresh.queries.slice(0, 15).map((query) => (
+                <Card key={query.query} padding="300">
+                  <InlineStack gap="300" blockAlign="start" wrap={false}>
+                    <Checkbox
+                      label={`Use query ${query.query}`}
+                      labelHidden
+                      checked={selectedFaqQueries.includes(query.query)}
+                      onChange={(checked) => setSelectedFaqQueries((current) => checked
+                        ? [...new Set([...current, query.query])]
+                        : current.filter((value) => value !== query.query))}
+                    />
+                    <BlockStack gap="100">
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">{query.query}</Text>
+                      <InlineStack gap="150">
+                        <Badge>{`${Math.round(query.impressions)} impressions`}</Badge>
+                        <Badge>{`${Math.round(query.clicks)} clicks`}</Badge>
+                        <Badge>{`Position ${query.position.toFixed(1)}`}</Badge>
+                      </InlineStack>
+                    </BlockStack>
+                  </InlineStack>
+                </Card>
+              )) : (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  No matching Search Console queries are available. Copilot will generate questions from the article alone.
+                </Text>
+              )}
+            </BlockStack>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      <Modal
+        open={faqReviewOpen}
+        onClose={() => setFaqReviewOpen(false)}
+        title="Review FAQ and schema"
+        primaryAction={{
+          content: `Apply selected (${faqItems.filter((item) => item.selected).length})`,
+          onAction: handleApplyFaq,
+          disabled: faqItems.every((item) => !item.selected),
+        }}
+        secondaryActions={[
+          { content: "Generate again", onAction: () => { setFaqReviewOpen(false); setFaqSetupOpen(true); } },
+          { content: "Close", onAction: () => setFaqReviewOpen(false) },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Box background="bg-surface-secondary" padding="300" borderRadius="300">
+              <BlockStack gap="100">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{faqSuggestion?.summary || "Review every FAQ before adding it to the draft."}</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Applying inserts visible semantic FAQ HTML. The storefront creates FAQPage JSON-LD from that exact visible text, so schema and content cannot drift apart.
+                </Text>
+              </BlockStack>
+            </Box>
+            <TextField
+              label="FAQ section heading"
+              value={faqSectionTitle}
+              onChange={setFaqSectionTitle}
+              autoComplete="off"
+              maxLength={120}
+            />
+            {faqItems.map((item, index) => (
+              <Card key={item.id} padding="300">
+                <BlockStack gap="300">
+                  <InlineStack align="space-between" blockAlign="center" gap="300">
+                    <Checkbox
+                      label={`Include FAQ ${index + 1}`}
+                      checked={item.selected}
+                      onChange={(checked) => setFaqItems((current) => current.map((candidate, candidateIndex) =>
+                        candidateIndex === index ? { ...candidate, selected: checked } : candidate))}
+                    />
+                    <ButtonGroup variant="segmented">
+                      <Button
+                        size="micro"
+                        icon={ArrowUpIcon}
+                        accessibilityLabel="Move FAQ up"
+                        disabled={index === 0}
+                        onClick={() => handleMoveFaq(index, "up")}
+                      />
+                      <Button
+                        size="micro"
+                        icon={ArrowDownIcon}
+                        accessibilityLabel="Move FAQ down"
+                        disabled={index === faqItems.length - 1}
+                        onClick={() => handleMoveFaq(index, "down")}
+                      />
+                      <Button
+                        size="micro"
+                        icon={DeleteIcon}
+                        tone="critical"
+                        accessibilityLabel="Remove FAQ"
+                        onClick={() => setFaqItems((current) => current.filter((_candidate, candidateIndex) => candidateIndex !== index))}
+                      />
+                    </ButtonGroup>
+                  </InlineStack>
+                  <TextField
+                    label="Question"
+                    value={item.question}
+                    onChange={(value) => setFaqItems((current) => current.map((candidate, candidateIndex) =>
+                      candidateIndex === index ? { ...candidate, question: value } : candidate))}
+                    autoComplete="off"
+                    maxLength={300}
+                  />
+                  <TextField
+                    label="Answer"
+                    value={item.answer}
+                    onChange={(value) => setFaqItems((current) => current.map((candidate, candidateIndex) =>
+                      candidateIndex === index ? { ...candidate, answer: value } : candidate))}
+                    autoComplete="off"
+                    multiline={4}
+                    maxLength={1500}
+                  />
+                  <Box background="bg-surface-secondary" padding="200" borderRadius="200">
+                    <BlockStack gap="100">
+                      <InlineStack align="space-between" gap="200">
+                        <Text as="span" variant="bodySm" fontWeight="semibold">Verified source excerpt</Text>
+                        {item.query && <Badge tone="magic">{item.query}</Badge>}
+                      </InlineStack>
+                      <Text as="p" variant="bodySm" tone="subdued">“{item.evidence}”</Text>
+                    </BlockStack>
+                  </Box>
+                </BlockStack>
+              </Card>
+            ))}
+            {!faqItems.length && <Text as="p" variant="bodyMd" tone="subdued">No FAQ items remain. Generate a new set to continue.</Text>}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
 
       <Modal
         open={contentRefreshOpen}
@@ -5849,6 +6199,58 @@ function ContentRefreshCard({
   );
 }
 
+function FaqCopilotCard({
+  aiEnabled,
+  faqCount,
+  loading,
+  undoAvailable,
+  onOpen,
+  onUndo,
+  onRemove,
+}: {
+  aiEnabled: boolean;
+  faqCount: number;
+  loading: boolean;
+  undoAvailable: boolean;
+  onOpen: () => void;
+  onUndo: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <Card padding="400">
+      <BlockStack gap="300">
+        <InlineStack gap="300" blockAlign="start" wrap={false}>
+          <span className="bp-action-icon"><Icon source={MagicIcon} tone="magic" /></span>
+          <BlockStack gap="150">
+            <Text as="h2" variant="headingMd" fontWeight="bold">AI FAQ + Schema</Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Generate article-backed FAQs, review every answer, and keep FAQPage schema synchronized with the visible section.
+            </Text>
+          </BlockStack>
+        </InlineStack>
+        <InlineStack gap="200">
+          <Badge tone={faqCount ? "success" : "info"}>{faqCount ? `${faqCount} visible FAQs` : "No FAQ section"}</Badge>
+          {faqCount > 0 && <Badge>FAQPage ready</Badge>}
+        </InlineStack>
+        <InlineStack align="end" gap="200">
+          {undoAvailable && <Button size="micro" onClick={onUndo}>Undo</Button>}
+          {faqCount > 0 && <Button size="micro" tone="critical" onClick={onRemove}>Remove</Button>}
+          <Button
+            size="micro"
+            variant="primary"
+            icon={MagicIcon}
+            loading={loading}
+            disabled={!aiEnabled || loading}
+            onClick={onOpen}
+          >
+            {faqCount ? "Refresh FAQs" : "Generate FAQs"}
+          </Button>
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
+
 function SeoFixPreview({
   label,
   field,
@@ -7258,6 +7660,19 @@ function sanitizeEditorPasteNode(node: Node): Node | null {
   if (targetTag === "table") {
     target.setAttribute("class", "bp-editor-content-table");
   }
+
+  if (targetTag === "section" && source.id === "sbs-faq") {
+    target.setAttribute("id", "sbs-faq");
+    target.setAttribute("class", "sbs-faq");
+  }
+  const faqClassByTag: Record<string, string> = {
+    h2: "sbs-faq__title",
+    details: "sbs-faq__item",
+    summary: "sbs-faq__question",
+    p: "sbs-faq__answer",
+  };
+  const faqClass = faqClassByTag[targetTag];
+  if (faqClass && source.classList.contains(faqClass)) target.setAttribute("class", faqClass);
 
   target.appendChild(children);
   return target;

@@ -1,8 +1,11 @@
 {% comment %}
   BP Shoppable Blog Widget - SEO Schema Block
-  Injects JSON-LD structured data for BlogPosting and optional BreadcrumbList.
+  Injects JSON-LD structured data for BlogPosting, optional BreadcrumbList,
+  and visible AI-reviewed FAQ content.
   No visual output, only script tags for search engines.
 {% endcomment %}
+{{ 'sbs-faq.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'sbs-faq.js' | asset_url }}" defer="defer"></script>
 
 {% if article %}
 <script type="application/ld+json">
@@ -75,7 +78,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "This block automatically generates BlogPosting and optional BreadcrumbList JSON-LD structured data."
+      "content": "This block generates BlogPosting and optional BreadcrumbList JSON-LD. FAQPage JSON-LD is added only when a visible app-managed FAQ section exists in the article."
     },
     {
       "type": "checkbox",

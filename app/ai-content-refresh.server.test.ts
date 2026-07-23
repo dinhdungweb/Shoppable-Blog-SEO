@@ -69,6 +69,24 @@ describe("AI Content Refresh Copilot", () => {
     expect(result.manualActions.map((action) => action.sourceId)).toEqual(expect.arrayContaining(["traffic"]));
   });
 
+  it("moves a refresh that removes the visible FAQ section to manual review", async () => {
+    configure();
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      strategy: "Rewrite.",
+      changes: [{ field: "body", after: '<p>Updated.</p><a href="/collections/bags">See bags</a>[[SBS_PRODUCTS]]', explanation: "Improves clarity.", signalIds: ["traffic"], queries: [] }],
+      manualActions: [],
+    })));
+    const faq = '<section id="sbs-faq"><h2>FAQ</h2><details><summary>Question?</summary><p>Article-backed answer.</p></details></section>';
+    const result = await generateContentRefresh({
+      ...baseInput(),
+      body: `${baseInput().body}${faq}`,
+    });
+    expect(result.changes).toEqual([]);
+    expect(result.manualActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: "traffic" }),
+    ]));
+  });
+
   it("moves an unverified year update to manual review", async () => {
     configure();
     vi.stubGlobal("fetch", vi.fn(async () => response({
