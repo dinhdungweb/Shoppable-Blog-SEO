@@ -2,7 +2,7 @@ import type { SeoAuditIssue } from "./seo-audit";
 import { isNineRouterConfigured } from "./ai-seo.server";
 import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
-export const AI_SEO_FIX_FIELDS = ["body", "excerpt", "metaTitle", "metaDescription", "featuredImageAlt"] as const;
+export const AI_SEO_FIX_FIELDS = ["title", "body", "excerpt", "metaTitle", "metaDescription", "featuredImageAlt"] as const;
 
 export type AiSeoFixField = typeof AI_SEO_FIX_FIELDS[number];
 
@@ -173,13 +173,15 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
           role: "system",
           content: [
             "You are an ecommerce SEO Fix Copilot. Return only one JSON object with summary, changes, and manualActions.",
-            "changes is an array of objects with field, after, replacements, explanation, and issueTypes. Allowed fields are body, excerpt, metaTitle, metaDescription, and featuredImageAlt.",
+            "changes is an array of objects with field, after, replacements, explanation, and issueTypes. Allowed fields are title, body, excerpt, metaTitle, metaDescription, and featuredImageAlt.",
             "manualActions is an array of objects with issueType, explanation, action, and suggestedLinks.",
             "Fix only the supplied issues and preserve the article language, meaning, voice, factual claims, and useful detail.",
             "Never invent products, links, sources, statistics, prices, testimonials, guarantees, author credentials, tests, or first-hand experience.",
             "For manualOnly issues, do not change a field; return a concrete manual action instead.",
             "For external_links, dofollow_external_links, or eeat_sources, suggest up to 3 specific HTTPS links in suggestedLinks. Each link needs its page title, natural anchorText, and a reason tied to a claim in the supplied article. Prefer primary sources, official standards, government, universities, or established subject-matter organizations. Never use search-result URLs, affiliate pages, competitors' product pages, or a generic homepage when a relevant deep page is known. If you cannot confidently provide a relevant public URL, return an empty suggestedLinks array.",
             "For all other issue types, suggestedLinks must be an empty array. Never claim that a suggested URL was verified or accessed.",
+            "For article_title, return only one title change. Create a clear, specific article title that matches the supplied body, preserves the article language and voice, and uses the focus keyword naturally when relevant.",
+            "For excerpt_summary, return only one excerpt change. Summarize the supplied article accurately in one or two useful sentences without unsupported claims, HTML, or a generic call to action.",
             "Treat metadata, content, media, authority, linking, and settings issue groups independently. Do not rewrite body content to solve a metadata, media, linking, authority, or settings-only issue.",
             "For body changes, never return the complete article in after. Set after to an empty string and return at most 12 small replacements, each with an exact find substring copied verbatim from bodyHtml and its replacement HTML. Each find must occur exactly once.",
             "If a safe exact body replacement is not possible, do not return a body change; return a manual action. Do not use h1, scripts, styles, iframes, forms, SVG, event attributes, inline CSS, or markdown fences.",
@@ -315,6 +317,8 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
       ? [...new Set(item.issueTypes.map(cleanLine).filter((type) => selectedTypes.has(type)))]
       : [];
     if (!issueTypes.length || issueTypes.every(isManualOnlySeoIssue)) continue;
+    if (selectedTypes.size === 1 && selectedTypes.has("article_title") && field !== "title") continue;
+    if (selectedTypes.size === 1 && selectedTypes.has("excerpt_summary") && field !== "excerpt") continue;
     let after = field === "body"
       ? applyBodyReplacements(input.body, item.replacements) || stringValue(item.after).trim()
       : stringValue(item.after).trim();
@@ -330,7 +334,7 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
       }
     }
     else after = cleanLine(after);
-    const limit = field === "metaTitle" ? 70 : field === "metaDescription" ? 160 : field === "excerpt" ? 400 : field === "featuredImageAlt" ? 255 : MAX_ARTICLE_CHARS;
+    const limit = field === "metaTitle" ? 70 : field === "metaDescription" ? 160 : field === "excerpt" ? 400 : field === "title" || field === "featuredImageAlt" ? 255 : MAX_ARTICLE_CHARS;
     if (after.length > limit) throw new Error(`9Router returned ${field} over the allowed length`);
     if (field === "featuredImageAlt" && !input.hasFeaturedImage) continue;
     if (after === currentFieldValue(input, field)) continue;
@@ -460,6 +464,7 @@ function validateBodyChange(original: string, proposed: string, issueTypes: stri
 }
 
 function currentFieldValue(input: AiSeoFixInput, field: AiSeoFixField) {
+  if (field === "title") return input.title;
   if (field === "body") return input.body;
   if (field === "excerpt") return input.excerpt;
   if (field === "metaTitle") return input.metaTitle;

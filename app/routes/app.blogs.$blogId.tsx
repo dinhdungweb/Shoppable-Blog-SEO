@@ -107,6 +107,7 @@ import { getPublicNineRouterErrorMessage } from "../nine-router.server";
 type SeoIssue = SeoAuditIssue;
 
 type SeoFixSnapshot = {
+  title: string;
   body: string;
   excerpt: string;
   metaTitle: string;
@@ -2035,7 +2036,7 @@ export default function ArticleDetail() {
       return;
     }
 
-    setSeoFixBase({ body, excerpt, metaTitle: effectiveMetaTitle, metaTitleTouched, metaDescription, featuredImageAlt, isDirty });
+    setSeoFixBase({ title, body, excerpt, metaTitle: effectiveMetaTitle, metaTitleTouched, metaDescription, featuredImageAlt, isDirty });
 
     const formData = new FormData();
     formData.append("intent", "generate_ai_seo_fix");
@@ -2055,8 +2056,9 @@ export default function ArticleDetail() {
   const handleApplySeoFix = useCallback(() => {
     if (!seoFixSuggestion || !seoFixBase || !selectedSeoFixFields.length) return;
     const selected = new Set(selectedSeoFixFields);
-    const currentValues: Record<AiSeoFixField, string> = { body, excerpt, metaTitle: effectiveMetaTitle, metaDescription, featuredImageAlt };
+    const currentValues: Record<AiSeoFixField, string> = { title, body, excerpt, metaTitle: effectiveMetaTitle, metaDescription, featuredImageAlt };
     const baseValues: Record<AiSeoFixField, string> = {
+      title: seoFixBase.title,
       body: seoFixBase.body,
       excerpt: seoFixBase.excerpt,
       metaTitle: seoFixBase.metaTitle,
@@ -2068,6 +2070,7 @@ export default function ArticleDetail() {
       return;
     }
     const snapshot: SeoFixSnapshot = {
+      title,
       body,
       excerpt,
       metaTitle,
@@ -2079,7 +2082,11 @@ export default function ArticleDetail() {
 
     for (const change of seoFixSuggestion.changes) {
       if (!selected.has(change.field)) continue;
-      if (change.field === "body") {
+      if (change.field === "title") {
+        setTitle(change.after);
+        if (!metaTitleTouched) setMetaTitle(change.after);
+        if (isNewPost && !handleTouched) setHandle(slugifyKeyword(change.after));
+      } else if (change.field === "body") {
         const safeBody = sanitizeEditorPasteHtml(change.after, stripHtml(change.after));
         if (!safeBody) {
           shopify.toast.show("AI returned an empty article body.", { isError: true });
@@ -2102,10 +2109,11 @@ export default function ArticleDetail() {
     setIsDirty(true);
     setSeoFixReviewOpen(false);
     shopify.toast.show("AI SEO fixes added to the draft. Review the updated score, then save when ready.");
-  }, [body, effectiveMetaTitle, excerpt, featuredImageAlt, isDirty, metaDescription, metaTitle, metaTitleTouched, selectedSeoFixFields, seoFixBase, seoFixSuggestion, shopify]);
+  }, [body, effectiveMetaTitle, excerpt, featuredImageAlt, handleTouched, isDirty, isNewPost, metaDescription, metaTitle, metaTitleTouched, selectedSeoFixFields, seoFixBase, seoFixSuggestion, shopify, title]);
 
   const handleUndoSeoFix = useCallback(() => {
     if (!seoFixUndo) return;
+    setTitle(seoFixUndo.title);
     setBody(seoFixUndo.body);
     setExcerpt(seoFixUndo.excerpt);
     setMetaTitle(seoFixUndo.metaTitle);
@@ -2530,6 +2538,22 @@ export default function ArticleDetail() {
                     editorLinkBridgeRef.current = bridge;
                   }}
                   onOpenAiAssistant={aiEnabled ? openAiAssistant : undefined}
+                  onGenerateTitle={() => handleGenerateSeoFix([{
+                    type: "article_title",
+                    category: "basic",
+                    label: "Article title",
+                    message: "Create an accurate, compelling title from the current article.",
+                    severity: "warning",
+                  }], "article_title")}
+                  onGenerateExcerpt={() => handleGenerateSeoFix([{
+                    type: "excerpt_summary",
+                    category: "basic",
+                    label: "Excerpt",
+                    message: "Create a concise, accurate summary from the current article.",
+                    severity: "warning",
+                  }], "excerpt_summary")}
+                  aiEnabled={aiEnabled}
+                  aiLoadingTarget={seoFixLoadingTarget}
                 />
                 
                 <div id="seo-card">
@@ -3296,6 +3320,10 @@ function ShopifyContentEditor({
   onProductBlockInserted,
   onLinkBridgeReady,
   onOpenAiAssistant,
+  onGenerateTitle,
+  onGenerateExcerpt,
+  aiEnabled,
+  aiLoadingTarget,
 }: {
   title: string;
   body: string;
@@ -3308,6 +3336,10 @@ function ShopifyContentEditor({
   onProductBlockInserted: (blockId: string) => void;
   onLinkBridgeReady: (bridge: EditorLinkBridge) => void;
   onOpenAiAssistant?: () => void;
+  onGenerateTitle: () => void;
+  onGenerateExcerpt: () => void;
+  aiEnabled: boolean;
+  aiLoadingTarget: string | null;
 }) {
   return (
     <BlockStack gap="400">
@@ -3316,7 +3348,18 @@ function ShopifyContentEditor({
           <TextField
             label="Title"
             value={title}
-            suffix={<Badge tone="attention">Soon</Badge>}
+            suffix={(
+              <Button
+                size="micro"
+                variant="plain"
+                icon={MagicIcon}
+                onClick={onGenerateTitle}
+                loading={aiLoadingTarget === "article_title"}
+                disabled={!aiEnabled || Boolean(aiLoadingTarget)}
+              >
+                Write with AI
+              </Button>
+            )}
             onChange={onTitleChange}
             autoComplete="off"
           />
@@ -3343,9 +3386,21 @@ function ShopifyContentEditor({
       <Card padding="400">
         <BlockStack gap="300">
           <BlockStack gap="100">
-            <Text as="h2" variant="headingMd" fontWeight="semibold">
-              Excerpt
-            </Text>
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd" fontWeight="semibold">
+                Excerpt
+              </Text>
+              <Button
+                size="micro"
+                variant="plain"
+                icon={MagicIcon}
+                onClick={onGenerateExcerpt}
+                loading={aiLoadingTarget === "excerpt_summary"}
+                disabled={!aiEnabled || Boolean(aiLoadingTarget)}
+              >
+                Summarize with AI
+              </Button>
+            </InlineStack>
             <Text as="p" variant="bodyMd" tone="subdued">
               Add a summary of the post to appear on your home page or blog.
             </Text>
@@ -5206,6 +5261,7 @@ function SeoFixPreview({
 
 function seoFixFieldLabel(field: AiSeoFixField) {
   const labels: Record<AiSeoFixField, string> = {
+    title: "article title",
     body: "article content",
     excerpt: "excerpt",
     metaTitle: "meta title",
@@ -5216,6 +5272,7 @@ function seoFixFieldLabel(field: AiSeoFixField) {
 }
 
 function seoFixSnapshotValue(snapshot: SeoFixSnapshot, field: AiSeoFixField) {
+  if (field === "title") return snapshot.title;
   if (field === "body") return snapshot.body;
   if (field === "excerpt") return snapshot.excerpt;
   if (field === "metaTitle") return snapshot.metaTitle;

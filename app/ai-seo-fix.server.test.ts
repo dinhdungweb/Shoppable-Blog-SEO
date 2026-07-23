@@ -172,6 +172,65 @@ describe("AI SEO Fix Copilot", () => {
     })]);
   });
 
+  it("generates only the article title for an inline title request", async () => {
+    configure();
+    stubResult({
+      summary: "A title is ready to review.",
+      changes: [
+        {
+          field: "title",
+          after: "A Practical Guide to Travel Bags",
+          replacements: [],
+          explanation: "Describes the article clearly.",
+          issueTypes: ["article_title"],
+        },
+        {
+          field: "excerpt",
+          after: "This unrelated field must be ignored.",
+          replacements: [],
+          explanation: "Not requested.",
+          issueTypes: ["article_title"],
+        },
+      ],
+      manualActions: [],
+    });
+
+    const result = await generateAiSeoFix({
+      ...baseInput(),
+      issues: [{ type: "article_title", label: "Article title", message: "Write a title.", severity: "warning" }],
+    });
+
+    expect(result.changes).toEqual([expect.objectContaining({
+      field: "title",
+      after: "A Practical Guide to Travel Bags",
+    })]);
+  });
+
+  it("generates only the excerpt for an inline summary request", async () => {
+    configure();
+    stubResult({
+      summary: "An excerpt is ready to review.",
+      changes: [{
+        field: "excerpt",
+        after: "A concise guide to choosing a practical travel bag.",
+        replacements: [],
+        explanation: "Summarizes the supplied article.",
+        issueTypes: ["excerpt_summary"],
+      }],
+      manualActions: [],
+    });
+
+    const result = await generateAiSeoFix({
+      ...baseInput(),
+      issues: [{ type: "excerpt_summary", label: "Excerpt", message: "Write a summary.", severity: "warning" }],
+    });
+
+    expect(result.changes).toEqual([expect.objectContaining({
+      field: "excerpt",
+      after: "A concise guide to choosing a practical travel bag.",
+    })]);
+  });
+
   it("turns output that removes product blocks into manual actions", async () => {
     configure();
     stubResult({

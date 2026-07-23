@@ -108,7 +108,7 @@ export async function generateContentRefresh(input: ContentRefreshInput): Promis
             "Signals marked manualOnly require a manual action and must not cause an automatic field change.",
             "For stale content, improve structure and clarity only from existing facts and add a manual fact-verification checklist.",
             "When changing body, return the complete HTML fragment without h1, scripts, styles, iframes, forms, SVG, event attributes, inline CSS, or markdown fences.",
-            "Preserve every existing href and img src exactly. Preserve every [[SBS_PRODUCTS...]] and [[SBS_TOC...]] marker exactly. Do not remove links, images, tables, or product blocks.",
+            "Preserve every existing href, img src, and img alt value exactly. Preserve every [[SBS_PRODUCTS...]] and [[SBS_TOC...]] marker exactly. Do not remove links, images, tables, or product blocks.",
             "title and metaTitle must each be at most 70 characters, metaDescription at most 160, and excerpt at most 400.",
             "Return only fields that actually change, and reference only supplied signal IDs and query strings.",
           ].join(" "),
@@ -141,11 +141,23 @@ export async function generateContentRefresh(input: ContentRefreshInput): Promis
   if (content.length > MAX_OUTPUT_CHARS) throw new Error("9Router returned a content refresh that is too large");
 
   const parsed = parseJsonObject(content);
-  const changes = parseChanges(parsed.changes, input, signalIds, queryNames, signals);
-  const manualActions = ensureManualActions(parseManualActions(parsed.manualActions, signalIds, queryNames), signals);
+  const parsedChanges = parseChanges(parsed.changes, input, signalIds, queryNames, signals);
+  const rejectedActions = parsedChanges.rejectedSourceIds.map((sourceId) => ({
+    sourceId,
+    title: "Review article content manually",
+    explanation: "The AI-proposed article content did not preserve the existing image, link, or embedded-block structure.",
+    action: "Review this refresh signal manually. No unsafe or structurally invalid article HTML was added to the draft.",
+  }));
+  const changes = parsedChanges.changes;
+  const manualActions = ensureManualActions([
+    ...parseManualActions(parsed.manualActions, signalIds, queryNames),
+    ...rejectedActions,
+  ], signals);
   if (!changes.length && !manualActions.length) throw new Error("9Router returned no usable content refresh");
   return {
-    strategy: cleanLine(parsed.strategy).slice(0, 700) || "Review the proposed content refresh below.",
+    strategy: parsedChanges.rejectedSourceIds.length
+      ? "Safe refresh changes are ready for review. Some article-content suggestions were moved to manual review because they did not pass safety checks."
+      : cleanLine(parsed.strategy).slice(0, 700) || "Review the proposed content refresh below.",
     changes,
     manualActions,
   };
@@ -158,9 +170,10 @@ function parseChanges(
   allowedQueries: Set<string>,
   signals: ContentRefreshSignal[],
 ) {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) return { changes: [] as ContentRefreshChange[], rejectedSourceIds: [] as string[] };
   const changes: ContentRefreshChange[] = [];
   const seen = new Set<string>();
+  const rejectedSourceIds = new Set<string>();
   const manualIds = new Set(signals.filter((signal) => isManualContentRefreshSignal(signal.type)).map((signal) => signal.id));
   for (const raw of value) {
     if (!raw || typeof raw !== "object") continue;
@@ -173,13 +186,24 @@ function parseChanges(
     if (signalIds.length && signalIds.every((id) => manualIds.has(id)) && !queries.length) continue;
     let after = stringValue(item.after).trim();
     if (!after) continue;
-    if (field === "body") validateBody(input.body, after);
-    else after = cleanLine(after);
+    if (field === "body") {
+      try {
+        validateBody(input.body, after);
+      } catch (error) {
+        [...signalIds, ...queries].forEach((sourceId) => rejectedSourceIds.add(sourceId));
+        console.warn("Rejected unsafe or structurally invalid Content Refresh body change", error instanceof Error ? error.message : String(error));
+        continue;
+      }
+    } else after = cleanLine(after);
     const limit = field === "body" ? MAX_BODY_CHARS : field === "excerpt" ? 400 : field === "metaDescription" ? 160 : 70;
-    if (after.length > limit) throw new Error(`9Router returned ${field} over the allowed length`);
+    if (after.length > limit) {
+      [...signalIds, ...queries].forEach((sourceId) => rejectedSourceIds.add(sourceId));
+      continue;
+    }
     if (signals.some((signal) => signal.type === "outdated_year")
       && !sameStringMultiset(yearValues(currentValue(input, field)), yearValues(after))) {
-      throw new Error("9Router changed a year before the article was manually verified");
+      [...signalIds, ...queries].forEach((sourceId) => rejectedSourceIds.add(sourceId));
+      continue;
     }
     if (after === currentValue(input, field)) continue;
     changes.push({
@@ -191,7 +215,7 @@ function parseChanges(
     });
     seen.add(field);
   }
-  return changes;
+  return { changes, rejectedSourceIds: [...rejectedSourceIds] };
 }
 
 function parseManualActions(value: unknown, signalIds: Set<string>, queryNames: Set<string>) {

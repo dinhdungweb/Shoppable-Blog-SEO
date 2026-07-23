@@ -28,14 +28,18 @@ describe("AI Content Refresh Copilot", () => {
     expect(request.messages[1].content).toContain("how to choose travel bag");
   });
 
-  it("rejects a refresh that invents a link", async () => {
+  it("moves a refresh that invents a link to manual review", async () => {
     configure();
     vi.stubGlobal("fetch", vi.fn(async () => response({
       strategy: "Add a source.",
       changes: [{ field: "body", after: '<p>Updated</p><a href="https://invented.example">Source</a>[[SBS_PRODUCTS]]', explanation: "Adds proof.", signalIds: ["traffic"], queries: [] }],
       manualActions: [],
     })));
-    await expect(generateContentRefresh(baseInput())).rejects.toThrow("preserve the article links");
+    const result = await generateContentRefresh(baseInput());
+    expect(result.changes).toEqual([]);
+    expect(result.manualActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: "traffic", title: "Review article content manually" }),
+    ]));
   });
 
   it("keeps unsafe decay signals manual and adds a stale fact checklist", async () => {
@@ -53,29 +57,53 @@ describe("AI Content Refresh Copilot", () => {
     expect(isManualContentRefreshSignal("broken_outbound")).toBe(true);
   });
 
-  it("rejects a refresh that removes product blocks", async () => {
+  it("moves a refresh that removes product blocks to manual review", async () => {
     configure();
     vi.stubGlobal("fetch", vi.fn(async () => response({
       strategy: "Rewrite.",
       changes: [{ field: "body", after: '<p>Updated</p><a href="/collections/bags">See bags</a>', explanation: "Improves clarity.", signalIds: ["traffic"], queries: [] }],
       manualActions: [],
     })));
-    await expect(generateContentRefresh(baseInput())).rejects.toThrow("preserve the article blocks");
+    const result = await generateContentRefresh(baseInput());
+    expect(result.changes).toEqual([]);
+    expect(result.manualActions.map((action) => action.sourceId)).toEqual(expect.arrayContaining(["traffic"]));
   });
 
-  it("does not update an old year before manual verification", async () => {
+  it("moves an unverified year update to manual review", async () => {
     configure();
     vi.stubGlobal("fetch", vi.fn(async () => response({
       strategy: "Update the title.",
       changes: [{ field: "title", after: "Best Travel Bags 2026", explanation: "Looks current.", signalIds: ["old-year"], queries: ["travel bags"] }],
       manualActions: [],
     })));
-    await expect(generateContentRefresh({
+    const result = await generateContentRefresh({
       ...baseInput(),
       title: "Best Travel Bags 2025",
       signals: [{ id: "old-year", type: "outdated_year", message: "Older year", previousValue: "2025", currentValue: "2026", recommendation: "Verify the content first." }],
       queries: [{ ...baseInput().queries[0], query: "travel bags" }],
-    })).rejects.toThrow("changed a year before the article was manually verified");
+    });
+    expect(result.changes).toEqual([]);
+    expect(result.manualActions.map((action) => action.sourceId)).toEqual(expect.arrayContaining(["old-year", "travel bags"]));
+  });
+
+  it("keeps safe metadata when an invalid body changes image alt text", async () => {
+    configure();
+    vi.stubGlobal("fetch", vi.fn(async () => response({
+      strategy: "Refresh the article.",
+      changes: [
+        { field: "metaTitle", after: "Travel Bag Guide for Better Trips", explanation: "Improves relevance.", signalIds: ["traffic"], queries: [] },
+        { field: "body", after: '<p>Updated.</p><img src="/bag.jpg" alt="Changed alt"><a href="/collections/bags">See bags</a>[[SBS_PRODUCTS]]', explanation: "Updates content.", signalIds: ["traffic"], queries: [] },
+      ],
+      manualActions: [],
+    })));
+    const result = await generateContentRefresh({
+      ...baseInput(),
+      body: '<p>Original.</p><img src="/bag.jpg" alt="Travel bag"><a href="/collections/bags">See bags</a>[[SBS_PRODUCTS]]',
+    });
+    expect(result.changes).toEqual([expect.objectContaining({ field: "metaTitle" })]);
+    expect(result.manualActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: "traffic" }),
+    ]));
   });
 });
 
