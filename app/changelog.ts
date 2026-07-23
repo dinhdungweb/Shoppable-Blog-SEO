@@ -10,6 +10,28 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.07.23",
+    date: "2026-07-23",
+    title: "AI writing and in-editor SEO Copilot",
+    summary: "Create, improve and safely review SEO content directly inside the article editor with 9Router-powered AI.",
+    tags: ["New", "Improved", "Fixed"],
+    changes: [
+      { type: "New", text: "AI Assistant can create or improve an SEO article from one primary keyword, optional secondary keywords and merchant instructions, including the title, body, excerpt and search metadata." },
+      { type: "New", text: "Selecting a word or passage in the content editor now opens a floating Chat with AI action for improving, shortening, expanding or rewriting only that selection." },
+      { type: "Improved", text: "Selected-text AI changes include a before-and-after review and replace only the approved selection in the local draft." },
+      { type: "New", text: "Article titles and excerpts now include compact inline AI actions that match the content editor controls." },
+      { type: "Improved", text: "SEO issue fixes are available beside their corresponding SEO score findings instead of requiring a separate issue list." },
+      { type: "Improved", text: "Long-paragraph fixes send the affected paragraphs to AI and show a reviewable proposed rewrite only after the merchant chooses Fix with AI." },
+      { type: "New", text: "AI can suggest relevant external sources with titles, anchor text and context; merchants can review and select verified links before adding them." },
+      { type: "Improved", text: "Content Refresh analysis runs from the current article and returns saved signals in place, without forcing merchants to leave for the Content Decay report." },
+      { type: "Improved", text: "AI fixes use per-action loading states, keep other controls available and place Undo within the SEO workflow." },
+      { type: "Fixed", text: "9Router responses no longer expose provider errors to merchants, and timeout or malformed-response failures return concise app guidance." },
+      { type: "Fixed", text: "AI requests use non-streaming responses to prevent successful provider requests from appearing as empty or failed app responses." },
+      { type: "Fixed", text: "AI-generated article and SEO changes preserve existing links, images, image alt text, tables and product blocks, while unsafe markup is rejected." },
+      { type: "Fixed", text: "Selected-text Chat with AI now appears as a compact floating action above the selection instead of a full-width button below the editor." },
+    ],
+  },
+  {
     version: "2026.07.22",
     date: "2026-07-22",
     title: "Catalog SEO editors and storefront performance",

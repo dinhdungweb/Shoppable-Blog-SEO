@@ -5402,17 +5402,6 @@ function SeoSidebar({
                         <div style={{ flex: 1, textAlign: 'left' }}>
                           <BlockStack gap="100">
                             <Text as="span" variant="bodySm">{issue.message}</Text>
-                            {issue.type === "paragraph_length" && issue.details?.map((detail) => (
-                              <Box key={`${issue.type}-${detail.index}`} background="bg-surface-secondary" padding="200" borderRadius="200">
-                                <BlockStack gap="050">
-                                  <InlineStack gap="200" blockAlign="center">
-                                    <Text as="span" variant="bodySm" fontWeight="semibold">Paragraph {detail.index}</Text>
-                                    <Badge tone="warning">{`${detail.wordCount} words`}</Badge>
-                                  </InlineStack>
-                                  <Text as="p" variant="bodySm" tone="subdued">{detail.preview}</Text>
-                                </BlockStack>
-                              </Box>
-                            ))}
                             {issue.type === "toc" && issue.severity !== "good" && (
                               <InlineStack>
                                 <Button
