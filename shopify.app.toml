@@ -2,6 +2,7 @@
 
 client_id = "138ef9418d0be545a3a246a0dfc4b365"
 name = "RankAI SEO Audit & Optimizer"
+handle = "rankai-seo-audit-optimizer"
 application_url = "https://shopable-blog.bluepeaks.top"
 embedded = true
 
@@ -24,7 +25,7 @@ redirect_urls = [
 
 [app_proxy]
 url = "https://shopable-blog.bluepeaks.top/api"
-subpath = "shoppable-blog-seo"
+subpath = "rankai-seo-audit-optimizer"
 prefix = "apps"
 
 [webhooks.privacy_compliance]

@@ -7,11 +7,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   if (formData.get("intent") !== "activate_pixel") return json({ error: "Unsupported action" }, { status: 400 });
 
-  const checkResponse = await admin.graphql(`#graphql
-    query DashboardPixelStatus { webPixel { id } }
-  `);
-  const checkResult: any = await checkResponse.json();
-  if (checkResult.data?.webPixel?.id) return json({ success: true, webPixelEnabled: true });
+  try {
+    const checkResponse = await admin.graphql(`#graphql
+      query DashboardPixelStatus { webPixel { id } }
+    `);
+    const checkResult: any = await checkResponse.json();
+    if (checkResult.data?.webPixel?.id) return json({ success: true, webPixelEnabled: true });
+  } catch (error) {
+    if (!isMissingWebPixelError(error)) throw error;
+  }
 
   const createResponse = await admin.graphql(
     `#graphql
@@ -55,12 +59,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     appEmbedError = "Could not check theme status";
   }
   try {
-    const response = await admin.graphql(`#graphql
-      query DashboardPixelStatus { webPixel { id } }
-    `);
-    const result: any = await response.json();
-    webPixelEnabled = Boolean(result.data?.webPixel?.id);
-    if (result.errors?.length && !webPixelEnabled) console.info("Web Pixel is not active yet", { shop: session.shop });
+    try {
+      const response = await admin.graphql(`#graphql
+        query DashboardPixelStatus { webPixel { id } }
+      `);
+      const result: any = await response.json();
+      webPixelEnabled = Boolean(result.data?.webPixel?.id);
+    } catch (error) {
+      if (!isMissingWebPixelError(error)) throw error;
+      webPixelEnabled = false;
+    }
   } catch (error) {
     console.error("Deferred web pixel check failed:", error);
     webPixelError = "Could not check Web Pixel status";
@@ -68,3 +76,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   console.info("Dashboard deferred setup timing", { shop: session.shop, durationMs: Date.now() - startedAt });
   return json({ appEmbedEnabled, appEmbedError, webPixelEnabled, webPixelError });
 };
+
+function isMissingWebPixelError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /no web pixel was found for this app/i.test(message);
+}

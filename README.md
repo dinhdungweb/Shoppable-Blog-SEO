@@ -34,7 +34,7 @@ token encryption key after stores connect unless existing connections are
 disconnected first.
 
 The storefront extension calls the signed app proxy at
-`/apps/shoppable-blog-seo`. Do not expose unsigned alternatives for widget,
+`/apps/rankai-seo-audit-optimizer`. Do not expose unsigned alternatives for widget,
 content-navigation, or click/impression ingestion. Purchase and add-to-cart
 events carry a short-lived HMAC token issued with the widget response.
 

@@ -79,7 +79,7 @@
     widget.className = style === "grid" ? "bp-widget bp-grid" : "bp-widget bp-carousel";
     widget.dataset.articleId = config.dataset.articleId || "";
     widget.dataset.shop = config.dataset.shop || "";
-    widget.dataset.appUrl = config.dataset.appUrl || "/apps/shoppable-blog-seo";
+    widget.dataset.appUrl = config.dataset.appUrl || "/apps/rankai-seo-audit-optimizer";
     widget.dataset.style = style;
     widget.dataset.blockId = marker.blockId;
     widget.dataset.styleLocked = marker.styleLocked ? "true" : "false";
@@ -152,7 +152,7 @@
 
     const articleId = widget.dataset.articleId;
     const shop = widget.dataset.shop;
-    const appUrl = widget.dataset.appUrl || "/apps/shoppable-blog-seo";
+    const appUrl = widget.dataset.appUrl || "/apps/rankai-seo-audit-optimizer";
     const style = widget.dataset.style || "carousel";
     const blockId = cleanBlockId(widget.dataset.blockId);
 
@@ -399,7 +399,7 @@
       if (!attribution) return;
 
       trackEvent(
-        config.dataset.appUrl || "/apps/shoppable-blog-seo",
+        config.dataset.appUrl || "/apps/rankai-seo-audit-optimizer",
         attribution.shop || config.dataset.shop || "",
         attribution.articleId,
         attribution.blockId,
@@ -740,7 +740,7 @@
   }
 
   function normalizeAppUrl(value) {
-    return (value || "/apps/shoppable-blog-seo").replace(/\/+$/, "");
+    return (value || "/apps/rankai-seo-audit-optimizer").replace(/\/+$/, "");
   }
 
   function cleanBlockId(value) {
