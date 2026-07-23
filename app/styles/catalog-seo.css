@@ -1,8 +1,8 @@
-.bp-seo-scope-tabs { overflow: hidden; border: 1px solid var(--p-color-border); border-radius: 12px; background: var(--p-color-bg-surface); }
+.bp-seo-scope-tabs { position: relative; overflow: hidden; border: 1px solid var(--p-color-border); border-radius: 12px; background: var(--p-color-bg-surface); }
 .bp-seo-scope-tabs .Polaris-Tabs__Outer { padding: 0; }
 .bp-seo-scope-tabs .Polaris-Tabs__Outer > div { padding: 8px !important; }
 .bp-seo-scope-tabs .Polaris-Tabs:not(.Polaris-Tabs__TabsMeasurer) { min-height: 36px; padding: 0; align-items: center; }
-.bp-seo-scope-tabs .Polaris-Tabs__TabsMeasurer { min-height: 0; }
+.bp-seo-scope-tabs .Polaris-Tabs__TabsMeasurer { position: absolute; inset: 0 auto auto 0; min-height: 0; pointer-events: none; }
 .bp-seo-scope-tabs .Polaris-Tabs__Tab { height: 36px; min-height: 36px; margin-block: 0; padding-block: 7px; }
 .bp-catalog-issue-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .bp-catalog-issue-summary { display: grid; grid-template-columns: 5px minmax(0, 1fr); gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--p-color-border-secondary); border-radius: 9px; background: var(--p-color-bg-surface-secondary); }
