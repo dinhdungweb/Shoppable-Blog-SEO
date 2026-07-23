@@ -36,7 +36,73 @@ describe("AI Image SEO", () => {
     }), { status: 200 })));
     await expect(generateAiImageAltSuggestions({ candidates: candidates().slice(0, 1) })).rejects.toThrow("no usable");
   });
+
+  it("falls back to JSON object mode when the model rejects JSON schema", async () => {
+    configure();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: "json_schema is unsupported" },
+      }), { status: 400 }))
+      .mockResolvedValueOnce(aiResponse({
+        suggestions: [
+          { id: "article|inline|0", altText: "Carry-on travel bag beside a suitcase", reason: "Describes the useful context." },
+        ],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const suggestions = await generateAiImageAltSuggestions({ candidates: candidates().slice(0, 1) });
+
+    expect(suggestions).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const retryRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(retryRequest.response_format).toEqual({ type: "json_object" });
+  });
+
+  it("uses prompt-only JSON and extracts an object from commentary", async () => {
+    configure();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: "response_format is unsupported" },
+      }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: "response_format is unsupported" },
+      }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: [
+          { type: "text", text: "Here is the result:\n" },
+          { type: "text", text: '{"results":[{"image_id":"article|inline|0","alt_text":"Carry-on travel bag beside a suitcase","explanation":"Useful context."}]}\nDone.' },
+        ] } }],
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const suggestions = await generateAiImageAltSuggestions({ candidates: candidates().slice(0, 1) });
+
+    expect(suggestions[0]).toEqual(expect.objectContaining({
+      id: "article|inline|0",
+      altText: "Carry-on travel bag beside a suitcase",
+    }));
+    const plainRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(plainRequest.response_format).toBeUndefined();
+  });
+
+  it("reports a clear error after every JSON mode returns invalid content", async () => {
+    configure();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: "This is not JSON." } }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(generateAiImageAltSuggestions({ candidates: candidates().slice(0, 1) }))
+      .rejects.toThrow("after JSON fallback");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
+
+function aiResponse(content: unknown) {
+  return new Response(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify(content) } }],
+  }), { status: 200 });
+}
 
 function configure() {
   process.env.NINE_ROUTER_BASE_URL = "http://127.0.0.1:20127/v1";

@@ -98,6 +98,78 @@ describe("AI Internal Link Copilot", () => {
       suggestions: [{ ...suggestions[0], anchorText: "also missing" }],
     })).rejects.toThrow("no safe, context-matched");
   });
+
+  it("extracts JSON from commentary and normalizes common model field names", async () => {
+    configure();
+    const fetchMock = vi.fn(async () => aiResponseContent(`Here is the review:
+      {
+        "suggestions": [{
+          "suggestion_id": "source:target",
+          "score": 88,
+          "reason": "The sizing article answers the reader's next question.",
+          "anchor_text": "shoe sizing advice",
+          "flags": ["ambiguous_anchor"]
+        }]
+      }
+      End of review.`));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateAiInternalLinkSuggestions({ articles, suggestions });
+    expect(result[0]).toMatchObject({
+      id: "source:target",
+      aiScore: 88,
+      aiExplanation: "The sizing article answers the reader's next question.",
+      aiWarnings: ["ambiguous_anchor"],
+      anchorText: "shoe sizing advice",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back when a model rejects JSON schema", async () => {
+    configure();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(unsupportedResponse("json_schema is unsupported"))
+      .mockResolvedValueOnce(aiResponse(validRecommendation()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateAiInternalLinkSuggestions({ articles, suggestions });
+    expect(result[0].aiScore).toBe(86);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const retryRequest = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(retryRequest.response_format).toEqual({ type: "json_object" });
+  });
+
+  it("uses prompt-only JSON when response_format is unsupported", async () => {
+    configure();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(unsupportedResponse("response_format is unsupported"))
+      .mockResolvedValueOnce(unsupportedResponse("response_format is unsupported"))
+      .mockResolvedValueOnce(aiResponseContent(JSON.stringify([validRecommendation().recommendations[0]])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateAiInternalLinkSuggestions({ articles, suggestions });
+    expect(result[0].anchorText).toBe("shoe sizing advice");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const plainRequest = JSON.parse(String(fetchMock.mock.calls[2][1]?.body));
+    expect(plainRequest.response_format).toBeUndefined();
+  });
+
+  it("repairs malformed recommendation containers after normal fallbacks", async () => {
+    configure();
+    const malformed = aiResponse({ result: "Use shoe sizing advice" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(malformed)
+      .mockResolvedValueOnce(aiResponse({ result: "Still malformed" }))
+      .mockResolvedValueOnce(aiResponse({ result: "Still malformed" }))
+      .mockResolvedValueOnce(aiResponse(validRecommendation()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateAiInternalLinkSuggestions({ articles, suggestions });
+    expect(result[0].aiScore).toBe(86);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const repairRequest = JSON.parse(String(fetchMock.mock.calls[3][1]?.body));
+    expect(repairRequest.messages[0].content).toContain("Repair your previous output");
+  });
 });
 
 function configure() {
@@ -110,4 +182,26 @@ function aiResponse(content: unknown) {
   return new Response(JSON.stringify({
     choices: [{ message: { content: JSON.stringify(content) } }],
   }), { status: 200 });
+}
+
+function aiResponseContent(content: string) {
+  return new Response(JSON.stringify({
+    choices: [{ message: { content } }],
+  }), { status: 200 });
+}
+
+function unsupportedResponse(message: string) {
+  return new Response(JSON.stringify({ error: { message } }), { status: 400 });
+}
+
+function validRecommendation() {
+  return {
+    recommendations: [{
+      suggestionId: "source:target",
+      relevanceScore: 86,
+      explanation: "The sizing guide helps readers choose the right fit.",
+      anchorOptions: ["shoe sizing advice"],
+      warnings: [],
+    }],
+  };
 }

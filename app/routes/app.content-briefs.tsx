@@ -30,6 +30,7 @@ import {
   type ContentBriefSection,
 } from "../ai-content-brief.server";
 import { generateAiBlogDraft } from "../ai-blog.server";
+import { prepareContentBriefProductBody } from "../content-brief-products";
 import { isNineRouterConfigured } from "../ai-seo.server";
 import {
   buildContentBriefContext,
@@ -204,7 +205,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const brief = saved.brief as unknown as AiContentBrief;
 
     try {
-      const draft = await generateAiBlogDraft({
+      const generatedDraft = await generateAiBlogDraft({
         mode: "draft",
         title: brief.title,
         body: "",
@@ -213,6 +214,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         secondaryKeywords: brief.secondaryKeywords,
         instruction: contentBriefDraftInstruction(brief),
       });
+      const draft = {
+        ...generatedDraft,
+        bodyHtml: prepareContentBriefProductBody(
+          generatedDraft.bodyHtml,
+          saved.id,
+          brief.productPlacements,
+        ),
+      };
       const updated = await prisma.contentBrief.update({
         where: { id: saved.id },
         data: {

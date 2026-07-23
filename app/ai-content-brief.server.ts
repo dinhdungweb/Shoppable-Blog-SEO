@@ -234,7 +234,7 @@ export function contentBriefDraftInstruction(brief: AiContentBrief) {
     `Required outline:\n${outline}`,
     `Questions to answer:\n${questions || "- None specified"}`,
     links ? `Internal links to consider (do not invent or automatically insert):\n${links}` : "",
-    products ? `Real Shopify products to consider (mention only when contextually useful):\n${products}` : "",
+    products ? `Real Shopify products to consider (mention only when contextually useful). Do not create SBS_PRODUCTS markers or shortcodes; the application inserts the verified product block separately:\n${products}` : "",
     "Write a complete useful draft from this approved brief. Do not claim facts that are not supported by the brief.",
   ].filter(Boolean).join("\n\n").slice(0, 12_000);
 }

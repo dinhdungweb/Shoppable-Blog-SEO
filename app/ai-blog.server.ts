@@ -1,5 +1,6 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
 import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
+import { stripInvalidProductMarkers } from "./content-brief-products";
 
 export type AiWritingMode = "draft" | "improve" | "expand" | "shorten";
 
@@ -116,7 +117,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
             "Do not include an h1, scripts, styles, images, iframes, markdown fences, or inline CSS.",
             "Do not invent products, prices, statistics, testimonials, guarantees, or factual claims.",
             "Do not add new links inside bodyHtml. Preserve every existing href exactly. Put up to 3 optional authoritative HTTPS source suggestions in suggestedLinks with url, title, anchorText, and reason. Prefer primary sources and return an empty array when no source is confidently relevant.",
-            "Preserve every [[SBS_PRODUCTS...]] marker exactly, including its position near relevant content.",
+            "Preserve every existing [[SBS_PRODUCTS...]] marker exactly, including its position near relevant content. Never create a new SBS_PRODUCTS marker and never put a product title inside one; the application manages product blocks separately.",
             "title must be at most 255 characters. excerpt must be a plain-text summary. metaTitle must be at most 70 characters and metaDescription at most 160 characters.",
             MODE_INSTRUCTIONS[input.mode],
           ].join(" "),
@@ -144,7 +145,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("9Router returned no message content");
   const parsed = parseJsonObject(content);
-  let bodyHtml = stringValue(parsed.bodyHtml).trim();
+  let bodyHtml = stripInvalidProductMarkers(stringValue(parsed.bodyHtml).trim());
   if (!bodyHtml) throw new Error("9Router returned an empty article draft");
   if (bodyHtml.length > MAX_OUTPUT_CHARS) throw new Error("9Router returned an article draft that is too large");
   if (/<\s*\/?\s*(script|style|iframe|object|embed|svg|form|input|button)\b/i.test(bodyHtml)

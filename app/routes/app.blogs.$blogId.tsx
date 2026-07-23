@@ -83,6 +83,13 @@ import {
 } from "../internal-linking";
 import { generateAiBlogDraft, isAiWritingMode, type AiWritingMode } from "../ai-blog.server";
 import { contentBriefDraftInstruction, type AiContentBrief } from "../ai-content-brief.server";
+import {
+  getContentBriefProductBlockId,
+  prepareContentBriefProductBody,
+  removeContentBriefProductBlock,
+  stripInvalidProductMarkers,
+  type ContentBriefProductPlacement,
+} from "../content-brief-products";
 import { isAiSelectionTask, rewriteAiSelection, type AiSelectionSuggestion, type AiSelectionTask } from "../ai-selection.server";
 import {
   generateAiSeoFix,
@@ -315,6 +322,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       metaTitle?: string;
       metaDescription?: string;
     } | null;
+    const briefProductPlacements = contentBrief?.productPlacements || [];
+    const briefProductBlockId = savedBrief
+      ? getContentBriefProductBlockId(savedBrief.id)
+      : DEFAULT_PRODUCT_BLOCK_ID;
     const briefPrefill = savedBrief && contentBrief ? {
       id: savedBrief.id,
       primaryKeyword: contentBrief.primaryKeyword || "",
@@ -323,11 +334,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       metaTitle: contentDraft?.metaTitle || "",
       metaDescription: contentDraft?.metaDescription || "",
       hasDraft: Boolean(contentDraft?.bodyHtml),
+      productBlockId: briefProductBlockId,
+      productPlacements: briefProductPlacements,
     } : null;
     if (contentBrief) {
       article.title = contentDraft?.title || contentBrief.title || "";
       article.handle = slugifySeoText(article.title);
-      article.body = contentDraft?.bodyHtml || "";
+      article.body = savedBrief
+        ? prepareContentBriefProductBody(
+          contentDraft?.bodyHtml || "",
+          savedBrief.id,
+          briefProductPlacements,
+        )
+        : stripInvalidProductMarkers(contentDraft?.bodyHtml || "");
       article.summary = contentDraft?.excerpt || "";
     }
     const initialAudit = runSeoAudit({
@@ -337,7 +356,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       body: article.body,
       hasImage: false,
       imageAlt: "",
-      productCount: 0,
+      productCount: briefProductPlacements.length,
       authorName: article.author?.name || defaultAuthorName,
       publishedAt: article.publishedAt,
       updatedAt: article.updatedAt,
@@ -696,7 +715,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const title = cleanString(formData.get("title"));
     const handle = cleanHandle(cleanString(formData.get("handle")));
     const summary = cleanString(formData.get("summary"));
-    const body = cleanString(formData.get("body"));
+    let body = cleanString(formData.get("body"));
     const metaTitle = cleanString(formData.get("metaTitle")) || title;
     const metaDescription = cleanString(formData.get("metaDescription")) || summary;
     const tags = parseTags(cleanString(formData.get("tags")));
@@ -710,6 +729,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const focusKeyword = cleanString(formData.get("focusKeyword"));
     const blogId = cleanString(formData.get("blogId"));
     const authorName = cleanString(formData.get("author")) || defaultAuthorName;
+    const briefId = cleanString(formData.get("briefId"));
 
     if (!title) {
       return json({ success: false, error: "Title is required." }, { status: 400 });
@@ -723,6 +743,45 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       if (!blogId) {
         return json({ success: false, error: "Choose a blog before creating this post." }, { status: 400 });
       }
+
+      let verifiedBriefProducts: VerifiedBriefProduct[] = [];
+      let briefProductBlockId = DEFAULT_PRODUCT_BLOCK_ID;
+      let productLinkWarning = "";
+      if (briefId) {
+        try {
+          const briefProducts = await loadVerifiedContentBriefProducts(admin, shop, briefId);
+          verifiedBriefProducts = briefProducts.products;
+          briefProductBlockId = briefProducts.blockId;
+          if (briefProducts.missingCount > 0) {
+            productLinkWarning = `${briefProducts.missingCount} Content Brief product${briefProducts.missingCount === 1 ? " is" : "s are"} no longer available and could not be linked.`;
+          }
+        } catch (error) {
+          console.error("Could not validate Content Brief products", error);
+          productLinkWarning = "The post was created, but Content Brief products could not be validated.";
+        }
+      }
+
+      if (verifiedBriefProducts.length) {
+        const { limits } = await getActivePlan();
+        if (Number.isFinite(limits.shoppableArticles)) {
+          const shoppableArticles = await prisma.articleProduct.groupBy({
+            by: ["articleId"],
+            where: { shop, isActive: true },
+          });
+          if (shoppableArticles.length >= limits.shoppableArticles) {
+            verifiedBriefProducts = [];
+            productLinkWarning = `The post was created without product links because the plan limit of ${formatLimit(limits.shoppableArticles)} shoppable posts has been reached.`;
+          }
+        }
+      }
+
+      body = verifiedBriefProducts.length
+        ? prepareContentBriefProductBody(body, briefId, verifiedBriefProducts.map((product) => ({
+          productTitle: product.title,
+        })))
+        : briefId
+          ? removeContentBriefProductBlock(stripInvalidProductMarkers(body), briefId)
+          : stripInvalidProductMarkers(body);
 
       const createInput: Record<string, unknown> = {
         blogId,
@@ -825,7 +884,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         body,
         hasImage: Boolean(imageUrl),
         imageAlt,
-        productCount,
+        productCount: Math.max(productCount, verifiedBriefProducts.length),
         focusKeyword,
         authorName,
         publishedAt: article.publishedAt,
@@ -863,12 +922,64 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         },
       });
 
+      let linkedProductCount = 0;
+      if (verifiedBriefProducts.length) {
+        try {
+          await prisma.$transaction(
+            verifiedBriefProducts.map((product, position) =>
+              prisma.articleProduct.upsert({
+                where: {
+                  shop_articleId_blockId_productId: {
+                    shop,
+                    articleId: article.id,
+                    blockId: briefProductBlockId,
+                    productId: product.id,
+                  },
+                },
+                update: {
+                  isActive: true,
+                  position,
+                  articleTitle: article.title || title,
+                  articleHandle: article.handle || handle,
+                  blogId: article.blog?.id || blogId,
+                  productTitle: product.title,
+                  productHandle: product.handle,
+                  productImage: product.featuredImage?.url || "",
+                  productPrice: product.priceRangeV2?.minVariantPrice?.amount || "0",
+                },
+                create: {
+                  shop,
+                  articleId: article.id,
+                  articleTitle: article.title || title,
+                  articleHandle: article.handle || handle,
+                  blogId: article.blog?.id || blogId,
+                  blockId: briefProductBlockId,
+                  productId: product.id,
+                  productTitle: product.title,
+                  productHandle: product.handle,
+                  productImage: product.featuredImage?.url || "",
+                  productPrice: product.priceRangeV2?.minVariantPrice?.amount || "0",
+                  position,
+                  displayStyle: "card",
+                },
+              }),
+            ),
+          );
+          linkedProductCount = verifiedBriefProducts.length;
+        } catch (error) {
+          console.error("Content Brief product linking failed", error);
+          productLinkWarning = "The post was created, but its Content Brief products could not be linked.";
+        }
+      }
+
       return json({
         success: true,
         action: "post_created",
         article,
         score: audit.score,
         issues: audit.issues,
+        linkedProductCount,
+        productLinkWarning,
       });
     }
 
@@ -1537,6 +1648,11 @@ export default function ArticleDetail() {
   const editorLinkBridgeRef = useRef<EditorLinkBridge | null>(null);
 
   const effectiveMetaTitle = metaTitleTouched ? metaTitle || title : title;
+  const pendingBriefProducts = useMemo(
+    () => isNewPost ? briefPrefill?.productPlacements || [] : [],
+    [briefPrefill?.productPlacements, isNewPost],
+  );
+  const displayedProductCount = embeddedProducts.length + pendingBriefProducts.length;
 
   const { score: seoScore, issues: seoIssues, keywordScores } = useMemo(() => {
     if (!article) return { score: 0, issues: [], keywordScores: {} };
@@ -1549,7 +1665,7 @@ export default function ArticleDetail() {
       imageAlt: featuredImageAlt || article.image?.altText || "",
       imageWidth: article.image?.width || null,
       imageHeight: article.image?.height || null,
-      productCount: embeddedProducts.length,
+      productCount: displayedProductCount,
       focusKeyword,
       authorName,
       publishedAt: article.publishedAt,
@@ -1558,11 +1674,14 @@ export default function ArticleDetail() {
       shopDomains,
       ...tocAuditOptions,
     });
-  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, embeddedProducts.length, focusKeyword, authorName, shop, shopDomains, tocAuditOptions]);
+  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, displayedProductCount, focusKeyword, authorName, shop, shopDomains, tocAuditOptions]);
 
   const productBlockOptions = useMemo(
-    () => buildProductBlockOptions(body, embeddedProducts),
-    [body, embeddedProducts],
+    () => buildProductBlockOptions(body, [
+      ...embeddedProducts,
+      ...pendingBriefProducts.map(() => ({ blockId: briefPrefill?.productBlockId })),
+    ]),
+    [body, briefPrefill?.productBlockId, embeddedProducts, pendingBriefProducts],
   );
   const selectedProductBlock =
     productBlockOptions.find((block) => block.id === selectedProductBlockId) || productBlockOptions[0];
@@ -1574,6 +1693,8 @@ export default function ArticleDetail() {
       ),
     [embeddedProducts, selectedProductBlock?.id],
   );
+  const selectedPendingBriefProducts =
+    selectedProductBlock?.id === briefPrefill?.productBlockId ? pendingBriefProducts : [];
   const selectedProductSelectionIds = useMemo(
     () =>
       selectedBlockProducts
@@ -1669,7 +1790,13 @@ export default function ArticleDetail() {
     if (fetcherData.action === "post_created") {
       setIsDirty(false);
       setImageRemoved(false);
-      shopify.toast.show("Post created successfully");
+      const linkedProductCount = Number(fetcherData.linkedProductCount || 0);
+      shopify.toast.show(
+        linkedProductCount > 0
+          ? `Post created and ${linkedProductCount} Content Brief product${linkedProductCount === 1 ? "" : "s"} linked`
+          : fetcherData.productLinkWarning || "Post created successfully",
+        { isError: Boolean(fetcherData.productLinkWarning && linkedProductCount === 0) },
+      );
       navigate(`/app/blogs/${encodeURIComponent(fetcherData.article.id)}`);
       return;
     }
@@ -2029,16 +2156,18 @@ export default function ArticleDetail() {
     formData.append("imageUrl", featuredImageUrl);
     formData.append("imageAlt", featuredImageAlt);
     formData.append("removeImage", imageRemoved ? "true" : "false");
-    formData.append("productCount", String(embeddedProducts.length));
+    formData.append("productCount", String(displayedProductCount));
     formData.append("focusKeyword", focusKeyword);
     formData.append("seoScore", String(seoScore));
     formData.append("seoIssues", JSON.stringify(seoIssues));
+    if (briefPrefill?.id) formData.append("briefId", briefPrefill.id);
     fetcher.submit(formData, { method: "POST" });
   }, [
     activeImage,
     authorName,
     body,
-    embeddedProducts.length,
+    briefPrefill?.id,
+    displayedProductCount,
     excerpt,
     fetcher,
     featuredImageAlt,
@@ -2069,7 +2198,7 @@ export default function ArticleDetail() {
     formData.append("imageUrl", featuredImageUrl);
     formData.append("imageAlt", featuredImageAlt);
     formData.append("removeImage", imageRemoved ? "true" : "false");
-    formData.append("productCount", String(embeddedProducts.length));
+    formData.append("productCount", String(displayedProductCount));
     formData.append("focusKeyword", focusKeyword);
     formData.append("seoScore", String(seoScore));
     formData.append("seoIssues", JSON.stringify(seoIssues));
@@ -2077,7 +2206,7 @@ export default function ArticleDetail() {
   }, [
     activeImage,
     body,
-    embeddedProducts.length,
+    displayedProductCount,
     excerpt,
     fetcher,
     featuredImageAlt,
@@ -2100,13 +2229,13 @@ export default function ArticleDetail() {
     formData.append("body", body);
     formData.append("hasImage", activeImage ? "true" : "false");
     formData.append("imageAlt", featuredImageAlt);
-    formData.append("productCount", String(embeddedProducts.length));
+    formData.append("productCount", String(displayedProductCount));
     formData.append("focusKeyword", focusKeyword);
     fetcher.submit(formData, { method: "POST" });
   }, [
     activeImage,
     body,
-    embeddedProducts.length,
+    displayedProductCount,
     fetcher,
     featuredImageAlt,
     handle,
@@ -2505,7 +2634,7 @@ export default function ArticleDetail() {
 
   const tabs = [
     { id: "content", content: "Content" },
-    { id: "products", content: "Products", badge: String(embeddedProducts.length) },
+    { id: "products", content: "Products", badge: String(displayedProductCount) },
     { id: "performance", content: "Performance" },
     { id: "history", content: "History" },
   ];
@@ -2547,7 +2676,9 @@ export default function ArticleDetail() {
                   {isNewPost ? "Not saved yet" : formatDateTime(article.publishedAt || article.updatedAt)}
                 </Text>
                 <Text as="span" variant="bodySm" tone="subdued">
-                  {embeddedProducts.length} products linked
+                  {isNewPost && pendingBriefProducts.length
+                    ? `${pendingBriefProducts.length} products ready to link`
+                    : `${embeddedProducts.length} products linked`}
                 </Text>
               </InlineStack>
             </BlockStack>
@@ -2652,7 +2783,7 @@ export default function ArticleDetail() {
           />
           <MetricCard
             title="Products linked"
-            value={String(embeddedProducts.length)}
+            value={String(displayedProductCount)}
             tone="info"
             icon={LinkIcon}
           />
@@ -2828,6 +2959,7 @@ export default function ArticleDetail() {
             {selectedTab === 1 && (
               <ProductsPanel
                 products={selectedBlockProducts}
+                pendingProducts={selectedPendingBriefProducts}
                 blocks={productBlockOptions}
                 selectedBlockId={selectedProductBlock?.id || DEFAULT_PRODUCT_BLOCK_ID}
                 onBlockChange={setSelectedProductBlockId}
@@ -2941,7 +3073,7 @@ export default function ArticleDetail() {
                 }}
               />
               <ProductsSummaryCard
-                productCount={embeddedProducts.length}
+                productCount={displayedProductCount}
                 ctr={stats.ctr}
                 revenue={stats.revenue}
                 topProduct={topProduct}
@@ -5047,6 +5179,7 @@ function RichArticleEditor({
 
 function ProductsPanel({
   products,
+  pendingProducts,
   blocks,
   selectedBlockId,
   onBlockChange,
@@ -5060,6 +5193,7 @@ function ProductsPanel({
   onOpenStyleModal,
 }: {
   products: any[];
+  pendingProducts: ContentBriefProductPlacement[];
   blocks: ProductBlockOption[];
   selectedBlockId: string;
   onBlockChange: (blockId: string) => void;
@@ -5122,7 +5256,7 @@ function ProductsPanel({
           >
             {!aiEnabled ? "AI not configured" : aiDisabled ? "Save post to use AI" : "Suggest with AI"}
           </Button>
-          <Button variant="primary" icon={ProductIcon} onClick={onAddProducts}>
+          <Button variant="primary" icon={ProductIcon} disabled={aiDisabled} onClick={onAddProducts}>
             Add product
           </Button>
         </ButtonGroup>
@@ -5222,6 +5356,25 @@ function ProductsPanel({
               </IndexTable.Row>
             ))}
           </IndexTable>
+        ) : pendingProducts.length > 0 ? (
+          <Box padding="600">
+            <BlockStack gap="300">
+              <InlineStack gap="200" blockAlign="center">
+                <Badge tone="info">Ready on save</Badge>
+                <Text as="h3" variant="headingMd">
+                  Content Brief selected {pendingProducts.length} product{pendingProducts.length === 1 ? "" : "s"}
+                </Text>
+              </InlineStack>
+              <Text as="p" tone="subdued">
+                These verified Shopify products will be linked to this block automatically when you create the post.
+              </Text>
+              <ul>
+                {pendingProducts.map((product) => (
+                  <li key={product.productId}>{product.productTitle}</li>
+                ))}
+              </ul>
+            </BlockStack>
+          </Box>
         ) : (
           <Box padding="600">
             <EmptyState
@@ -6401,6 +6554,81 @@ function makeEmptyArticle(blog?: any, authorName = DEFAULT_AUTHOR_NAME) {
     image: null,
     author: { name: authorName },
     blog: selectedBlog,
+  };
+}
+
+type VerifiedBriefProduct = {
+  id: string;
+  title: string;
+  handle: string;
+  featuredImage: { url?: string | null } | null;
+  priceRangeV2: { minVariantPrice?: { amount?: string | null } | null } | null;
+};
+
+async function loadVerifiedContentBriefProducts(
+  admin: any,
+  shop: string,
+  briefId: string,
+): Promise<{ blockId: string; products: VerifiedBriefProduct[]; missingCount: number }> {
+  const savedBrief = await prisma.contentBrief.findFirst({
+    where: { id: briefId, shop },
+    select: { brief: true },
+  });
+  const rawBrief = savedBrief?.brief as { productPlacements?: ContentBriefProductPlacement[] } | null;
+  const placements = Array.isArray(rawBrief?.productPlacements)
+    ? rawBrief.productPlacements.filter((placement) => typeof placement?.productId === "string" && placement.productId)
+    : [];
+  const productIds = [...new Set(placements.map((placement) => placement.productId))].slice(0, 6);
+  const blockId = getContentBriefProductBlockId(briefId);
+  if (!savedBrief || !productIds.length) return { blockId, products: [], missingCount: 0 };
+
+  const response = await admin.graphql(
+    `#graphql
+    query ValidateContentBriefProducts($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Product {
+          id
+          title
+          handle
+          status
+          featuredImage {
+            url
+          }
+          priceRangeV2 {
+            minVariantPrice {
+              amount
+            }
+          }
+        }
+      }
+    }`,
+    { variables: { ids: productIds } },
+  );
+  const result: any = await response.json();
+  if (result.errors?.length) {
+    throw new Error(result.errors.map((error: any) => error.message).join("; "));
+  }
+
+  const verifiedMap = new Map<string, VerifiedBriefProduct>();
+  for (const product of result.data?.nodes || []) {
+    if (!product?.id || product.status !== "ACTIVE") continue;
+    verifiedMap.set(product.id, {
+      id: product.id,
+      title: cleanString(product.title),
+      handle: cleanString(product.handle),
+      featuredImage: product.featuredImage || null,
+      priceRangeV2: product.priceRangeV2 || null,
+    });
+  }
+  const products = productIds.flatMap((id) => {
+    const product = verifiedMap.get(id);
+    return product ? [product] : [];
+  });
+
+  return {
+    blockId,
+    products,
+    missingCount: productIds.length - products.length,
   };
 }
 

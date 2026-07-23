@@ -73,6 +73,32 @@ describe("9Router blog writing assistant", () => {
     })).rejects.toThrow("preserve the article product blocks");
   });
 
+  it("removes unsupported product-title markers invented by the model", async () => {
+    configure();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        title: "Draft",
+        bodyHtml: "<p>Useful copy.</p>[[SBS_PRODUCTS:Ontario Lotus Silver]]",
+        excerpt: "Useful copy.",
+        metaTitle: "Draft",
+        metaDescription: "Useful copy.",
+        suggestedLinks: [],
+      }) } }],
+    }), { status: 200 })));
+
+    const result = await generateAiBlogDraft({
+      mode: "draft",
+      title: "Draft",
+      body: "",
+      excerpt: "",
+      primaryKeyword: "silver ring",
+      secondaryKeywords: [],
+      instruction: "Write the article.",
+    });
+
+    expect(result.bodyHtml).toBe("<p>Useful copy.</p>");
+  });
+
   it("rejects unsafe markup", async () => {
     configure();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({

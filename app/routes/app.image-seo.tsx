@@ -97,6 +97,45 @@ type ActionData = {
   undone?: boolean;
 };
 
+async function generateImageSuggestionsAdaptive(
+  candidates: ImageSeoCandidate[],
+  deadlineAt: number,
+): Promise<{ suggestions: AiImageAltSuggestion[]; failures: unknown[] }> {
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs < 1_500) {
+    return {
+      suggestions: [],
+      failures: [new Error("AI Image SEO exhausted its request time budget.")],
+    };
+  }
+
+  try {
+    const suggestions = await generateAiImageAltSuggestions({
+      candidates,
+      maxDurationMs: Math.min(remainingMs, candidates.length > 1 ? 25_000 : 12_000),
+    });
+    const returnedIds = new Set(suggestions.map((suggestion) => suggestion.id));
+    const missingCandidates = candidates.filter((candidate) => !returnedIds.has(candidate.id));
+    if (!missingCandidates.length) return { suggestions, failures: [] };
+
+    const recovery = await generateImageSuggestionsAdaptive(missingCandidates, deadlineAt);
+    return {
+      suggestions: [...suggestions, ...recovery.suggestions],
+      failures: recovery.failures,
+    };
+  } catch (error) {
+    if (candidates.length <= 1) return { suggestions: [], failures: [error] };
+
+    const midpoint = Math.ceil(candidates.length / 2);
+    const left = await generateImageSuggestionsAdaptive(candidates.slice(0, midpoint), deadlineAt);
+    const right = await generateImageSuggestionsAdaptive(candidates.slice(midpoint), deadlineAt);
+    return {
+      suggestions: [...left.suggestions, ...right.suggestions],
+      failures: [...left.failures, ...right.failures],
+    };
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
@@ -162,24 +201,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const suggestions: AiImageAltSuggestion[] = [];
       const failures: string[] = [];
+      const generationDeadline = Date.now() + 55_000;
       for (let index = 0; index < candidates.length; index += 15) {
         const batch = candidates.slice(index, index + 15);
-        try {
-          suggestions.push(...await generateAiImageAltSuggestions({ candidates: batch }));
-        } catch (error) {
+        const result = await generateImageSuggestionsAdaptive(batch, generationDeadline);
+        suggestions.push(...result.suggestions);
+        for (const error of result.failures) {
           failures.push(getPublicNineRouterErrorMessage(error, "AI could not generate suggestions for one image batch."));
         }
       }
-      if (!suggestions.length) return json({ error: failures[0] || "AI returned no usable image alt suggestions." });
+      if (!suggestions.length) {
+        return json(
+          { error: failures[0] || "AI returned no usable image alt suggestions." },
+          { status: 502 },
+        );
+      }
       return json({
         success: true,
         suggestions,
         candidates,
-        warning: failures.length ? `${failures.length} AI batch(es) failed; successful suggestions are still available for review.` : "",
+        warning: failures.length ? `${failures.length} AI request group(s) failed; successful suggestions are still available for review.` : "",
       });
     } catch (error) {
       console.error("AI image SEO generation failed", error instanceof Error ? error.message : String(error));
-      return json({ error: getPublicNineRouterErrorMessage(error, "AI Image SEO could not generate suggestions. Please try again.") });
+      return json(
+        { error: getPublicNineRouterErrorMessage(error, "AI Image SEO could not generate suggestions. Please try again.") },
+        { status: 502 },
+      );
     }
   }
 
