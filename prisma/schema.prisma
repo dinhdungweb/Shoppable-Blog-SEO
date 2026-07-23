@@ -413,3 +413,17 @@ model SeoBulkChange {
   @@index([shop, appliedAt])
   @@index([shop, batchId])
 }
+
+model ImageSeoChange {
+  id           String    @id @default(cuid())
+  batchId      String    @unique
+  shop         String
+  changes      Json
+  articleCount Int
+  imageCount   Int
+  status       String    @default("applied")
+  appliedAt    DateTime  @default(now())
+  undoneAt     DateTime?
+
+  @@index([shop, appliedAt])
+}

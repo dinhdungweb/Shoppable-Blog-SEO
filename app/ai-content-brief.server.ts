@@ -53,77 +53,98 @@ export async function generateAiContentBrief(input: GenerateContentBriefInput): 
     ? Math.min(timeoutValue, 60_000)
     : DEFAULT_TIMEOUT_MS;
 
-  const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      stream: false,
-      ...getNineRouterGenerationOptions(model, 0.2),
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "content_brief",
-          strict: true,
-          schema: contentBriefSchema(),
-        },
-      },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You are an ecommerce SEO content strategist.",
-            "Create a review-only content brief using only the supplied Shopify articles, products and Search Console rows.",
-            "Never invent an article ID, product ID, URL, query, metric, product property, customer claim, statistic or external source.",
-            "Search Console metrics show observed performance, not guaranteed intent or causation.",
-            "Choose one clear primary intent and make the outline useful to people before search engines.",
-            "Use one primary keyword and non-duplicative secondary keywords naturally; do not keyword-stuff.",
-            "Outline headings must be specific, non-repetitive and ordered logically. Do not include an H1.",
-            "Internal links and product placements are optional. Return only supplied resources that genuinely help the planned section.",
-            "Flag existing articles that may compete for the same primary intent and recommend differentiate, consolidate, update, or proceed.",
-            input.regenerateSection
-              ? `The merchant requested a new ${input.regenerateSection} section. Improve that area while keeping the rest of the existing brief coherent.`
-              : "Create the complete brief.",
-          ].join(" "),
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            requestedTopic: input.title.slice(0, 255),
-            seedKeyword: input.seedKeyword.slice(0, 200),
-            audienceHint: input.audience.slice(0, 400),
-            objectiveHint: input.objective.slice(0, 400),
-            sourceArticleId: input.sourceArticleId,
-            existingBrief: input.existingBrief || null,
-            regenerateSection: input.regenerateSection || null,
-            queryCompetition: detectQueryCompetition(input.context.queries),
-            searchConsoleQueries: input.context.queries,
-            existingArticles: input.context.articles.map((article) => ({
-              id: article.id,
-              title: article.title,
-              focusKeyword: article.focusKeyword,
-              url: articleUrl(article),
-              excerpt: visibleText(article.body).slice(0, 1_500),
-            })),
-            catalogProducts: input.context.products.map((product) => ({
-              id: product.id,
-              title: product.title,
-              url: `/products/${product.handle}`,
-              productType: product.productType,
-              vendor: product.vendor,
-              description: visibleText(product.description).slice(0, 900),
-            })),
-          }),
-        },
-      ],
-    }),
-  }, timeoutMs);
+  const systemMessage = [
+    "You are an ecommerce SEO content strategist.",
+    "Return only one JSON object matching the requested content-brief schema. Never return Markdown, headings, commentary, or code outside the JSON object.",
+    "Create a review-only content brief using only the supplied Shopify articles, products and Search Console rows.",
+    "Never invent an article ID, product ID, URL, query, metric, product property, customer claim, statistic or external source.",
+    "Search Console metrics show observed performance, not guaranteed intent or causation.",
+    "Choose one clear primary intent and make the outline useful to people before search engines.",
+    "Use one primary keyword and non-duplicative secondary keywords naturally; do not keyword-stuff.",
+    "Outline headings must be specific, non-repetitive and ordered logically. Do not include an H1.",
+    "Internal links and product placements are optional. Return only supplied resources that genuinely help the planned section.",
+    "Flag existing articles that may compete for the same primary intent and recommend differentiate, consolidate, update, or proceed.",
+    input.regenerateSection
+      ? `The merchant requested a new ${input.regenerateSection} section. Improve that area while keeping the rest of the existing brief coherent.`
+      : "Create the complete brief.",
+  ].join(" ");
+  const userMessage = JSON.stringify({
+    requestedTopic: input.title.slice(0, 255),
+    seedKeyword: input.seedKeyword.slice(0, 200),
+    audienceHint: input.audience.slice(0, 400),
+    objectiveHint: input.objective.slice(0, 400),
+    sourceArticleId: input.sourceArticleId,
+    existingBrief: input.existingBrief || null,
+    regenerateSection: input.regenerateSection || null,
+    queryCompetition: detectQueryCompetition(input.context.queries),
+    searchConsoleQueries: input.context.queries,
+    existingArticles: input.context.articles.map((article) => ({
+      id: article.id,
+      title: article.title,
+      focusKeyword: article.focusKeyword,
+      url: articleUrl(article),
+      excerpt: visibleText(article.body).slice(0, 1_500),
+    })),
+    catalogProducts: input.context.products.map((product) => ({
+      id: product.id,
+      title: product.title,
+      url: `/products/${product.handle}`,
+      productType: product.productType,
+      vendor: product.vendor,
+      description: visibleText(product.description).slice(0, 900),
+    })),
+  });
+  const requestContent = async (responseFormat: Record<string, unknown>, retry = false) => {
+    const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        ...getNineRouterGenerationOptions(model, 0.2),
+        response_format: responseFormat,
+        messages: [
+          {
+            role: "system",
+            content: retry
+              ? `${systemMessage} This is a structured-output retry. The root object must contain exactly these keys: title, searchIntent, audience, objective, contentAngle, primaryKeyword, secondaryKeywords, entities, outline, questions, internalLinks, productPlacements, cannibalizationRisks, sourceQueries. Begin with { and end with }.`
+              : systemMessage,
+          },
+          { role: "user", content: userMessage },
+        ],
+      }),
+    }, timeoutMs);
+    if (!response.ok) throw await createNineRouterResponseError(response, retry ? "content brief JSON retry" : "content brief");
+    const payload: any = await readNineRouterJson(response);
+    const content = payload?.choices?.[0]?.message?.content;
+    if (typeof content !== "string") throw new Error("9Router returned no message content");
+    return content;
+  };
 
-  if (!response.ok) throw await createNineRouterResponseError(response, "content brief");
-  const payload: any = await readNineRouterJson(response);
-  const content = payload?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") throw new Error("9Router returned no message content");
-  return validateBrief(parseJsonObject(content), input);
+  const primaryContent = await requestContent({
+    type: "json_schema",
+    json_schema: {
+      name: "content_brief",
+      strict: true,
+      schema: contentBriefSchema(),
+    },
+  });
+  try {
+    return validateBrief(parseJsonObject(primaryContent), input);
+  } catch (error) {
+    console.warn("9Router ignored or failed the content brief JSON schema; retrying with JSON object mode", {
+      error: error instanceof Error ? error.message : String(error),
+      contentPrefix: primaryContent.slice(0, 80),
+    });
+  }
+
+  const fallbackContent = await requestContent({ type: "json_object" }, true);
+  try {
+    return validateBrief(parseJsonObject(fallbackContent), input);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`9Router returned an invalid content brief after the JSON retry: ${detail}`);
+  }
 }
 
 export function contentBriefDraftInstruction(brief: AiContentBrief) {

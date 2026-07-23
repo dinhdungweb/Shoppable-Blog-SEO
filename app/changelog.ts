@@ -12,10 +12,14 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
     version: "2026.07.23",
     date: "2026-07-23",
-    title: "AI writing and in-editor SEO Copilot",
-    summary: "Create, improve and safely review SEO content directly inside the article editor with 9Router-powered AI.",
+    title: "AI content planning and optimization copilots",
+    summary: "Plan, write, interlink and optimize Shopify content and images with review-first 9Router-powered AI workflows.",
     tags: ["New", "Improved", "Fixed"],
     changes: [
+      { type: "New", text: "AI Image SEO scans featured and inline images across Shopify articles for missing alt text, keyword-stuffed descriptions and decorative images that should use empty alt text." },
+      { type: "New", text: "Merchants can generate context-aware alt suggestions for selected images, edit each result, preview exact before-and-after values, apply up to 100 reviewed changes and undo the full batch." },
+      { type: "Fixed", text: "Image SEO revalidates the article body, image index, source URL, decorative state and current alt text immediately before Apply or Undo, while preserving image files, URLs, dimensions and every non-alt HTML attribute." },
+      { type: "Fixed", text: "AI Content Brief automatically retries in JSON-object mode when a routed model ignores the requested JSON schema and returns Markdown, while retaining the same server-side resource validation." },
       { type: "New", text: "AI Content Brief & Keyword Cluster builds a saved strategy, primary and secondary keyword cluster, entity coverage, H2/H3 outline, reader questions and cannibalization review from verified Shopify and Search Console data." },
       { type: "New", text: "Saved content briefs include server-verified internal-link and product-placement plans, allow each section to be regenerated, and can create a complete draft that opens prefilled in the article editor for review." },
       { type: "Fixed", text: "AI Content Brief drops invented article IDs, product IDs, URLs, queries and metrics before saving, while article drafts remain unpublished until the merchant explicitly saves them to Shopify." },

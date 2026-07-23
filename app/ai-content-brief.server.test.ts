@@ -51,6 +51,36 @@ describe("AI Content Brief & Keyword Cluster", () => {
     })));
     await expect(generateAiContentBrief(input())).rejects.toThrow("no usable content outline");
   });
+
+  it("retries with JSON object mode when the model ignores the schema and returns Markdown", async () => {
+    configure();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(responseContent("### 1. SEO Content Brief\nThis is not JSON."))
+      .mockResolvedValueOnce(response({
+        title: "Running shoe sizing guide",
+        searchIntent: "commercial",
+        audience: "New runners",
+        objective: "Help readers choose a size",
+        contentAngle: "Fit-first buying guide",
+        primaryKeyword: "running shoe sizing",
+        secondaryKeywords: ["running shoe size chart"],
+        entities: ["foot measurement"],
+        outline: [{ level: "h2", heading: "Measure your feet", purpose: "Explain the process" }],
+        questions: ["Should running shoes be larger?"],
+        internalLinks: [],
+        productPlacements: [],
+        cannibalizationRisks: [],
+        sourceQueries: [],
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const brief = await generateAiContentBrief(input());
+    expect(brief.title).toBe("Running shoe sizing guide");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const retryRequest = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(retryRequest.response_format).toEqual({ type: "json_object" });
+    expect(retryRequest.messages[0].content).toContain("structured-output retry");
+  });
 });
 
 function configure() {
@@ -76,4 +106,8 @@ function input() {
 
 function response(content: unknown) {
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), { status: 200 });
+}
+
+function responseContent(content: string) {
+  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
 }

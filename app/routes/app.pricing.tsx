@@ -106,6 +106,7 @@ const PRICING_PLANS: PricingPlan[] = [
       "Table of contents integration",
       "Advanced analytics and product performance views",
       "Bulk review workflows",
+      "AI Image SEO for featured and inline images",
       "Content Decay Monitor",
       "Custom widget CSS controls",
       "Priority support",
@@ -123,6 +124,7 @@ const UPGRADE_REASON_MESSAGES: Record<string, string> = {
   content_navigation: "Table of contents and breadcrumbs are Pro plan features. Upgrade to enable TOC settings and storefront content navigation.",
   internal_linking: "Internal Linking Assistant is available on Pro and Growth plans. Upgrade to analyze, review and insert relevant links across Shopify articles.",
   content_brief: "AI Content Brief is available on Pro and Growth plans. Upgrade to build keyword clusters, outlines and reviewable article drafts from your store data.",
+  image_seo: "AI Image SEO is a Growth plan feature. Upgrade to review featured and inline image alt text across multiple Shopify articles with batch Apply and Undo.",
   custom_css: "Custom widget CSS is a Growth plan feature. Upgrade to control your widget styling.",
   content_decay: "Content Decay Monitor is a Growth plan feature. Upgrade to monitor declining traffic, stale content, unavailable products and broken links.",
 };
