@@ -1,5 +1,5 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
-import { getNineRouterGenerationOptions } from "./nine-router.server";
+import { createNineRouterResponseError, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
 export const CONTENT_REFRESH_FIELDS = ["title", "body", "excerpt", "metaTitle", "metaDescription"] as const;
 export type ContentRefreshField = typeof CONTENT_REFRESH_FIELDS[number];
@@ -133,10 +133,9 @@ export async function generateContentRefresh(input: ContentRefreshInput): Promis
   });
 
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, 300);
-    throw new Error(`9Router request failed (${response.status})${detail ? `: ${detail}` : ""}`);
+    throw await createNineRouterResponseError(response, "content refresh");
   }
-  const payload: any = await response.json();
+  const payload: any = await readNineRouterJson(response);
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("9Router returned no message content");
   if (content.length > MAX_OUTPUT_CHARS) throw new Error("9Router returned a content refresh that is too large");

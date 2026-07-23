@@ -102,6 +102,7 @@ import {
   type AiCatalogProduct,
 } from "../ai-product-placement.server";
 import { isNineRouterConfigured } from "../ai-seo.server";
+import { getPublicNineRouterErrorMessage } from "../nine-router.server";
 
 type SeoIssue = SeoAuditIssue;
 
@@ -552,7 +553,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       return json({ success: true, action: "ai_content_generated", suggestion });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "9Router could not generate the article draft.";
+      const message = getPublicNineRouterErrorMessage(error, "AI could not generate the article draft. Please try again.");
       return json({ success: false, error: message }, { status: 502 });
     }
   }
@@ -581,7 +582,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       return json({ success: true, action: "ai_seo_fix_generated", suggestion });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "9Router could not generate SEO fixes.";
+      const message = getPublicNineRouterErrorMessage(error, "AI could not generate SEO fixes. Please try again.");
       return json({ success: false, error: message }, { status: 502 });
     }
   }
@@ -623,7 +624,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       return json({ success: true, action: "ai_content_refresh_generated", suggestion });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "9Router could not generate a content refresh.";
+      const message = getPublicNineRouterErrorMessage(error, "AI could not generate a content refresh. Please try again.");
       return json({ success: false, error: message }, { status: 502 });
     }
   }
@@ -1036,7 +1037,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         })).filter((recommendation) => Boolean(recommendation.product)),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "9Router could not recommend products.";
+      const message = getPublicNineRouterErrorMessage(error, "AI could not recommend products. Please try again.");
       return json({ success: false, error: message }, { status: 502 });
     }
   }

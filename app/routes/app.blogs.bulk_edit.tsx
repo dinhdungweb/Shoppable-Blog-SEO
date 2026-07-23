@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { generateAiSeoSuggestion, isNineRouterConfigured } from "../ai-seo.server";
+import { getPublicNineRouterErrorMessage } from "../nine-router.server";
 
 type ArticleData = { id: string; title: string; metaTitle: string; metaDescription: string; imageUrl: string; imageAlt: string; suggestedMetaTitle: string; suggestedMetaDescription: string; suggestedImageAlt: string };
 type UpdateItem = { id: string; metaTitle: string; metaDescription: string; imageAlt: string };
@@ -65,7 +66,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       })));
       settled.forEach((item, itemIndex) => {
         if (item.status === "fulfilled") suggestions.push(item.value);
-        else failures.push(`${clean(batch[itemIndex]?.title) || "Article"}: ${item.reason instanceof Error ? item.reason.message : "AI generation failed"}`);
+        else failures.push(`${clean(batch[itemIndex]?.title) || "Article"}: ${getPublicNineRouterErrorMessage(item.reason, "AI generation failed. Please try again.")}`);
       });
     }
     if (!suggestions.length) return json({ error: failures[0] || "9Router could not generate suggestions." }, { status: 502 });

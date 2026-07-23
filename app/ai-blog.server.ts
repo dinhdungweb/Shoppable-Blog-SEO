@@ -1,5 +1,5 @@
 import { isNineRouterConfigured } from "./ai-seo.server";
-import { getNineRouterGenerationOptions } from "./nine-router.server";
+import { createNineRouterResponseError, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
 export type AiWritingMode = "draft" | "improve" | "expand" | "shorten";
 
@@ -90,11 +90,10 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
   });
 
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, 300);
-    throw new Error(`9Router request failed (${response.status})${detail ? `: ${detail}` : ""}`);
+    throw await createNineRouterResponseError(response, "blog draft");
   }
 
-  const payload: any = await response.json();
+  const payload: any = await readNineRouterJson(response);
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("9Router returned no message content");
   const parsed = parseJsonObject(content);

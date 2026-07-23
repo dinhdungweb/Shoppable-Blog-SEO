@@ -1,4 +1,4 @@
-import { getNineRouterGenerationOptions } from "./nine-router.server";
+import { createNineRouterResponseError, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
 
 type SeoSuggestionInput = {
   id: string;
@@ -66,11 +66,10 @@ export async function generateAiSeoSuggestion(input: SeoSuggestionInput): Promis
   });
 
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, 300);
-    throw new Error(`9Router request failed (${response.status})${detail ? `: ${detail}` : ""}`);
+    throw await createNineRouterResponseError(response, "bulk SEO suggestions");
   }
 
-  const payload: any = await response.json();
+  const payload: any = await readNineRouterJson(response);
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("9Router returned no message content");
   const parsed = parseJsonObject(content);
