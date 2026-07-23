@@ -11,6 +11,13 @@ export type SeoAuditIssue = {
   impact?: SeoAuditWeight;
   effort?: SeoAuditWeight;
   fix?: string;
+  details?: SeoAuditIssueDetail[];
+};
+
+export type SeoAuditIssueDetail = {
+  index: number;
+  wordCount: number;
+  preview: string;
 };
 
 type SeoAuditInput = {
@@ -277,17 +284,27 @@ export function auditSeo({
     issues.push({ category: "image_seo", type: "small_article_images", label: "Image resolution", message: "Images with known dimensions are large enough for search presentation.", severity: "good" });
   }
 
-  const paragraphs = body.split(/<\/p>/i);
-  const longParagraphs = paragraphs.filter((paragraph) => stripHtml(paragraph).split(/\s+/).filter(Boolean).length > 120);
+  const paragraphs = [...body.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map((match, index) => {
+      const text = stripHtml(match[1] || "").replace(/\s+/g, " ").trim();
+      return { index: index + 1, text, wordCount: text.split(/\s+/).filter(Boolean).length };
+    });
+  const longParagraphs = paragraphs.filter((paragraph) => paragraph.wordCount > 120);
   if (longParagraphs.length > 0) {
     issues.push({
       category: "content_readability",
       type: "paragraph_length",
       label: "Paragraph Length",
-      message: "Some of your paragraphs are too long. Keep them under 120 words.",
+      message: `${longParagraphs.length} paragraph${longParagraphs.length === 1 ? " is" : "s are"} over 120 words.`,
       severity: "warning",
       impact: "Low",
       effort: "Low",
+      fix: "Split only the identified long paragraphs at natural transitions. Preserve every fact, link, image, and the original meaning.",
+      details: longParagraphs.slice(0, 10).map((paragraph) => ({
+        index: paragraph.index,
+        wordCount: paragraph.wordCount,
+        preview: paragraph.text.length > 180 ? `${paragraph.text.slice(0, 177).trim()}...` : paragraph.text,
+      })),
     });
     score -= 3;
   } else {

@@ -3349,16 +3349,17 @@ function ShopifyContentEditor({
             label="Title"
             value={title}
             suffix={(
-              <Button
-                size="micro"
-                variant="plain"
-                icon={MagicIcon}
+              <button
+                type="button"
+                className={`bp-inline-ai-icon${aiLoadingTarget === "article_title" ? " bp-inline-ai-icon--loading" : ""}`}
                 onClick={onGenerateTitle}
-                loading={aiLoadingTarget === "article_title"}
                 disabled={!aiEnabled || Boolean(aiLoadingTarget)}
+                title={aiEnabled ? "Write title with AI" : "AI is not configured"}
+                aria-label="Write title with AI"
+                aria-busy={aiLoadingTarget === "article_title"}
               >
-                Write with AI
-              </Button>
+                <Icon source={MagicIcon} tone={aiEnabled ? "magic" : "subdued"} />
+              </button>
             )}
             onChange={onTitleChange}
             autoComplete="off"
@@ -3386,21 +3387,9 @@ function ShopifyContentEditor({
       <Card padding="400">
         <BlockStack gap="300">
           <BlockStack gap="100">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd" fontWeight="semibold">
-                Excerpt
-              </Text>
-              <Button
-                size="micro"
-                variant="plain"
-                icon={MagicIcon}
-                onClick={onGenerateExcerpt}
-                loading={aiLoadingTarget === "excerpt_summary"}
-                disabled={!aiEnabled || Boolean(aiLoadingTarget)}
-              >
-                Summarize with AI
-              </Button>
-            </InlineStack>
+            <Text as="h2" variant="headingMd" fontWeight="semibold">
+              Excerpt
+            </Text>
             <Text as="p" variant="bodyMd" tone="subdued">
               Add a summary of the post to appear on your home page or blog.
             </Text>
@@ -3411,6 +3400,9 @@ function ShopifyContentEditor({
             placeholder="Write a short summary..."
             onChange={onExcerptChange}
             onOpenImagePicker={onOpenImagePicker}
+            onOpenAiAssistant={aiEnabled ? onGenerateExcerpt : undefined}
+            aiBusy={Boolean(aiLoadingTarget)}
+            aiLoading={aiLoadingTarget === "excerpt_summary"}
           />
         </BlockStack>
       </Card>
@@ -3679,6 +3671,8 @@ function RichArticleEditor({
   onProductBlockInserted,
   onLinkBridgeReady,
   onOpenAiAssistant,
+  aiBusy = false,
+  aiLoading = false,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -3689,6 +3683,8 @@ function RichArticleEditor({
   onProductBlockInserted?: (blockId: string) => void;
   onLinkBridgeReady?: (bridge: EditorLinkBridge) => void;
   onOpenAiAssistant?: () => void;
+  aiBusy?: boolean;
+  aiLoading?: boolean;
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const lastHtmlRef = useRef("");
@@ -4221,9 +4217,11 @@ function RichArticleEditor({
         <div className="bp-editor-toolbar">
           <button
             type="button"
-            className="bp-editor-icon-button"
-            title={onOpenAiAssistant ? "Open AI writing assistant" : "AI writing assistant is not configured"}
-            disabled={!onOpenAiAssistant}
+            className={`bp-editor-icon-button${aiLoading ? " bp-editor-icon-button--loading" : ""}`}
+            title={onOpenAiAssistant ? "Use AI for this field" : "AI writing assistant is not configured"}
+            aria-label={onOpenAiAssistant ? "Use AI for this field" : "AI writing assistant is not configured"}
+            aria-busy={aiLoading}
+            disabled={!onOpenAiAssistant || aiBusy}
             onMouseDown={(event) => event.preventDefault()}
             onClick={onOpenAiAssistant}
           >
@@ -5122,6 +5120,17 @@ function SeoSidebar({
                         <div style={{ flex: 1, textAlign: 'left' }}>
                           <BlockStack gap="100">
                             <Text as="span" variant="bodySm">{issue.message}</Text>
+                            {issue.type === "paragraph_length" && issue.details?.map((detail) => (
+                              <Box key={`${issue.type}-${detail.index}`} background="bg-surface-secondary" padding="200" borderRadius="200">
+                                <BlockStack gap="050">
+                                  <InlineStack gap="200" blockAlign="center">
+                                    <Text as="span" variant="bodySm" fontWeight="semibold">Paragraph {detail.index}</Text>
+                                    <Badge tone="warning">{`${detail.wordCount} words`}</Badge>
+                                  </InlineStack>
+                                  <Text as="p" variant="bodySm" tone="subdued">{detail.preview}</Text>
+                                </BlockStack>
+                              </Box>
+                            ))}
                             {issue.type === "toc" && issue.severity !== "good" && (
                               <InlineStack>
                                 <Button
@@ -6049,6 +6058,18 @@ function parseSeoFixIssues(value: string): SeoIssue[] {
         impact: ["Low", "Medium", "High"].includes(String(issue.impact)) ? issue.impact as SeoIssue["impact"] : undefined,
         effort: ["Low", "Medium", "High"].includes(String(issue.effort)) ? issue.effort as SeoIssue["effort"] : undefined,
         fix: typeof issue.fix === "string" ? issue.fix.slice(0, 1_000) : undefined,
+        details: Array.isArray(issue.details)
+          ? issue.details.slice(0, 10).flatMap((detail): NonNullable<SeoIssue["details"]> => {
+              if (!detail || typeof detail !== "object") return [];
+              const value = detail as Record<string, unknown>;
+              const index = Number(value.index);
+              const wordCount = Number(value.wordCount);
+              const preview = typeof value.preview === "string" ? value.preview.slice(0, 500) : "";
+              return Number.isInteger(index) && index > 0 && Number.isFinite(wordCount) && wordCount > 0 && preview
+                ? [{ index, wordCount, preview }]
+                : [];
+            })
+          : undefined,
       }];
     });
   } catch {
@@ -7080,6 +7101,43 @@ const DETAIL_STYLES = `
 .bp-editor-icon-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.bp-inline-ai-icon {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bp-inline-ai-icon:hover:not(:disabled) {
+  background: var(--p-color-bg-surface-secondary);
+}
+
+.bp-inline-ai-icon:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.bp-inline-ai-icon .Polaris-Icon {
+  width: 16px;
+  height: 16px;
+}
+
+.bp-inline-ai-icon--loading .Polaris-Icon,
+.bp-editor-icon-button--loading .Polaris-Icon {
+  animation: bp-ai-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes bp-ai-pulse {
+  from { opacity: 0.35; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1.08); }
 }
 
 .bp-editor-list-button,

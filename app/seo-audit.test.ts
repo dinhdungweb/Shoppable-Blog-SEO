@@ -38,6 +38,21 @@ describe("people-first SEO scoring", () => {
     expect(fixedDimensions.score).toBeGreaterThan(missingDimensions.score);
     expect(fixedDimensions.score).toBeLessThanOrEqual(79);
   });
+
+  it("identifies each paragraph over 120 words with a preview", () => {
+    const longText = Array.from({ length: 125 }, (_, index) => `word${index + 1}`).join(" ");
+    const result = auditSeo({
+      ...base,
+      body: `<p>Short introduction.</p><p>${longText}</p>`,
+    });
+    const issue = result.issues.find((item) => item.type === "paragraph_length");
+    expect(issue).toMatchObject({
+      severity: "warning",
+      message: "1 paragraph is over 120 words.",
+      details: [expect.objectContaining({ index: 2, wordCount: 125 })],
+    });
+    expect(issue?.details?.[0]?.preview).toContain("word1");
+  });
 });
 
 describe("Shopify image SEO", () => {
