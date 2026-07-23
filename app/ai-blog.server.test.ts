@@ -20,10 +20,12 @@ describe("9Router blog writing assistant", () => {
     configure();
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({
+        title: "Practical Buying Guide",
         bodyHtml: "<p>Better introduction.</p>[[SBS_PRODUCTS:featured]]<h2>Buying tips</h2><p>Useful advice.</p>",
         excerpt: "A concise buying guide.",
         metaTitle: "Buying Guide",
         metaDescription: "Read this practical buying guide before choosing.",
+        suggestedLinks: [],
       }) } }],
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -33,7 +35,8 @@ describe("9Router blog writing assistant", () => {
       title: "Buying Guide",
       body: "<p>Introduction.</p>[[SBS_PRODUCTS:featured]]",
       excerpt: "A guide.",
-      focusKeyword: "buying guide",
+      primaryKeyword: "buying guide",
+      secondaryKeywords: ["buying tips"],
       instruction: "Make it clearer.",
     });
 
@@ -42,16 +45,20 @@ describe("9Router blog writing assistant", () => {
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.model).toBe("cx/test-model");
     expect(request.messages[1].content).toContain("Make it clearer.");
+    expect(request.messages[1].content).toContain("buying tips");
+    expect(request.response_format.type).toBe("json_schema");
   });
 
   it("rejects output that removes an existing product block", async () => {
     configure();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({
+        title: "Title",
         bodyHtml: "<p>Rewritten without the block.</p>",
         excerpt: "Excerpt",
         metaTitle: "Title",
         metaDescription: "Description",
+        suggestedLinks: [],
       }) } }],
     }), { status: 200 })));
 
@@ -60,7 +67,8 @@ describe("9Router blog writing assistant", () => {
       title: "Title",
       body: "<p>Body</p>[[SBS_PRODUCTS]]",
       excerpt: "",
-      focusKeyword: "",
+      primaryKeyword: "title",
+      secondaryKeywords: [],
       instruction: "",
     })).rejects.toThrow("preserve the article product blocks");
   });
@@ -69,10 +77,12 @@ describe("9Router blog writing assistant", () => {
     configure();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({
+        title: "Title",
         bodyHtml: "<p>Safe-looking text</p><script>alert(1)</script>",
         excerpt: "Excerpt",
         metaTitle: "Title",
         metaDescription: "Description",
+        suggestedLinks: [],
       }) } }],
     }), { status: 200 })));
 
@@ -81,9 +91,42 @@ describe("9Router blog writing assistant", () => {
       title: "Title",
       body: "",
       excerpt: "",
-      focusKeyword: "",
+      primaryKeyword: "title",
+      secondaryKeywords: [],
       instruction: "Write a draft.",
     })).rejects.toThrow("unsafe article markup");
+  });
+
+  it("keeps only public HTTPS source suggestions", async () => {
+    configure();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        title: "Travel Bag Guide",
+        bodyHtml: "<p>Useful guidance.</p>",
+        excerpt: "A concise guide.",
+        metaTitle: "Travel Bag Guide",
+        metaDescription: "Practical guidance for choosing a travel bag.",
+        suggestedLinks: [
+          { url: "https://www.iata.org/en/programs/ops-infra/baggage/", title: "IATA baggage guidance", anchorText: "baggage guidance", reason: "Authoritative travel guidance." },
+          { url: "http://127.0.0.1/private", title: "Private", anchorText: "private", reason: "Unsafe." },
+        ],
+      }) } }],
+    }), { status: 200 })));
+
+    const result = await generateAiBlogDraft({
+      mode: "draft",
+      title: "",
+      body: "",
+      excerpt: "",
+      primaryKeyword: "travel bag",
+      secondaryKeywords: ["carry-on bag"],
+      instruction: "",
+    });
+
+    expect(result.title).toBe("Travel Bag Guide");
+    expect(result.suggestedLinks).toEqual([
+      expect.objectContaining({ url: "https://www.iata.org/en/programs/ops-infra/baggage/" }),
+    ]);
   });
 });
 

@@ -84,7 +84,9 @@ import {
 import { generateAiBlogDraft, isAiWritingMode, type AiWritingMode } from "../ai-blog.server";
 import {
   generateAiSeoFix,
+  isManualOnlySeoIssue,
   type AiSeoFixField,
+  type AiSeoFixSuggestedLink,
   type AiSeoFixSuggestion,
 } from "../ai-seo-fix.server";
 import {
@@ -114,6 +116,7 @@ type SeoFixSnapshot = {
   metaTitleTouched: boolean;
   metaDescription: string;
   featuredImageAlt: string;
+  focusKeyword: string;
   isDirty: boolean;
 };
 
@@ -539,8 +542,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     const title = cleanString(formData.get("title"));
     const instruction = cleanString(formData.get("instruction"));
-    if (!title && !instruction) {
-      return json({ success: false, error: "Add a title or instructions for the AI assistant." }, { status: 400 });
+    const primaryKeyword = cleanString(formData.get("primaryKeyword"));
+    if (!primaryKeyword) {
+      return json({ success: false, error: "Add a primary keyword for the AI assistant." }, { status: 400 });
     }
 
     try {
@@ -549,7 +553,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         title,
         body: cleanString(formData.get("body")),
         excerpt: cleanString(formData.get("excerpt")),
-        focusKeyword: cleanString(formData.get("focusKeyword")),
+        primaryKeyword,
+        secondaryKeywords: parseKeywordList(cleanString(formData.get("secondaryKeywords"))),
         instruction,
       });
       return json({ success: true, action: "ai_content_generated", suggestion });
@@ -1397,9 +1402,13 @@ export default function ArticleDetail() {
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [aiWritingMode, setAiWritingMode] = useState<AiWritingMode>(article.body ? "improve" : "draft");
   const [aiInstruction, setAiInstruction] = useState("");
+  const [aiPrimaryKeyword, setAiPrimaryKeyword] = useState(focusKeywordValue(seoData?.focusKeyword || "", 0));
+  const [aiSecondaryKeywords, setAiSecondaryKeywords] = useState(focusKeywordRest(seoData?.focusKeyword || ""));
+  const [aiPendingKeywords, setAiPendingKeywords] = useState("");
   const [seoFixReviewOpen, setSeoFixReviewOpen] = useState(false);
   const [seoFixSuggestion, setSeoFixSuggestion] = useState<AiSeoFixSuggestion | null>(null);
   const [selectedSeoFixFields, setSelectedSeoFixFields] = useState<AiSeoFixField[]>([]);
+  const [selectedSeoFixLinkUrls, setSelectedSeoFixLinkUrls] = useState<string[]>([]);
   const [seoFixBase, setSeoFixBase] = useState<SeoFixSnapshot | null>(null);
   const [seoFixUndo, setSeoFixUndo] = useState<SeoFixSnapshot | null>(null);
   const [seoFixLoadingTarget, setSeoFixLoadingTarget] = useState<string | null>(null);
@@ -1684,17 +1693,31 @@ export default function ArticleDetail() {
       return;
     }
 
-    setBody(safeBody);
-    if (data.suggestion.excerpt) setExcerpt(data.suggestion.excerpt);
-    if (data.suggestion.metaTitle) {
-      setMetaTitle(data.suggestion.metaTitle);
-      setMetaTitleTouched(true);
-    }
-    if (data.suggestion.metaDescription) setMetaDescription(data.suggestion.metaDescription);
-    setIsDirty(true);
+    const generated = data.suggestion;
+    setSeoFixBase({ title, body, excerpt, metaTitle: effectiveMetaTitle, metaTitleTouched, metaDescription, featuredImageAlt, focusKeyword, isDirty });
+    const changes = ([
+      { field: "title", after: generated.title, explanation: "SEO-focused article title based on the supplied keywords.", issueTypes: ["ai_article"] },
+      { field: "body", after: safeBody, explanation: "Complete people-first article structured around the supplied search intent.", issueTypes: ["ai_article"] },
+      { field: "excerpt", after: generated.excerpt, explanation: "Concise article summary.", issueTypes: ["ai_article"] },
+      { field: "metaTitle", after: generated.metaTitle, explanation: "Search title for the generated article.", issueTypes: ["ai_article"] },
+      { field: "metaDescription", after: generated.metaDescription, explanation: "Search description for the generated article.", issueTypes: ["ai_article"] },
+    ] as AiSeoFixSuggestion["changes"]).filter((change) => Boolean(change.after));
+    setSeoFixSuggestion({
+      summary: "A complete SEO article draft is ready. Review each field and verify any suggested sources before applying.",
+      changes,
+      manualActions: generated.suggestedLinks?.length ? [{
+        issueType: "ai_article_sources",
+        explanation: "Optional sources that may support claims in this article.",
+        action: "Open and verify each source before selecting it.",
+        suggestedLinks: generated.suggestedLinks,
+      }] : [],
+    });
+    setSelectedSeoFixFields(changes.map((change) => change.field));
+    setSelectedSeoFixLinkUrls([]);
+    setAiPendingKeywords([aiPrimaryKeyword, ...parseKeywordList(aiSecondaryKeywords)].filter(Boolean).join(", "));
     setAiAssistantOpen(false);
-    shopify.toast.show("AI draft added. Review it, then save when ready.");
-  }, [aiFetcher.data, shopify]);
+    setSeoFixReviewOpen(true);
+  }, [aiFetcher.data, aiPrimaryKeyword, aiSecondaryKeywords, body, effectiveMetaTitle, excerpt, featuredImageAlt, focusKeyword, isDirty, metaDescription, metaTitleTouched, shopify, title]);
 
   useEffect(() => {
     const data = seoFixFetcher.data as any;
@@ -1710,6 +1733,7 @@ export default function ArticleDetail() {
     const suggestion = data.suggestion as AiSeoFixSuggestion;
     setSeoFixSuggestion(suggestion);
     setSelectedSeoFixFields(suggestion.changes.map((change) => change.field));
+    setSelectedSeoFixLinkUrls([]);
     setSeoFixReviewOpen(true);
   }, [seoFixFetcher.data, shopify]);
 
@@ -2036,7 +2060,7 @@ export default function ArticleDetail() {
       return;
     }
 
-    setSeoFixBase({ title, body, excerpt, metaTitle: effectiveMetaTitle, metaTitleTouched, metaDescription, featuredImageAlt, isDirty });
+    setSeoFixBase({ title, body, excerpt, metaTitle: effectiveMetaTitle, metaTitleTouched, metaDescription, featuredImageAlt, focusKeyword, isDirty });
 
     const formData = new FormData();
     formData.append("intent", "generate_ai_seo_fix");
@@ -2054,8 +2078,11 @@ export default function ArticleDetail() {
   }, [activeImage, aiEnabled, body, effectiveMetaTitle, excerpt, featuredImageAlt, focusKeyword, isDirty, metaDescription, metaTitleTouched, seoFixFetcher, shopify, title]);
 
   const handleApplySeoFix = useCallback(() => {
-    if (!seoFixSuggestion || !seoFixBase || !selectedSeoFixFields.length) return;
+    if (!seoFixSuggestion || !seoFixBase || (!selectedSeoFixFields.length && !selectedSeoFixLinkUrls.length)) return;
     const selected = new Set(selectedSeoFixFields);
+    const selectedLinks = seoFixSuggestion.manualActions
+      .flatMap((action) => action.suggestedLinks)
+      .filter((link) => selectedSeoFixLinkUrls.includes(link.url));
     const currentValues: Record<AiSeoFixField, string> = { title, body, excerpt, metaTitle: effectiveMetaTitle, metaDescription, featuredImageAlt };
     const baseValues: Record<AiSeoFixField, string> = {
       title: seoFixBase.title,
@@ -2077,9 +2104,12 @@ export default function ArticleDetail() {
       metaTitleTouched,
       metaDescription,
       featuredImageAlt,
+      focusKeyword,
       isDirty,
     };
 
+    let nextBody = body;
+    let bodyChanged = false;
     for (const change of seoFixSuggestion.changes) {
       if (!selected.has(change.field)) continue;
       if (change.field === "title") {
@@ -2092,7 +2122,8 @@ export default function ArticleDetail() {
           shopify.toast.show("AI returned an empty article body.", { isError: true });
           return;
         }
-        setBody(safeBody);
+        nextBody = safeBody;
+        bodyChanged = true;
       } else if (change.field === "excerpt") {
         setExcerpt(change.after);
       } else if (change.field === "metaTitle") {
@@ -2104,12 +2135,23 @@ export default function ArticleDetail() {
         setFeaturedImageAlt(change.after);
       }
     }
+    if (selectedLinks.length) {
+      const withSources = appendSuggestedSources(nextBody, selectedLinks);
+      if (withSources !== nextBody) {
+        nextBody = withSources;
+        bodyChanged = true;
+      }
+    }
+    if (bodyChanged) setBody(nextBody);
+    if (aiPendingKeywords && seoFixSuggestion.changes.some((change) => selected.has(change.field) && change.issueTypes.includes("ai_article"))) {
+      setFocusKeyword(aiPendingKeywords);
+    }
 
     setSeoFixUndo(snapshot);
     setIsDirty(true);
     setSeoFixReviewOpen(false);
     shopify.toast.show("AI SEO fixes added to the draft. Review the updated score, then save when ready.");
-  }, [body, effectiveMetaTitle, excerpt, featuredImageAlt, handleTouched, isDirty, isNewPost, metaDescription, metaTitle, metaTitleTouched, selectedSeoFixFields, seoFixBase, seoFixSuggestion, shopify, title]);
+  }, [aiPendingKeywords, body, effectiveMetaTitle, excerpt, featuredImageAlt, focusKeyword, handleTouched, isDirty, isNewPost, metaDescription, metaTitle, metaTitleTouched, selectedSeoFixFields, selectedSeoFixLinkUrls, seoFixBase, seoFixSuggestion, shopify, title]);
 
   const handleUndoSeoFix = useCallback(() => {
     if (!seoFixUndo) return;
@@ -2120,6 +2162,7 @@ export default function ArticleDetail() {
     setMetaTitleTouched(seoFixUndo.metaTitleTouched);
     setMetaDescription(seoFixUndo.metaDescription);
     setFeaturedImageAlt(seoFixUndo.featuredImageAlt);
+    setFocusKeyword(seoFixUndo.focusKeyword);
     setIsDirty(seoFixUndo.isDirty);
     setSeoFixUndo(null);
     shopify.toast.show("AI SEO changes undone.");
@@ -2220,8 +2263,10 @@ export default function ArticleDetail() {
 
   const openAiAssistant = useCallback(() => {
     setAiWritingMode(stripHtml(body).trim() ? "improve" : "draft");
+    setAiPrimaryKeyword(focusKeywordValue(focusKeyword, 0));
+    setAiSecondaryKeywords(focusKeywordRest(focusKeyword));
     setAiAssistantOpen(true);
-  }, [body]);
+  }, [body, focusKeyword]);
 
   const handleGenerateAiContent = useCallback(() => {
     const formData = new FormData();
@@ -2230,10 +2275,11 @@ export default function ArticleDetail() {
     formData.append("title", title);
     formData.append("body", body);
     formData.append("excerpt", excerpt);
-    formData.append("focusKeyword", focusKeyword);
+    formData.append("primaryKeyword", aiPrimaryKeyword);
+    formData.append("secondaryKeywords", aiSecondaryKeywords);
     formData.append("instruction", aiInstruction);
     aiFetcher.submit(formData, { method: "POST" });
-  }, [aiFetcher, aiInstruction, aiWritingMode, body, excerpt, focusKeyword, title]);
+  }, [aiFetcher, aiInstruction, aiPrimaryKeyword, aiSecondaryKeywords, aiWritingMode, body, excerpt, title]);
 
   const handleSuggestAiProducts = useCallback(() => {
     if (isNewPost) {
@@ -2628,6 +2674,9 @@ export default function ArticleDetail() {
                   keywordScores={keywordScores}
                   onApplyAll={handleApplySeoSuggestions}
                   onManageProducts={() => setSelectedTab(1)}
+                  onReviewInternalLinks={() => {
+                    document.getElementById("internal-link-assistant")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
                   aiEnabled={aiEnabled}
                   aiLoading={isSeoFixGenerating}
                   aiLoadingTarget={seoFixLoadingTarget}
@@ -2684,19 +2733,21 @@ export default function ArticleDetail() {
                   onAnalyze={handleAnalyzeContentDecay}
                 />
               )}
-              {canInternalLinking ? <InternalLinkAssistantCard
-                suggestions={internalLinkSuggestions}
-                onReview={(suggestion) => {
-                  const selection = editorLinkBridgeRef.current?.getSelection() || {
-                    available: false,
-                    text: "",
-                  };
-                  setEditorLinkSelection(selection);
-                  setInternalLinkPlacement(selection.available ? "selection" : "automatic");
-                  setInternalLinkAnchor(selection.text || suggestion.anchorText);
-                  setPendingInternalLink(suggestion);
-                }}
-              /> : (
+              {canInternalLinking ? <div id="internal-link-assistant">
+                <InternalLinkAssistantCard
+                  suggestions={internalLinkSuggestions}
+                  onReview={(suggestion) => {
+                    const selection = editorLinkBridgeRef.current?.getSelection() || {
+                      available: false,
+                      text: "",
+                    };
+                    setEditorLinkSelection(selection);
+                    setInternalLinkPlacement(selection.available ? "selection" : "automatic");
+                    setInternalLinkAnchor(selection.text || suggestion.anchorText);
+                    setPendingInternalLink(suggestion);
+                  }}
+                />
+              </div> : (
                 <Card>
                   <BlockStack gap="200">
                     <Text as="h3" variant="headingMd">Internal link assistant</Text>
@@ -2955,7 +3006,7 @@ export default function ArticleDetail() {
           content: aiWritingMode === "draft" ? "Generate draft" : "Generate revision",
           onAction: handleGenerateAiContent,
           loading: isAiGenerating,
-          disabled: isAiGenerating || (!title.trim() && !aiInstruction.trim()),
+          disabled: isAiGenerating || !aiPrimaryKeyword.trim(),
         }}
         secondaryActions={[{
           content: "Cancel",
@@ -2973,6 +3024,26 @@ export default function ArticleDetail() {
               disabled={isAiGenerating}
             />
             <TextField
+              label="Primary keyword"
+              value={aiPrimaryKeyword}
+              onChange={setAiPrimaryKeyword}
+              autoComplete="off"
+              maxLength={200}
+              disabled={isAiGenerating}
+              placeholder="Example: meaningful birthday gifts"
+              helpText="Required. AI uses this as the main search intent, not as a phrase to repeat unnaturally."
+            />
+            <TextField
+              label="Secondary keywords"
+              value={aiSecondaryKeywords}
+              onChange={setAiSecondaryKeywords}
+              autoComplete="off"
+              maxLength={800}
+              disabled={isAiGenerating}
+              placeholder="gift ideas for friends, unique birthday gifts, personalized gifts"
+              helpText="Optional. Separate multiple keywords with commas or new lines."
+            />
+            <TextField
               label="Instructions"
               value={aiInstruction}
               onChange={setAiInstruction}
@@ -2982,7 +3053,7 @@ export default function ArticleDetail() {
               autoComplete="off"
               disabled={isAiGenerating}
               placeholder="Example: Write for first-time buyers, use a practical and friendly tone."
-              helpText="Optional. The assistant also uses the title, focus keyword, excerpt, and current article."
+              helpText="Optional. Add audience, tone, country, product context, or facts the article must preserve."
             />
             <Box background="bg-surface-secondary" padding="300" borderRadius="300">
               <BlockStack gap="100">
@@ -2990,7 +3061,7 @@ export default function ArticleDetail() {
                   Review before publishing
                 </Text>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  AI replaces the editor draft but does not save it to Shopify. Existing product blocks are preserved, and you can discard the draft if needed.
+                  AI returns title, content, excerpt, SEO metadata, and optional sources for Before/After review. Nothing is saved to Shopify until you apply and save.
                 </Text>
               </BlockStack>
             </Box>
@@ -3003,9 +3074,9 @@ export default function ArticleDetail() {
         onClose={() => setSeoFixReviewOpen(false)}
         title="Review AI SEO fixes"
         primaryAction={{
-          content: `Apply selected (${selectedSeoFixFields.length})`,
+          content: `Apply selected (${selectedSeoFixFields.length + selectedSeoFixLinkUrls.length})`,
           onAction: handleApplySeoFix,
-          disabled: selectedSeoFixFields.length === 0,
+          disabled: selectedSeoFixFields.length + selectedSeoFixLinkUrls.length === 0,
         }}
         secondaryActions={[{ content: "Close", onAction: () => setSeoFixReviewOpen(false) }]}
       >
@@ -3066,8 +3137,15 @@ export default function ArticleDetail() {
                           {item.suggestedLinks.map((link) => (
                             <Box key={link.url} background="bg-surface-secondary" padding="200" borderRadius="200">
                               <BlockStack gap="100">
+                                <Checkbox
+                                  label={`Add source: ${link.title}`}
+                                  checked={selectedSeoFixLinkUrls.includes(link.url)}
+                                  onChange={(checked) => setSelectedSeoFixLinkUrls((current) => checked
+                                    ? [...new Set([...current, link.url])]
+                                    : current.filter((url) => url !== link.url))}
+                                />
                                 <Button url={link.url} target="_blank" variant="plain" icon={ExternalIcon}>
-                                  {link.title}
+                                  Open source
                                 </Button>
                                 {link.anchorText && <Text as="p" variant="bodySm">Anchor text: "{link.anchorText}"</Text>}
                                 {link.reason && <Text as="p" variant="bodySm" tone="subdued">{link.reason}</Text>}
@@ -3075,7 +3153,7 @@ export default function ArticleDetail() {
                             </Box>
                           ))}
                           <Text as="p" variant="bodySm" tone="caution">
-                            Open and verify each source before adding it. AI suggestions may be outdated or unavailable.
+                            Open and verify each source, then select it to add a Sources section to this local draft.
                           </Text>
                         </BlockStack>
                       )}
@@ -4967,6 +5045,7 @@ function SeoSidebar({
   keywordScores,
   onApplyAll,
   onManageProducts,
+  onReviewInternalLinks,
   aiEnabled,
   aiLoading,
   aiLoadingTarget,
@@ -4982,6 +5061,7 @@ function SeoSidebar({
   keywordScores: Record<string, "success" | "warning" | "critical">;
   onApplyAll: () => void;
   onManageProducts: () => void;
+  onReviewInternalLinks: () => void;
   aiEnabled: boolean;
   aiLoading: boolean;
   aiLoadingTarget: string | null;
@@ -5143,15 +5223,25 @@ function SeoSidebar({
                             )}
                           </BlockStack>
                         </div>
-                        {issue.severity !== "good" && (
+                        {issue.severity !== "good" && issue.type !== "toc" && (
                           <Button
                             size="micro"
-                            icon={issue.type === "products" ? LinkIcon : MagicIcon}
-                            onClick={() => issue.type === "products" ? onManageProducts() : onFixIssue(issue)}
-                            disabled={aiLoading || (!aiEnabled && issue.type !== "products")}
+                            icon={issue.type === "products" || issue.type === "internal_links" || isManualOnlySeoIssue(issue.type) ? LinkIcon : MagicIcon}
+                            onClick={() => issue.type === "products"
+                              ? onManageProducts()
+                              : issue.type === "internal_links"
+                                ? onReviewInternalLinks()
+                                : onFixIssue(issue)}
+                            disabled={aiLoading || (!aiEnabled && !["products", "internal_links"].includes(issue.type))}
                             loading={issue.type !== "products" && aiLoadingTarget === issue.type}
                           >
-                            {issue.type === "products" ? "Manage" : "Fix with AI"}
+                            {issue.type === "products"
+                              ? "Manage"
+                              : issue.type === "internal_links"
+                                ? "Review suggestions"
+                                : isManualOnlySeoIssue(issue.type) && !["external_links", "dofollow_external_links", "eeat_sources"].includes(issue.type)
+                                  ? "Review steps"
+                                  : "Fix with AI"}
                           </Button>
                         )}
                       </div>
@@ -6038,6 +6128,18 @@ function parseStringArray(value: string, limit: number) {
   }
 }
 
+function parseKeywordList(value: string) {
+  return [...new Set(value.split(/[,\n]/).map((keyword) => keyword.trim()).filter(Boolean))].slice(0, 12);
+}
+
+function focusKeywordValue(value: string, index: number) {
+  return parseKeywordList(value)[index] || "";
+}
+
+function focusKeywordRest(value: string) {
+  return parseKeywordList(value).slice(1).join(", ");
+}
+
 function parseSeoFixIssues(value: string): SeoIssue[] {
   if (!value || value.length > 30_000) return [];
   try {
@@ -6652,6 +6754,28 @@ function escapeHtml(value: string) {
 
 function escapeAttribute(value: string) {
   return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
+function appendSuggestedSources(body: string, links: AiSeoFixSuggestedLink[]) {
+  const existingUrls = new Set(
+    [...body.matchAll(/\shref\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)]
+      .map((match) => match[1] || match[2] || ""),
+  );
+  const safeLinks = links.flatMap((link) => {
+    try {
+      const parsed = new URL(link.url);
+      if (parsed.protocol !== "https:" || existingUrls.has(parsed.toString())) return [];
+      existingUrls.add(parsed.toString());
+      return [{ ...link, url: parsed.toString() }];
+    } catch {
+      return [];
+    }
+  });
+  if (!safeLinks.length) return body;
+  const items = safeLinks
+    .map((link) => `<li><a href="${escapeAttribute(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.title || link.anchorText || link.url)}</a></li>`)
+    .join("");
+  return `${body.trim()}<section><h2>Sources</h2><ul>${items}</ul></section>`;
 }
 
 function makeSeoTitle(title: string) {

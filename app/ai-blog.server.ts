@@ -4,10 +4,19 @@ import { createNineRouterResponseError, fetchNineRouter, getNineRouterGeneration
 export type AiWritingMode = "draft" | "improve" | "expand" | "shorten";
 
 export type AiBlogDraft = {
+  title: string;
   bodyHtml: string;
   excerpt: string;
   metaTitle: string;
   metaDescription: string;
+  suggestedLinks: AiBlogSuggestedLink[];
+};
+
+export type AiBlogSuggestedLink = {
+  url: string;
+  title: string;
+  anchorText: string;
+  reason: string;
 };
 
 type AiBlogInput = {
@@ -15,7 +24,8 @@ type AiBlogInput = {
   title: string;
   body: string;
   excerpt: string;
-  focusKeyword: string;
+  primaryKeyword: string;
+  secondaryKeywords: string[];
   instruction: string;
 };
 
@@ -24,6 +34,7 @@ const MAX_INSTRUCTION_CHARS = 1_200;
 const MAX_OUTPUT_CHARS = 50_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 const PRODUCT_MARKER_PATTERN = /\[\[SBS_PRODUCTS(?::[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)?)?\]\]/g;
+const LINK_PATTERN = /\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
 
 const MODE_INSTRUCTIONS: Record<AiWritingMode, string> = {
   draft: "Create a complete, useful article draft from the title and user instruction.",
@@ -48,6 +59,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
     : DEFAULT_TIMEOUT_MS;
   const currentBody = input.body.slice(0, MAX_ARTICLE_CHARS);
   const requiredProductMarkers = currentBody.match(PRODUCT_MARKER_PATTERN) || [];
+  const requiredLinks = extractLinks(currentBody);
 
   const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -59,19 +71,54 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
       model,
       stream: false,
       ...getNineRouterGenerationOptions(model, input.mode === "draft" ? 0.5 : 0.25),
-      response_format: { type: "json_object" },
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "seo_article_draft",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["title", "bodyHtml", "excerpt", "metaTitle", "metaDescription", "suggestedLinks"],
+            properties: {
+              title: { type: "string" },
+              bodyHtml: { type: "string" },
+              excerpt: { type: "string" },
+              metaTitle: { type: "string" },
+              metaDescription: { type: "string" },
+              suggestedLinks: {
+                type: "array",
+                maxItems: 3,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["url", "title", "anchorText", "reason"],
+                  properties: {
+                    url: { type: "string" },
+                    title: { type: "string" },
+                    anchorText: { type: "string" },
+                    reason: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
       messages: [
         {
           role: "system",
           content: [
             "You are an expert ecommerce blog editor.",
-            "Return only one JSON object with string fields: bodyHtml, excerpt, metaTitle, metaDescription.",
+            "Return only one JSON object with title, bodyHtml, excerpt, metaTitle, metaDescription, and suggestedLinks.",
             "Preserve the language used by the title and current article.",
+            "Write people-first SEO content around the primary keyword and use secondary keywords only where they fit naturally. Satisfy likely search intent, use a clear heading structure, give the useful answer early, and avoid keyword stuffing.",
             "bodyHtml must be a clean HTML fragment using only p, h2, h3, ul, ol, li, strong, em, blockquote, and a tags.",
             "Do not include an h1, scripts, styles, images, iframes, markdown fences, or inline CSS.",
-            "Do not invent products, prices, statistics, testimonials, guarantees, links, or factual claims.",
+            "Do not invent products, prices, statistics, testimonials, guarantees, or factual claims.",
+            "Do not add new links inside bodyHtml. Preserve every existing href exactly. Put up to 3 optional authoritative HTTPS source suggestions in suggestedLinks with url, title, anchorText, and reason. Prefer primary sources and return an empty array when no source is confidently relevant.",
             "Preserve every [[SBS_PRODUCTS...]] marker exactly, including its position near relevant content.",
-            "excerpt must be a plain-text summary. metaTitle must be at most 70 characters and metaDescription at most 160 characters.",
+            "title must be at most 255 characters. excerpt must be a plain-text summary. metaTitle must be at most 70 characters and metaDescription at most 160 characters.",
             MODE_INSTRUCTIONS[input.mode],
           ].join(" "),
         },
@@ -79,7 +126,8 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
           role: "user",
           content: JSON.stringify({
             title: input.title.slice(0, 300),
-            focusKeyword: input.focusKeyword.slice(0, 300),
+            primaryKeyword: input.primaryKeyword.slice(0, 200),
+            secondaryKeywords: input.secondaryKeywords.slice(0, 12).map((keyword) => keyword.slice(0, 100)),
             instruction: input.instruction.slice(0, MAX_INSTRUCTION_CHARS),
             currentExcerpt: input.excerpt.slice(0, 1_000),
             currentBodyHtml: currentBody,
@@ -108,13 +156,51 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
   if (!sameStringMultiset(requiredProductMarkers, returnedProductMarkers)) {
     throw new Error("9Router did not preserve the article product blocks");
   }
+  if (!sameStringMultiset(requiredLinks, extractLinks(bodyHtml))) {
+    throw new Error("9Router did not preserve the article links");
+  }
 
   return {
+    title: truncateAtWord(cleanLine(parsed.title), 255) || input.title,
     bodyHtml,
     excerpt: truncateAtWord(cleanLine(parsed.excerpt), 400),
     metaTitle: truncateAtWord(cleanLine(parsed.metaTitle), 70),
     metaDescription: truncateAtWord(cleanLine(parsed.metaDescription), 160),
+    suggestedLinks: parseSuggestedLinks(parsed.suggestedLinks),
   };
+}
+
+function parseSuggestedLinks(value: unknown): AiBlogSuggestedLink[] {
+  if (!Array.isArray(value)) return [];
+  const links: AiBlogSuggestedLink[] = [];
+  const seen = new Set<string>();
+  for (const raw of value.slice(0, 3)) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    try {
+      const parsed = new URL(stringValue(item.url).trim());
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) continue;
+      const hostname = parsed.hostname.toLowerCase();
+      if (hostname === "localhost" || hostname.endsWith(".local") || /^(?:10|127|169\.254|192\.168)\./.test(hostname)) continue;
+      parsed.hash = "";
+      const url = parsed.toString();
+      if (seen.has(url)) continue;
+      links.push({
+        url,
+        title: cleanLine(item.title).slice(0, 200) || hostname,
+        anchorText: cleanLine(item.anchorText).slice(0, 160),
+        reason: cleanLine(item.reason).slice(0, 300),
+      });
+      seen.add(url);
+    } catch {
+      continue;
+    }
+  }
+  return links;
+}
+
+function extractLinks(html: string) {
+  return [...html.matchAll(LINK_PATTERN)].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
 }
 
 function parseJsonObject(value: string): Record<string, unknown> {
