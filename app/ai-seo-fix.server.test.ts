@@ -44,7 +44,7 @@ describe("AI SEO Fix Copilot", () => {
     expect(request.temperature).toBeUndefined();
   });
 
-  it("rejects body changes that invent links", async () => {
+  it("turns body changes that invent links into manual actions", async () => {
     configure();
     stubResult({
       summary: "Added a link.",
@@ -57,7 +57,9 @@ describe("AI SEO Fix Copilot", () => {
       manualActions: [],
     });
 
-    await expect(generateAiSeoFix(baseInput())).rejects.toThrow("preserve the article links");
+    const result = await generateAiSeoFix(baseInput());
+    expect(result.changes).toEqual([]);
+    expect(result.manualActions).toEqual([expect.objectContaining({ issueType: "kw_early" })]);
   });
 
   it("keeps valid metadata when an unsafe body change is rejected", async () => {
@@ -109,7 +111,7 @@ describe("AI SEO Fix Copilot", () => {
     expect(isManualOnlySeoIssue("external_links")).toBe(true);
   });
 
-  it("rejects output that removes product blocks", async () => {
+  it("turns output that removes product blocks into manual actions", async () => {
     configure();
     stubResult({
       summary: "Rewrote the opening.",
@@ -122,7 +124,9 @@ describe("AI SEO Fix Copilot", () => {
       manualActions: [],
     });
 
-    await expect(generateAiSeoFix(baseInput())).rejects.toThrow("preserve the article blocks");
+    const result = await generateAiSeoFix(baseInput());
+    expect(result.changes).toEqual([]);
+    expect(result.manualActions).toEqual([expect.objectContaining({ issueType: "kw_early" })]);
   });
 });
 

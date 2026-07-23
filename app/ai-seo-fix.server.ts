@@ -152,8 +152,17 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
   if (content.length > MAX_OUTPUT_CHARS) throw new Error("9Router returned an SEO fix that is too large");
 
   const parsed = parseJsonObject(content);
-  const changes = parseChanges(parsed.changes, selectedTypes, input);
-  const manualActions = ensureManualActions(parseManualActions(parsed.manualActions, selectedTypes), issues);
+  const parsedChanges = parseChanges(parsed.changes, selectedTypes, input);
+  const rejectedBodyActions = parsedChanges.rejectedIssueTypes.map((issueType) => ({
+    issueType,
+    explanation: "The AI-proposed article markup did not pass the app's safety and structure checks.",
+    action: "Review this issue and edit the article content manually. No unsafe AI markup was added to the draft.",
+  }));
+  const changes = parsedChanges.changes;
+  const manualActions = ensureManualActions([
+    ...parseManualActions(parsed.manualActions, selectedTypes),
+    ...rejectedBodyActions,
+  ], issues);
   if (!changes.length && !manualActions.length) {
     throw new Error("9Router returned no usable SEO fixes");
   }
@@ -209,10 +218,10 @@ function manualIssueAction(type: string) {
 }
 
 function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFixInput) {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) return { changes: [] as AiSeoFixChange[], rejectedIssueTypes: [] as string[] };
   const changes: AiSeoFixChange[] = [];
   const seenFields = new Set<string>();
-  let firstValidationError: unknown;
+  const rejectedIssueTypes = new Set<string>();
 
   for (const raw of value) {
     if (!raw || typeof raw !== "object") continue;
@@ -230,7 +239,7 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
       try {
         validateBodyChange(input.body, after, issueTypes);
       } catch (error) {
-        firstValidationError ||= error;
+        issueTypes.forEach((type) => rejectedIssueTypes.add(type));
         console.warn("Rejected unsafe or structurally invalid AI body change", error instanceof Error ? error.message : String(error));
         continue;
       }
@@ -250,8 +259,7 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
     seenFields.add(field);
   }
 
-  if (!changes.length && firstValidationError) throw firstValidationError;
-  return changes;
+  return { changes, rejectedIssueTypes: [...rejectedIssueTypes] };
 }
 
 function parseManualActions(value: unknown, selectedTypes: Set<string>) {
