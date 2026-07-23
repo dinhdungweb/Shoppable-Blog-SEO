@@ -135,6 +135,43 @@ describe("AI SEO Fix Copilot", () => {
     expect(isManualOnlySeoIssue("external_links")).toBe(true);
   });
 
+  it("returns only safe public HTTPS source suggestions", async () => {
+    configure();
+    stubResult({
+      summary: "Suggested sources are ready to review.",
+      changes: [],
+      manualActions: [{
+        issueType: "external_links",
+        explanation: "These sources may support the article.",
+        action: "Open and verify a source before adding it.",
+        suggestedLinks: [
+          {
+            url: "https://www.iso.org/standard/63500.html#details",
+            title: "ISO standard",
+            anchorText: "relevant ISO standard",
+            reason: "Supports the standards claim.",
+          },
+          {
+            url: "http://127.0.0.1/private",
+            title: "Unsafe URL",
+            anchorText: "private",
+            reason: "Must be rejected.",
+          },
+        ],
+      }],
+    });
+
+    const result = await generateAiSeoFix({
+      ...baseInput(),
+      issues: [{ type: "external_links", label: "External links", message: "Add one.", severity: "warning" }],
+    });
+
+    expect(result.manualActions[0]?.suggestedLinks).toEqual([expect.objectContaining({
+      url: "https://www.iso.org/standard/63500.html",
+      anchorText: "relevant ISO standard",
+    })]);
+  });
+
   it("turns output that removes product blocks into manual actions", async () => {
     configure();
     stubResult({

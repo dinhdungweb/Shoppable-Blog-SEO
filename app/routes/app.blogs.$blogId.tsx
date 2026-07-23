@@ -6,7 +6,7 @@ import type {
 } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import {
   Badge,
   BlockStack,
@@ -1377,6 +1377,9 @@ export default function ArticleDetail() {
   const aiFetcher = useFetcher<typeof action>();
   const seoFixFetcher = useFetcher<typeof action>();
   const contentRefreshFetcher = useFetcher<typeof action>();
+  const contentDecayAnalysisFetcher = useFetcher<{ success?: boolean; error?: string }>();
+  const contentDecayAnalysisHandled = useRef<unknown>(null);
+  const revalidator = useRevalidator();
   const productAiFetcher = useFetcher<typeof action>();
   const imageFetcher = useFetcher<typeof action>();
   const uploadFetcher = useFetcher<typeof action>();
@@ -1728,6 +1731,18 @@ export default function ArticleDetail() {
     setContentRefreshOpen(false);
     setContentRefreshReviewOpen(true);
   }, [contentRefreshFetcher.data, shopify]);
+
+  useEffect(() => {
+    const data = contentDecayAnalysisFetcher.data;
+    if (!data || contentDecayAnalysisHandled.current === data) return;
+    contentDecayAnalysisHandled.current = data;
+    if (data.success) {
+      shopify.toast.show("Content analysis completed for this article.");
+      revalidator.revalidate();
+    } else if (data.error) {
+      shopify.toast.show(data.error, { isError: true });
+    }
+  }, [contentDecayAnalysisFetcher.data, revalidator, shopify]);
 
   useEffect(() => {
     const data = productAiFetcher.data as any;
@@ -2113,6 +2128,13 @@ export default function ArticleDetail() {
     }
     setContentRefreshOpen(true);
   }, [contentRefresh.aiEnabled, contentRefresh.canUse, navigate, planKey, shopify]);
+
+  const handleAnalyzeContentDecay = useCallback(() => {
+    contentDecayAnalysisFetcher.submit(
+      { intent: "analyze" },
+      { method: "POST", action: "/app/content-decay" },
+    );
+  }, [contentDecayAnalysisFetcher]);
 
   const handleGenerateContentRefresh = useCallback(() => {
     if (!selectedRefreshSignalIds.length && !selectedRefreshQueries.length) {
@@ -2574,21 +2596,12 @@ export default function ArticleDetail() {
                 <SeoSidebar
                   seoScore={seoScore}
                   issues={seoIssues}
-                  onFixIssues={() => {
-                    const el = document.getElementById("seo-card");
-                    if (el) el.scrollIntoView({ behavior: "smooth" });
-                  }}
-                  isSubmitting={fetcher.state !== "idle"}
                   focusKeyword={focusKeyword}
                   onChangeFocusKeyword={(val) => {
                     setFocusKeyword(val);
                     markDirty();
                   }}
                   keywordScores={keywordScores}
-                />
-                
-                <RecommendationsCard
-                  issues={seoIssues.filter((i: any) => i.severity !== 'good')}
                   onApplyAll={handleApplySeoSuggestions}
                   onManageProducts={() => setSelectedTab(1)}
                   aiEnabled={aiEnabled}
@@ -2642,8 +2655,9 @@ export default function ArticleDetail() {
               {!isNewPost && (
                 <ContentRefreshCard
                   context={contentRefresh}
-                  loading={isContentRefreshGenerating}
+                  loading={isContentRefreshGenerating || contentDecayAnalysisFetcher.state !== "idle" || revalidator.state !== "idle"}
                   onOpen={openContentRefresh}
+                  onAnalyze={handleAnalyzeContentDecay}
                 />
               )}
               {canInternalLinking ? <InternalLinkAssistantCard
@@ -3022,6 +3036,25 @@ export default function ArticleDetail() {
                       <Text as="span" variant="bodyMd" fontWeight="semibold">{seoIssueLabel(item.issueType, seoIssues)}</Text>
                       {item.explanation && <Text as="p" variant="bodySm" tone="subdued">{item.explanation}</Text>}
                       <Text as="p" variant="bodySm">{item.action}</Text>
+                      {item.suggestedLinks.length > 0 && (
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodySm" fontWeight="semibold">Suggested sources</Text>
+                          {item.suggestedLinks.map((link) => (
+                            <Box key={link.url} background="bg-surface-secondary" padding="200" borderRadius="200">
+                              <BlockStack gap="100">
+                                <Button url={link.url} target="_blank" variant="plain" icon={ExternalIcon}>
+                                  {link.title}
+                                </Button>
+                                {link.anchorText && <Text as="p" variant="bodySm">Anchor text: "{link.anchorText}"</Text>}
+                                {link.reason && <Text as="p" variant="bodySm" tone="subdued">{link.reason}</Text>}
+                              </BlockStack>
+                            </Box>
+                          ))}
+                          <Text as="p" variant="bodySm" tone="caution">
+                            Open and verify each source before adding it. AI suggestions may be outdated or unavailable.
+                          </Text>
+                        </BlockStack>
+                      )}
                     </BlockStack>
                   </Card>
                 ))}
@@ -4876,19 +4909,33 @@ function HistoryPanel({ article, seoData, products }: { article: any; seoData: a
 function SeoSidebar({
   seoScore,
   issues,
-  onFixIssues,
-  isSubmitting,
   focusKeyword,
   onChangeFocusKeyword,
   keywordScores,
+  onApplyAll,
+  onManageProducts,
+  aiEnabled,
+  aiLoading,
+  aiLoadingTarget,
+  undoAvailable,
+  onUndo,
+  onFixIssue,
+  onFixAll,
 }: {
   seoScore: number;
   issues: SeoIssue[];
-  onFixIssues: () => void;
-  isSubmitting: boolean;
   focusKeyword: string;
   onChangeFocusKeyword: (val: string) => void;
   keywordScores: Record<string, "success" | "warning" | "critical">;
+  onApplyAll: () => void;
+  onManageProducts: () => void;
+  aiEnabled: boolean;
+  aiLoading: boolean;
+  aiLoadingTarget: string | null;
+  undoAvailable: boolean;
+  onUndo: () => void;
+  onFixIssue: (issue: SeoIssue) => void;
+  onFixAll: () => void;
 }) {
   const navigate = useNavigate();
   const categories = {
@@ -4972,9 +5019,12 @@ function SeoSidebar({
             <Text as="h3" variant="headingMd" fontWeight="bold">
               SEO score
             </Text>
-            <Badge tone={seoScore >= 80 ? "success" : seoScore >= 60 ? "warning" : "critical"}>
-              {`${seoScore}/100`}
-            </Badge>
+            <InlineStack gap="200" blockAlign="center">
+              {aiEnabled ? <Badge tone="magic">AI ready</Badge> : <Badge>9Router required</Badge>}
+              <Badge tone={seoScore >= 80 ? "success" : seoScore >= 60 ? "warning" : "critical"}>
+                {`${seoScore}/100`}
+              </Badge>
+            </InlineStack>
           </InlineStack>
 
           {Object.entries(categories).map(([cat, title]) => {
@@ -5008,8 +5058,8 @@ function SeoSidebar({
                   transition={{ duration: '150ms', timingFunction: 'ease' }}
                 >
                   <BlockStack gap="200">
-                    {catIssues.map((issue, idx) => (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {catIssues.map((issue) => (
+                      <div key={issue.type} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <div style={{ flexShrink: 0, width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0 }}>
                           <Icon source={issue.severity === 'good' ? CheckIcon : issue.severity === 'critical' ? AlertCircleIcon : InfoIcon} 
                                 tone={issue.severity === 'good' ? 'success' : issue.severity === 'critical' ? 'critical' : 'warning'} />
@@ -5029,6 +5079,17 @@ function SeoSidebar({
                             )}
                           </BlockStack>
                         </div>
+                        {issue.severity !== "good" && (
+                          <Button
+                            size="micro"
+                            icon={issue.type === "products" ? LinkIcon : MagicIcon}
+                            onClick={() => issue.type === "products" ? onManageProducts() : onFixIssue(issue)}
+                            disabled={aiLoading || (!aiEnabled && issue.type !== "products")}
+                            loading={issue.type !== "products" && aiLoadingTarget === issue.type}
+                          >
+                            {issue.type === "products" ? "Manage" : "Fix with AI"}
+                          </Button>
+                        )}
                       </div>
                     ))}
                   </BlockStack>
@@ -5037,10 +5098,21 @@ function SeoSidebar({
             );
           })}
 
-          <InlineStack align="end">
-            <Button size="micro" onClick={onFixIssues} loading={isSubmitting}>
-              Scroll up to edit SEO
-            </Button>
+          <InlineStack align="space-between" gap="200" blockAlign="center">
+            <div>{undoAvailable && <Button size="micro" onClick={onUndo} disabled={aiLoading}>Undo AI changes</Button>}</div>
+            <InlineStack gap="200">
+              <Button size="micro" onClick={onApplyAll} disabled={aiLoading}>Apply basic metadata</Button>
+              <Button
+                size="micro"
+                variant="primary"
+                icon={MagicIcon}
+                onClick={onFixAll}
+                loading={aiLoadingTarget === "all"}
+                disabled={aiLoading || !aiEnabled || !issues.some((issue) => issue.severity !== "good")}
+              >
+                Fix all with AI
+              </Button>
+            </InlineStack>
           </InlineStack>
         </BlockStack>
       </Card>
@@ -5052,10 +5124,12 @@ function ContentRefreshCard({
   context,
   loading,
   onOpen,
+  onAnalyze,
 }: {
   context: ContentRefreshContext;
   loading: boolean;
   onOpen: () => void;
+  onAnalyze: () => void;
 }) {
   const available = context.signals.length + context.queries.length;
   return (
@@ -5078,98 +5152,12 @@ function ContentRefreshCard({
         {!context.canUse ? (
           <InlineStack align="end"><Button size="micro" onClick={onOpen}>Upgrade to Growth</Button></InlineStack>
         ) : available === 0 ? (
-          <InlineStack align="end"><Button size="micro" url="/app/content-decay">Analyze content</Button></InlineStack>
+          <InlineStack align="end"><Button size="micro" loading={loading} disabled={loading} onClick={onAnalyze}>Analyze content</Button></InlineStack>
         ) : (
           <InlineStack align="end"><Button size="micro" variant="primary" icon={MagicIcon} loading={loading} disabled={!context.aiEnabled} onClick={onOpen}>
             Plan refresh
           </Button></InlineStack>
         )}
-      </BlockStack>
-    </Card>
-  );
-}
-
-function RecommendationsCard({
-  issues,
-  onApplyAll,
-  onManageProducts,
-  aiEnabled,
-  aiLoading,
-  aiLoadingTarget,
-  undoAvailable,
-  onUndo,
-  onFixIssue,
-  onFixAll,
-}: {
-  issues: SeoIssue[];
-  onApplyAll: () => void;
-  onManageProducts: () => void;
-  aiEnabled: boolean;
-  aiLoading: boolean;
-  aiLoadingTarget: string | null;
-  undoAvailable: boolean;
-  onUndo: () => void;
-  onFixIssue: (issue: SeoIssue) => void;
-  onFixAll: () => void;
-}) {
-  const recommendations = issues;
-
-  return (
-    <Card padding="400">
-      <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="center" gap="200">
-          <BlockStack gap="050">
-            <Text as="h3" variant="headingMd" fontWeight="bold">SEO Fix Copilot</Text>
-            <Text as="p" variant="bodySm" tone="subdued">Review every AI change before adding it to your draft.</Text>
-          </BlockStack>
-          <InlineStack gap="200" blockAlign="center">
-            {aiEnabled ? <Badge tone="magic">AI ready</Badge> : <Badge>9Router required</Badge>}
-            {undoAvailable && <Button size="micro" onClick={onUndo}>Undo AI changes</Button>}
-          </InlineStack>
-        </InlineStack>
-        <BlockStack gap="300">
-          {!recommendations.length && (
-            <Box background="bg-surface-success" padding="300" borderRadius="300">
-              <Text as="p" variant="bodyMd">No current SEO issues need a Copilot fix. Keep monitoring the post after publishing.</Text>
-            </Box>
-          )}
-          {recommendations.map((issue) => (
-            <Card key={issue.type} padding="300">
-              <InlineStack gap="300" align="space-between" blockAlign="center" wrap={false}>
-                <InlineStack gap="300" align="start" wrap={false}>
-                  <span className="bp-action-icon">
-                    <Icon source={issue.type === "products" ? LinkIcon : SearchIcon} tone={issue.type === "products" ? "magic" : "base"} />
-                  </span>
-                  <BlockStack gap="150">
-                    <Text as="span" variant="bodyMd" fontWeight="semibold">{issue.label}</Text>
-                    <Text as="span" variant="bodySm">{issue.message}</Text>
-                    <InlineStack gap="200">
-                      <Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>
-                        {`${issue.impact || "Low"} impact`}
-                      </Badge>
-                      <Badge tone={issue.effort === "Low" ? "success" : "warning"}>{`${issue.effort || "Low"} effort`}</Badge>
-                    </InlineStack>
-                  </BlockStack>
-                </InlineStack>
-                <Button
-                  size="micro"
-                  icon={issue.type === "products" ? LinkIcon : MagicIcon}
-                  onClick={() => issue.type === "products" ? onManageProducts() : onFixIssue(issue)}
-                  disabled={aiLoading || (!aiEnabled && issue.type !== "products")}
-                  loading={issue.type !== "products" && aiLoadingTarget === issue.type}
-                >
-                  {issue.type === "products" ? "Manage" : "Fix with AI"}
-                </Button>
-              </InlineStack>
-            </Card>
-          ))}
-        </BlockStack>
-        <InlineStack align="end" gap="200">
-          <Button size="micro" onClick={onApplyAll} disabled={aiLoading}>Apply basic metadata</Button>
-          <Button size="micro" variant="primary" icon={MagicIcon} onClick={onFixAll} loading={aiLoadingTarget === "all"} disabled={aiLoading || !aiEnabled || !issues.length}>
-            Fix all with AI
-          </Button>
-        </InlineStack>
       </BlockStack>
     </Card>
   );

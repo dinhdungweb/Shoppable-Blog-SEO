@@ -17,6 +17,14 @@ export type AiSeoFixManualAction = {
   issueType: string;
   explanation: string;
   action: string;
+  suggestedLinks: AiSeoFixSuggestedLink[];
+};
+
+export type AiSeoFixSuggestedLink = {
+  url: string;
+  title: string;
+  anchorText: string;
+  reason: string;
 };
 
 export type AiSeoFixSuggestion = {
@@ -97,11 +105,26 @@ const SEO_FIX_RESPONSE_SCHEMA = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["issueType", "explanation", "action"],
+          required: ["issueType", "explanation", "action", "suggestedLinks"],
           properties: {
             issueType: { type: "string" },
             explanation: { type: "string" },
             action: { type: "string" },
+            suggestedLinks: {
+              type: "array",
+              maxItems: 3,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["url", "title", "anchorText", "reason"],
+                properties: {
+                  url: { type: "string" },
+                  title: { type: "string" },
+                  anchorText: { type: "string" },
+                  reason: { type: "string" },
+                },
+              },
+            },
           },
         },
       },
@@ -151,10 +174,12 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
           content: [
             "You are an ecommerce SEO Fix Copilot. Return only one JSON object with summary, changes, and manualActions.",
             "changes is an array of objects with field, after, replacements, explanation, and issueTypes. Allowed fields are body, excerpt, metaTitle, metaDescription, and featuredImageAlt.",
-            "manualActions is an array of objects with issueType, explanation, and action.",
+            "manualActions is an array of objects with issueType, explanation, action, and suggestedLinks.",
             "Fix only the supplied issues and preserve the article language, meaning, voice, factual claims, and useful detail.",
             "Never invent products, links, sources, statistics, prices, testimonials, guarantees, author credentials, tests, or first-hand experience.",
             "For manualOnly issues, do not change a field; return a concrete manual action instead.",
+            "For external_links, dofollow_external_links, or eeat_sources, suggest up to 3 specific HTTPS links in suggestedLinks. Each link needs its page title, natural anchorText, and a reason tied to a claim in the supplied article. Prefer primary sources, official standards, government, universities, or established subject-matter organizations. Never use search-result URLs, affiliate pages, competitors' product pages, or a generic homepage when a relevant deep page is known. If you cannot confidently provide a relevant public URL, return an empty suggestedLinks array.",
+            "For all other issue types, suggestedLinks must be an empty array. Never claim that a suggested URL was verified or accessed.",
             "Treat metadata, content, media, authority, linking, and settings issue groups independently. Do not rewrite body content to solve a metadata, media, linking, authority, or settings-only issue.",
             "For body changes, never return the complete article in after. Set after to an empty string and return at most 12 small replacements, each with an exact find substring copied verbatim from bodyHtml and its replacement HTML. Each find must occur exactly once.",
             "If a safe exact body replacement is not possible, do not return a body change; return a manual action. Do not use h1, scripts, styles, iframes, forms, SVG, event attributes, inline CSS, or markdown fences.",
@@ -211,6 +236,7 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
     issueType,
     explanation: "The AI-proposed article markup did not pass the app's safety and structure checks.",
     action: "Review this issue and edit the article content manually. No unsafe AI markup was added to the draft.",
+    suggestedLinks: [],
   }));
   const changes = parsedChanges.changes;
   const manualActions = ensureManualActions([
@@ -239,6 +265,7 @@ function ensureManualActions(actions: AiSeoFixManualAction[], issues: SeoAuditIs
       issueType: issue.type,
       explanation: manualIssueExplanation(issue.type),
       action: issue.fix || manualIssueAction(issue.type),
+      suggestedLinks: [],
     });
     covered.add(issue.type);
   }
@@ -359,10 +386,53 @@ function parseManualActions(value: unknown, selectedTypes: Set<string>) {
       issueType,
       explanation: cleanLine(item.explanation).slice(0, 500),
       action,
+      suggestedLinks: parseSuggestedLinks(item.suggestedLinks, issueType),
     });
     seenTypes.add(issueType);
   }
   return actions;
+}
+
+function parseSuggestedLinks(value: unknown, issueType: string): AiSeoFixSuggestedLink[] {
+  if (!["external_links", "dofollow_external_links", "eeat_sources"].includes(issueType) || !Array.isArray(value)) return [];
+  const links: AiSeoFixSuggestedLink[] = [];
+  const seenUrls = new Set<string>();
+  for (const raw of value.slice(0, 3)) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    const url = safePublicHttpsUrl(stringValue(item.url));
+    if (!url || seenUrls.has(url)) continue;
+    links.push({
+      url,
+      title: cleanLine(item.title).slice(0, 200) || new URL(url).hostname,
+      anchorText: cleanLine(item.anchorText).slice(0, 160),
+      reason: cleanLine(item.reason).slice(0, 300),
+    });
+    seenUrls.add(url);
+  }
+  return links;
+}
+
+function safePublicHttpsUrl(value: string) {
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return "";
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+    if (hostname === "localhost"
+      || hostname.endsWith(".localhost")
+      || hostname.endsWith(".local")
+      || hostname.endsWith(".internal")
+      || /^(?:10|127|169\.254|192\.168)\./.test(hostname)
+      || /^172\.(?:1[6-9]|2\d|3[01])\./.test(hostname)
+      || hostname === "::1"
+      || hostname.startsWith("fc")
+      || hostname.startsWith("fd")
+      || hostname.startsWith("fe80:")) return "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
 }
 
 function validateBodyChange(original: string, proposed: string, issueTypes: string[]) {
