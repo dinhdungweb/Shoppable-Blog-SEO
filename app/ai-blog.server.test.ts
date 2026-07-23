@@ -128,6 +128,57 @@ describe("9Router blog writing assistant", () => {
       expect.objectContaining({ url: "https://www.iata.org/en/programs/ops-infra/baggage/" }),
     ]);
   });
+
+  it("restores existing href values when AI changes their destinations", async () => {
+    configure();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        title: "Buying Guide",
+        bodyHtml: '<p>Read our <a href="https://changed.example/path">size guide</a>.</p>',
+        excerpt: "A useful buying guide.",
+        metaTitle: "Buying Guide",
+        metaDescription: "Read this practical buying guide.",
+        suggestedLinks: [],
+      }) } }],
+    }), { status: 200 })));
+
+    const result = await generateAiBlogDraft({
+      mode: "improve",
+      title: "Buying Guide",
+      body: '<p>Read our <a href="/pages/size-guide">size guide</a>.</p>',
+      excerpt: "A guide.",
+      primaryKeyword: "buying guide",
+      secondaryKeywords: [],
+      instruction: "Improve the article.",
+    });
+
+    expect(result.bodyHtml).toContain('href="/pages/size-guide"');
+    expect(result.bodyHtml).not.toContain("changed.example");
+  });
+
+  it("rejects output that removes an existing article link", async () => {
+    configure();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        title: "Buying Guide",
+        bodyHtml: "<p>The size guide was removed.</p>",
+        excerpt: "A useful buying guide.",
+        metaTitle: "Buying Guide",
+        metaDescription: "Read this practical buying guide.",
+        suggestedLinks: [],
+      }) } }],
+    }), { status: 200 })));
+
+    await expect(generateAiBlogDraft({
+      mode: "improve",
+      title: "Buying Guide",
+      body: '<p>Read our <a href="/pages/size-guide">size guide</a>.</p>',
+      excerpt: "A guide.",
+      primaryKeyword: "buying guide",
+      secondaryKeywords: [],
+      instruction: "Improve the article.",
+    })).rejects.toThrow("preserve the article links");
+  });
 });
 
 function configure() {

@@ -145,10 +145,13 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("9Router returned no message content");
   const parsed = parseJsonObject(content);
-  const bodyHtml = stringValue(parsed.bodyHtml).trim();
+  let bodyHtml = stringValue(parsed.bodyHtml).trim();
   if (!bodyHtml) throw new Error("9Router returned an empty article draft");
   if (bodyHtml.length > MAX_OUTPUT_CHARS) throw new Error("9Router returned an article draft that is too large");
-  if (/<\s*\/?\s*(script|style|iframe|object|embed|svg|form|input|button)\b/i.test(bodyHtml)) {
+  if (/<\s*\/?\s*(script|style|iframe|object|embed|svg|form|input|button)\b/i.test(bodyHtml)
+    || /\son[a-z]+\s*=/i.test(bodyHtml)
+    || /\sstyle\s*=/i.test(bodyHtml)
+    || /(?:javascript|data|vbscript)\s*:/i.test(bodyHtml)) {
     throw new Error("9Router returned unsafe article markup");
   }
 
@@ -156,9 +159,7 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
   if (!sameStringMultiset(requiredProductMarkers, returnedProductMarkers)) {
     throw new Error("9Router did not preserve the article product blocks");
   }
-  if (!sameStringMultiset(requiredLinks, extractLinks(bodyHtml))) {
-    throw new Error("9Router did not preserve the article links");
-  }
+  bodyHtml = restoreExistingLinks(currentBody, bodyHtml);
 
   return {
     title: truncateAtWord(cleanLine(parsed.title), 255) || input.title,
@@ -201,6 +202,31 @@ function parseSuggestedLinks(value: unknown): AiBlogSuggestedLink[] {
 
 function extractLinks(html: string) {
   return [...html.matchAll(LINK_PATTERN)].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
+}
+
+function restoreExistingLinks(original: string, proposed: string) {
+  const originalLinks = extractLinks(original);
+  const proposedLinks = extractLinks(proposed);
+  if (!originalLinks.length) {
+    return proposed.replace(/<a\b[^>]*>/gi, "").replace(/<\/a\s*>/gi, "");
+  }
+  if (originalLinks.length !== proposedLinks.length) {
+    throw new Error("9Router did not preserve the article links");
+  }
+  let index = 0;
+  return proposed.replace(/<a\b([^>]*)>/gi, (tag, attributes: string) => {
+    const href = originalLinks[index++];
+    const withoutHref = attributes.replace(/\shref\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i, "");
+    return `<a${withoutHref} href="${escapeAttribute(href)}">`;
+  });
+}
+
+function escapeAttribute(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function parseJsonObject(value: string): Record<string, unknown> {
