@@ -82,6 +82,7 @@ import {
   type LinkSuggestion,
 } from "../internal-linking";
 import { generateAiBlogDraft, isAiWritingMode, type AiWritingMode } from "../ai-blog.server";
+import { isAiSelectionTask, rewriteAiSelection, type AiSelectionSuggestion, type AiSelectionTask } from "../ai-selection.server";
 import {
   generateAiSeoFix,
   type AiSeoFixField,
@@ -521,7 +522,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   if (
     isNewPost &&
-    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions", "generate_ai_content", "generate_ai_seo_fix"].includes(intent)
+    !["update_post", "search_images", "upload_image", "analyze_seo", "apply_seo_suggestions", "generate_ai_content", "generate_ai_seo_fix", "rewrite_ai_selection"].includes(intent)
   ) {
     return json(
       { success: false, error: "Save this post before using this action." },
@@ -559,6 +560,28 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ success: true, action: "ai_content_generated", suggestion });
     } catch (error) {
       const message = getPublicNineRouterErrorMessage(error, "AI could not generate the article draft. Please try again.");
+      return json({ success: false, error: message }, { status: 502 });
+    }
+  }
+
+  if (intent === "rewrite_ai_selection") {
+    if (!isNineRouterConfigured()) {
+      return json({ success: false, error: "9Router is not configured on the server." }, { status: 503 });
+    }
+    const task = cleanString(formData.get("task"));
+    if (!isAiSelectionTask(task)) return json({ success: false, error: "Choose a valid rewrite task." }, { status: 400 });
+    try {
+      const suggestion = await rewriteAiSelection({
+        task,
+        selectionHtml: String(formData.get("selectionHtml") || ""),
+        selectionText: cleanString(formData.get("selectionText")),
+        articleContext: String(formData.get("articleContext") || ""),
+        keywordContext: cleanString(formData.get("keywordContext")),
+        instruction: cleanString(formData.get("instruction")),
+      });
+      return json({ success: true, action: "ai_selection_rewritten", suggestion });
+    } catch (error) {
+      const message = getPublicNineRouterErrorMessage(error, "AI could not rewrite the selected text. Please try again.");
       return json({ success: false, error: message }, { status: 502 });
     }
   }
@@ -2559,6 +2582,7 @@ export default function ArticleDetail() {
                   title={title}
                   body={body}
                   excerpt={excerpt}
+                  focusKeyword={focusKeyword}
                   articleTitle={article.title}
                   onTitleChange={(value) => {
                     setTitle(value);
@@ -3389,6 +3413,7 @@ function ShopifyContentEditor({
   title,
   body,
   excerpt,
+  focusKeyword,
   articleTitle,
   onTitleChange,
   onBodyChange,
@@ -3405,6 +3430,7 @@ function ShopifyContentEditor({
   title: string;
   body: string;
   excerpt: string;
+  focusKeyword: string;
   articleTitle: string;
   onTitleChange: (value: string) => void;
   onBodyChange: (value: string) => void;
@@ -3456,6 +3482,8 @@ function ShopifyContentEditor({
               onProductBlockInserted={onProductBlockInserted}
               onLinkBridgeReady={onLinkBridgeReady}
               onOpenAiAssistant={onOpenAiAssistant}
+              enableSelectionAi={Boolean(onOpenAiAssistant)}
+              aiKeywordContext={focusKeyword}
             />
           </BlockStack>
         </BlockStack>
@@ -3748,6 +3776,8 @@ function RichArticleEditor({
   onProductBlockInserted,
   onLinkBridgeReady,
   onOpenAiAssistant,
+  enableSelectionAi = false,
+  aiKeywordContext = "",
   aiBusy = false,
   aiLoading = false,
 }: {
@@ -3760,9 +3790,13 @@ function RichArticleEditor({
   onProductBlockInserted?: (blockId: string) => void;
   onLinkBridgeReady?: (bridge: EditorLinkBridge) => void;
   onOpenAiAssistant?: () => void;
+  enableSelectionAi?: boolean;
+  aiKeywordContext?: string;
   aiBusy?: boolean;
   aiLoading?: boolean;
 }) {
+  const selectionAiFetcher = useFetcher<typeof action>();
+  const selectionAiApp = useAppBridge();
   const editorRef = useRef<HTMLDivElement | null>(null);
   const lastHtmlRef = useRef("");
   const savedSelectionRef = useRef<Range | null>(null);
@@ -3789,6 +3823,14 @@ function RichArticleEditor({
     bottom: "16",
     left: "0",
   });
+  const handledSelectionAiDataRef = useRef<any>(null);
+  const [selectionAiPosition, setSelectionAiPosition] = useState<{ top: number; left: number } | null>(null);
+  const [selectionAiModalOpen, setSelectionAiModalOpen] = useState(false);
+  const [selectionAiTask, setSelectionAiTask] = useState<AiSelectionTask>("improve");
+  const [selectionAiInstruction, setSelectionAiInstruction] = useState("");
+  const [selectionAiOriginalText, setSelectionAiOriginalText] = useState("");
+  const [selectionAiOriginalHtml, setSelectionAiOriginalHtml] = useState("");
+  const [selectionAiSuggestion, setSelectionAiSuggestion] = useState<AiSelectionSuggestion | null>(null);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -3815,8 +3857,86 @@ function RichArticleEditor({
     if (editor.contains(container.nodeType === Node.TEXT_NODE ? container.parentNode : container)) {
       savedSelectionRef.current = range.cloneRange();
       setCurrentBlockType(readEditorBlockType(editor, selection));
+      const selectedText = range.toString().trim();
+      if (enableSelectionAi && !range.collapsed && selectedText.length >= 2 && selectedText.length <= 4_000) {
+        const rect = range.getBoundingClientRect();
+        setSelectionAiPosition({
+          top: Math.max(8, rect.bottom + 8),
+          left: Math.min(Math.max(8, rect.left + rect.width / 2), window.innerWidth - 90),
+        });
+      } else if (!selectionAiModalOpen) {
+        setSelectionAiPosition(null);
+      }
     }
+  }, [enableSelectionAi, selectionAiModalOpen]);
+
+  const closeSelectionAi = useCallback(() => {
+    setSelectionAiModalOpen(false);
+    setSelectionAiSuggestion(null);
+    setSelectionAiPosition(null);
   }, []);
+
+  const openSelectionAi = useCallback(() => {
+    const editor = editorRef.current;
+    const range = savedSelectionRef.current;
+    if (!editor || !range || range.collapsed) return;
+    const container = range.commonAncestorContainer;
+    const node = container.nodeType === Node.TEXT_NODE ? container.parentNode : container;
+    if (!node || !editor.contains(node)) return;
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(range.cloneContents());
+    setSelectionAiOriginalText(range.toString().trim());
+    setSelectionAiOriginalHtml(wrapper.innerHTML);
+    setSelectionAiSuggestion(null);
+    setSelectionAiPosition(null);
+    setSelectionAiModalOpen(true);
+  }, []);
+
+  const generateSelectionAi = useCallback(() => {
+    const formData = new FormData();
+    formData.set("intent", "rewrite_ai_selection");
+    formData.set("task", selectionAiTask);
+    formData.set("selectionHtml", selectionAiOriginalHtml);
+    formData.set("selectionText", selectionAiOriginalText);
+    formData.set("articleContext", value);
+    formData.set("keywordContext", aiKeywordContext);
+    formData.set("instruction", selectionAiInstruction);
+    selectionAiFetcher.submit(formData, { method: "post" });
+  }, [aiKeywordContext, selectionAiFetcher, selectionAiInstruction, selectionAiOriginalHtml, selectionAiOriginalText, selectionAiTask, value]);
+
+  useEffect(() => {
+    const data: any = selectionAiFetcher.data;
+    if (!data || handledSelectionAiDataRef.current === data) return;
+    handledSelectionAiDataRef.current = data;
+    if (data.success && data.action === "ai_selection_rewritten") {
+      setSelectionAiSuggestion(data.suggestion as AiSelectionSuggestion);
+      selectionAiApp.toast.show("AI suggestion is ready.");
+    } else if (data.error) {
+      selectionAiApp.toast.show(data.error, { isError: true });
+    }
+  }, [selectionAiApp, selectionAiFetcher.data]);
+
+  const applySelectionAi = useCallback(() => {
+    if (!selectionAiSuggestion) return;
+    const editor = editorRef.current;
+    const range = savedSelectionRef.current;
+    const container = range?.commonAncestorContainer;
+    const node = container?.nodeType === Node.TEXT_NODE ? container.parentNode : container;
+    if (!editor || !range || !node || !editor.contains(node)) {
+      selectionAiApp.toast.show("The selected text changed. Select it again.", { isError: true });
+      closeSelectionAi();
+      return;
+    }
+    const selection = window.getSelection();
+    editor.focus();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.execCommand("insertHTML", false, selectionAiSuggestion.replacementHtml);
+    emitChange();
+    saveSelection();
+    closeSelectionAi();
+    selectionAiApp.toast.show("Selected text replaced in this draft.");
+  }, [closeSelectionAi, emitChange, saveSelection, selectionAiApp, selectionAiSuggestion]);
 
   const restoreSelection = useCallback(() => {
     const editor = editorRef.current;
@@ -4543,6 +4663,83 @@ function RichArticleEditor({
           />
         )}
       </div>
+
+      {selectionAiPosition && !selectionAiModalOpen && (
+        <button
+          type="button"
+          className="bp-selection-ai-button"
+          style={{ top: selectionAiPosition.top, left: selectionAiPosition.left }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={openSelectionAi}
+        >
+          <Icon source={MagicIcon} tone="magic" />
+          Chat with AI
+        </button>
+      )}
+
+      <Modal
+        open={selectionAiModalOpen}
+        onClose={closeSelectionAi}
+        title="Edit selected text with AI"
+        primaryAction={selectionAiSuggestion
+          ? {
+              content: "Replace selection",
+              onAction: applySelectionAi,
+            }
+          : {
+              content: "Generate suggestion",
+              onAction: generateSelectionAi,
+              loading: selectionAiFetcher.state !== "idle",
+              disabled: selectionAiFetcher.state !== "idle" || !selectionAiOriginalText,
+            }}
+        secondaryActions={[{ content: "Cancel", onAction: closeSelectionAi }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Select
+              label="What should AI do?"
+              options={[
+                { label: "Improve clarity and flow", value: "improve" },
+                { label: "Make it shorter", value: "shorten" },
+                { label: "Expand with useful detail", value: "expand" },
+                { label: "Follow a custom instruction", value: "custom" },
+              ]}
+              value={selectionAiTask}
+              onChange={(nextTask) => {
+                setSelectionAiTask(nextTask as AiSelectionTask);
+                setSelectionAiSuggestion(null);
+              }}
+            />
+            <TextField
+              label={selectionAiTask === "custom" ? "Instruction" : "Additional instruction (optional)"}
+              value={selectionAiInstruction}
+              onChange={(nextInstruction) => {
+                setSelectionAiInstruction(nextInstruction);
+                setSelectionAiSuggestion(null);
+              }}
+              multiline={3}
+              autoComplete="off"
+              placeholder="For example: make the tone warmer and keep the main keyword natural."
+            />
+            {selectionAiSuggestion ? (
+              <BlockStack gap="300">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {selectionAiSuggestion.explanation}
+                </Text>
+                <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+                  <SeoFixPreview label="Before" field="body" value={selectionAiOriginalHtml} />
+                  <SeoFixPreview label="After" field="body" value={selectionAiSuggestion.replacementHtml} changed />
+                </InlineGrid>
+                <Text as="p" variant="bodySm" tone="caution">
+                  Only the selected text will change. Existing links in the selection must remain unchanged.
+                </Text>
+              </BlockStack>
+            ) : (
+              <SeoFixPreview label="Selected text" field="body" value={selectionAiOriginalHtml} />
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
 
       <Modal
         open={linkModalOpen}

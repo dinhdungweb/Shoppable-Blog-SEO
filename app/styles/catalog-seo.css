@@ -28,6 +28,9 @@
 .bp-editor-canvas h3 { margin: 1.1em 0 .5em; font-size: 1.25rem; line-height: 1.35; font-weight: 650; }
 .bp-editor-canvas blockquote { margin: 1em 0; padding: 10px 14px; border-left: 4px solid var(--p-color-border-info); background: var(--p-color-bg-surface-secondary); color: var(--p-color-text-secondary); }
 .bp-editor-canvas a { color: var(--p-color-text-link); text-decoration: underline; cursor: text; }
+.bp-selection-ai-button { position: fixed; z-index: 520; display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; transform: translateX(-50%); border: 1px solid var(--p-color-border); border-radius: 8px; background: var(--p-color-bg-surface); box-shadow: var(--p-shadow-400); color: var(--p-color-text); font: inherit; cursor: pointer; white-space: nowrap; }
+.bp-selection-ai-button:hover { background: var(--p-color-bg-surface-hover); }
+.bp-selection-ai-button .Polaris-Icon { width: 16px; height: 16px; margin: 0; }
 .bp-editor-canvas table { width: 100%; border-collapse: collapse; }
 .bp-editor-canvas td { min-width: 90px; padding: 8px; border: 1px solid var(--p-color-border); }
 .bp-editor-video { position: relative; overflow: hidden; padding-top: 56.25%; }
