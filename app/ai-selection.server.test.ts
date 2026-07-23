@@ -17,7 +17,7 @@ describe("selected-text AI editor", () => {
 
   it("returns a safe rewrite and preserves selected links", async () => {
     configure();
-    const fetchMock = vi.fn(async () => response({
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({
       replacementHtml: '<p>Read the clearer <a href="/pages/guide">buying guide</a>.</p>',
       explanation: "Improves clarity.",
     }));

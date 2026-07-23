@@ -3824,7 +3824,11 @@ function RichArticleEditor({
     left: "0",
   });
   const handledSelectionAiDataRef = useRef<any>(null);
-  const [selectionAiPosition, setSelectionAiPosition] = useState<{ top: number; left: number } | null>(null);
+  const [selectionAiPosition, setSelectionAiPosition] = useState<{
+    top: number;
+    left: number;
+    placement: "above" | "below";
+  } | null>(null);
   const [selectionAiModalOpen, setSelectionAiModalOpen] = useState(false);
   const [selectionAiTask, setSelectionAiTask] = useState<AiSelectionTask>("improve");
   const [selectionAiInstruction, setSelectionAiInstruction] = useState("");
@@ -3860,9 +3864,11 @@ function RichArticleEditor({
       const selectedText = range.toString().trim();
       if (enableSelectionAi && !range.collapsed && selectedText.length >= 2 && selectedText.length <= 4_000) {
         const rect = range.getBoundingClientRect();
+        const placement = rect.top >= 56 ? "above" : "below";
         setSelectionAiPosition({
-          top: Math.max(8, rect.bottom + 8),
+          top: placement === "above" ? rect.top - 8 : rect.bottom + 8,
           left: Math.min(Math.max(8, rect.left + rect.width / 2), window.innerWidth - 90),
+          placement,
         });
       } else if (!selectionAiModalOpen) {
         setSelectionAiPosition(null);
@@ -4667,7 +4673,7 @@ function RichArticleEditor({
       {selectionAiPosition && !selectionAiModalOpen && (
         <button
           type="button"
-          className="bp-selection-ai-button"
+          className={`bp-selection-ai-button bp-selection-ai-button--${selectionAiPosition.placement}`}
           style={{ top: selectionAiPosition.top, left: selectionAiPosition.left }}
           onMouseDown={(event) => event.preventDefault()}
           onClick={openSelectionAi}
@@ -7444,6 +7450,43 @@ const DETAIL_STYLES = `
 .bp-editor-icon-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.bp-selection-ai-button {
+  position: fixed;
+  z-index: 520;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  min-width: max-content;
+  padding: 7px 10px;
+  border: 1px solid var(--p-color-border);
+  border-radius: 8px;
+  background: var(--p-color-bg-surface);
+  box-shadow: var(--p-shadow-400);
+  color: var(--p-color-text);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bp-selection-ai-button--above {
+  transform: translate(-50%, -100%);
+}
+
+.bp-selection-ai-button--below {
+  transform: translateX(-50%);
+}
+
+.bp-selection-ai-button:hover {
+  background: var(--p-color-bg-surface-hover);
+}
+
+.bp-selection-ai-button .Polaris-Icon {
+  width: 16px;
+  height: 16px;
+  margin: 0;
 }
 
 .bp-inline-ai-icon {
