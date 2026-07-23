@@ -2,6 +2,8 @@ import prisma from "./db.server";
 
 export async function purgeShopData(shop: string) {
   await prisma.$transaction([
+    prisma.contentBrief.deleteMany({ where: { shop } }),
+    prisma.internalLinkChange.deleteMany({ where: { shop } }),
     prisma.internalLinkAnalysis.deleteMany({ where: { shop } }),
     prisma.contentDecayAnalysis.deleteMany({ where: { shop } }),
     prisma.storefrontPerformanceScan.deleteMany({ where: { shop } }),

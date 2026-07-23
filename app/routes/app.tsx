@@ -43,6 +43,7 @@ export default function App() {
         <Link to="/app/seo">SEO Optimizer</Link>
         <Link to="/app/performance">Performance</Link>
         <Link to="/app/internal-links">Internal Linking</Link>
+        <Link to="/app/content-briefs">Content Briefs</Link>
         <Link to="/app/content-decay">Content Decay</Link>
         <Link to="/app/analytics">Analytics</Link>
         <Link to="/app/changelog">What's new</Link>

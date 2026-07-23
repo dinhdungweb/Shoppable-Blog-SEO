@@ -15,6 +15,14 @@ export type LinkSuggestion = {
   targetUrl: string;
   anchorText: string;
   score: number;
+  aiScore?: number;
+  aiExplanation?: string;
+  aiWarnings?: Array<"possible_cannibalization" | "anchor_overuse" | "ambiguous_anchor">;
+  anchorOptions?: string[];
+  anchorPreviews?: Array<{ anchorText: string; before: string; after: string }>;
+  previewBefore?: string;
+  previewAfter?: string;
+  insertedInContext?: boolean;
 };
 
 export type BrokenLink = { sourceId: string; sourceTitle: string; href: string; kind: "article" | "product" };
@@ -111,6 +119,35 @@ export function insertApprovedLink(body: string, anchorText: string, targetUrl: 
     }
   }
   return { body: `${body}<p>Related: <a href="${escapedUrl}">${escapedAnchor}</a></p>`, insertedInContext: false };
+}
+
+export function previewApprovedLink(body: string, anchorText: string, targetUrl: string) {
+  const inserted = insertApprovedLink(body, anchorText, targetUrl);
+  const escapedUrl = escapeAttribute(targetUrl);
+  const linkPattern = new RegExp(`<a\\s+href="${escapeRegExp(escapedUrl)}">[\\s\\S]*?<\\/a>`, "i");
+  const match = linkPattern.exec(inserted.body);
+  if (!match) {
+    return {
+      ...inserted,
+      before: cleanText(body).slice(0, 500),
+      after: cleanText(inserted.body).slice(0, 500),
+    };
+  }
+  const after = surroundingBlock(inserted.body, match.index, match.index + match[0].length);
+  const before = inserted.insertedInContext
+    ? after.replace(linkPattern, (link) => link.replace(/^<a\b[^>]*>/i, "").replace(/<\/a>$/i, ""))
+    : "(No exact anchor was found in the article.)";
+  return { ...inserted, before, after };
+}
+
+export function hasUnlinkedAnchor(body: string, anchorText: string) {
+  if (!anchorText.trim()) return false;
+  return insertApprovedLink(body, anchorText, "/__internal_link_preview__").insertedInContext;
+}
+
+export function hasInternalLinkTarget(body: string, targetUrl: string) {
+  const normalizedTarget = normalizePathOnly(targetUrl);
+  return extractLinks(body).some((link) => normalizePathOnly(link.href) === normalizedTarget);
 }
 
 export function appendApprovedLink(body: string, anchorText: string, targetUrl: string) {
@@ -268,3 +305,21 @@ function cleanText(value: string) { return value.replace(/<[^>]*>/g, " ").replac
 function uniqueBrokenLinks(items: BrokenLink[]) { return [...new Map(items.map((item) => [`${item.sourceId}:${item.href}`, item])).values()]; }
 function escapeHtml(value: string) { return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 function escapeAttribute(value: string) { return escapeHtml(value); }
+function escapeRegExp(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function surroundingBlock(html: string, start: number, end: number) {
+  const opening = [...html.slice(0, start).matchAll(/<(p|li|h2|h3|blockquote)\b[^>]*>/gi)].pop();
+  if (!opening || opening.index === undefined) return html.slice(Math.max(0, start - 180), Math.min(html.length, end + 180));
+  const tag = opening[1];
+  const closePattern = new RegExp(`<\\/${tag}\\s*>`, "ig");
+  closePattern.lastIndex = end;
+  const closing = closePattern.exec(html);
+  if (!closing) return html.slice(opening.index, Math.min(html.length, end + 180));
+  return html.slice(opening.index, closing.index + closing[0].length);
+}
+function normalizePathOnly(value: string) {
+  try {
+    return new URL(value, "https://internal.invalid").pathname.replace(/\/$/, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}

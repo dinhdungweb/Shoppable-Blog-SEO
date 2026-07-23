@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeInternalLinks, appendApprovedLink, insertApprovedLink, suggestInternalLinksForDraft } from "./internal-linking";
+import { analyzeInternalLinks, appendApprovedLink, hasInternalLinkTarget, hasUnlinkedAnchor, insertApprovedLink, previewApprovedLink, suggestInternalLinksForDraft } from "./internal-linking";
 
 const articles = [
   { id: "1", title: "Running Shoe Guide", handle: "running-shoes", blogHandle: "news", body: '<p>Read our shoe sizing advice.</p><a href="/blogs/news/shoe-sizing">Sizing</a>' },
@@ -19,6 +19,16 @@ describe("internal linking assistant", () => {
     const result = insertApprovedLink("<p>See our Shoe Sizing Advice today.</p>", "Shoe Sizing Advice", "/blogs/news/shoe-sizing");
     expect(result.insertedInContext).toBe(true);
     expect(result.body).toContain('<a href="/blogs/news/shoe-sizing">Shoe Sizing Advice</a>');
+  });
+
+  it("builds an exact before and after preview and rejects text already linked", () => {
+    const body = "<p>Use our shoe sizing advice before ordering.</p>";
+    const preview = previewApprovedLink(body, "shoe sizing advice", "/blogs/news/shoe-sizing");
+    expect(preview.insertedInContext).toBe(true);
+    expect(preview.before).toBe(body);
+    expect(preview.after).toContain('<a href="/blogs/news/shoe-sizing">shoe sizing advice</a>');
+    expect(hasUnlinkedAnchor(preview.after, "shoe sizing advice")).toBe(false);
+    expect(hasInternalLinkTarget('<a href="https://shop.example/blogs/news/shoe-sizing?ref=guide">Sizing</a>', "/blogs/news/shoe-sizing")).toBe(true);
   });
 
   it("appends a safe related link when the end position is selected", () => {

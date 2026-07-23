@@ -30,7 +30,7 @@ type AiBlogInput = {
 };
 
 const MAX_ARTICLE_CHARS = 12_000;
-const MAX_INSTRUCTION_CHARS = 1_200;
+const MAX_INSTRUCTION_CHARS = 12_000;
 const MAX_OUTPUT_CHARS = 50_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 const PRODUCT_MARKER_PATTERN = /\[\[SBS_PRODUCTS(?::[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)?)?\]\]/g;
@@ -59,7 +59,6 @@ export async function generateAiBlogDraft(input: AiBlogInput): Promise<AiBlogDra
     : DEFAULT_TIMEOUT_MS;
   const currentBody = input.body.slice(0, MAX_ARTICLE_CHARS);
   const requiredProductMarkers = currentBody.match(PRODUCT_MARKER_PATTERN) || [];
-  const requiredLinks = extractLinks(currentBody);
 
   const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
     method: "POST",

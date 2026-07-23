@@ -83,6 +83,7 @@ const PRICING_PLANS: PricingPlan[] = [
       "Table of contents integration",
       "SEO optimizer with post-level actions",
       "Internal Linking Assistant",
+      "AI Content Brief & Keyword Cluster",
       "Conversion tracking and attribution",
       "3-day free trial",
     ],
@@ -121,6 +122,7 @@ const UPGRADE_REASON_MESSAGES: Record<string, string> = {
   shoppable_articles_pro: `Your Pro plan allows up to ${PLAN_LIMITS.pro.shoppableArticles} shoppable posts. Upgrade to Growth for unlimited shoppable posts.`,
   content_navigation: "Table of contents and breadcrumbs are Pro plan features. Upgrade to enable TOC settings and storefront content navigation.",
   internal_linking: "Internal Linking Assistant is available on Pro and Growth plans. Upgrade to analyze, review and insert relevant links across Shopify articles.",
+  content_brief: "AI Content Brief is available on Pro and Growth plans. Upgrade to build keyword clusters, outlines and reviewable article drafts from your store data.",
   custom_css: "Custom widget CSS is a Growth plan feature. Upgrade to control your widget styling.",
   content_decay: "Content Decay Monitor is a Growth plan feature. Upgrade to monitor declining traffic, stale content, unavailable products and broken links.",
 };

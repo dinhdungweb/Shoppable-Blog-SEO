@@ -16,6 +16,12 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
     summary: "Create, improve and safely review SEO content directly inside the article editor with 9Router-powered AI.",
     tags: ["New", "Improved", "Fixed"],
     changes: [
+      { type: "New", text: "AI Content Brief & Keyword Cluster builds a saved strategy, primary and secondary keyword cluster, entity coverage, H2/H3 outline, reader questions and cannibalization review from verified Shopify and Search Console data." },
+      { type: "New", text: "Saved content briefs include server-verified internal-link and product-placement plans, allow each section to be regenerated, and can create a complete draft that opens prefilled in the article editor for review." },
+      { type: "Fixed", text: "AI Content Brief drops invented article IDs, product IDs, URLs, queries and metrics before saving, while article drafts remain unpublished until the merchant explicitly saves them to Shopify." },
+      { type: "New", text: "AI Internal Link Copilot reviews deterministic Shopify article pairs for semantic relevance, reader value and exact in-context anchor options." },
+      { type: "New", text: "Internal link suggestions now support before-and-after previews, multi-select batch apply and guarded per-article Undo history." },
+      { type: "Fixed", text: "AI internal links accept only server-verified Shopify article destinations, skip changed or duplicate targets, and never append an invented or unmatched anchor." },
       { type: "New", text: "AI Assistant can create or improve an SEO article from one primary keyword, optional secondary keywords and merchant instructions, including the title, body, excerpt and search metadata." },
       { type: "New", text: "Selecting a word or passage in the content editor now opens a floating Chat with AI action for improving, shortening, expanding or rewriting only that selection." },
       { type: "Improved", text: "Selected-text AI changes include a before-and-after review and replace only the approved selection in the local draft." },

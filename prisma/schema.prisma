@@ -331,6 +331,39 @@ model InternalLinkAnalysis {
   updatedAt  DateTime @updatedAt
 }
 
+model InternalLinkChange {
+  id           String    @id @default(cuid())
+  batchId      String
+  shop         String
+  articleId    String
+  articleTitle String
+  beforeBody   String
+  afterBody    String
+  suggestions  Json
+  status       String    @default("applied")
+  appliedAt    DateTime  @default(now())
+  undoneAt     DateTime?
+
+  @@index([shop, appliedAt])
+  @@index([shop, batchId])
+}
+
+model ContentBrief {
+  id                 String   @id @default(cuid())
+  shop               String
+  title              String
+  seedKeyword        String   @default("")
+  sourceArticleId    String   @default("")
+  sourceArticleTitle String   @default("")
+  status             String   @default("ready")
+  brief              Json
+  draft              Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([shop, updatedAt])
+}
+
 model ContentDecayAnalysis {
   id         String   @id @default(cuid())
   shop       String   @unique

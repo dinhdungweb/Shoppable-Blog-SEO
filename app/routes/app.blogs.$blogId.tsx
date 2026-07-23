@@ -82,6 +82,7 @@ import {
   type LinkSuggestion,
 } from "../internal-linking";
 import { generateAiBlogDraft, isAiWritingMode, type AiWritingMode } from "../ai-blog.server";
+import { contentBriefDraftInstruction, type AiContentBrief } from "../ai-content-brief.server";
 import { isAiSelectionTask, rewriteAiSelection, type AiSelectionSuggestion, type AiSelectionTask } from "../ai-selection.server";
 import {
   generateAiSeoFix,
@@ -282,7 +283,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const tocAuditOptions = await getSeoTocAuditOptions(shop, limits.canContentNavigation);
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
-  const contentRefreshRequested = new URL(request.url).searchParams.get("refresh") === "1";
+  const requestUrl = new URL(request.url);
+  const contentRefreshRequested = requestUrl.searchParams.get("refresh") === "1";
   const [blogs, internalLinkCandidates] = await Promise.all([
     fetchShopifyEditorBlogs(admin),
     limits.canInternalLinking ? prisma.articleSEO.findMany({
@@ -300,6 +302,34 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   if (isNewPost) {
     const article = makeEmptyArticle(blogs[0], defaultAuthorName);
+    const briefId = requestUrl.searchParams.get("brief")?.trim() || "";
+    const savedBrief = briefId ? await prisma.contentBrief.findFirst({
+      where: { id: briefId, shop },
+      select: { id: true, brief: true, draft: true },
+    }) : null;
+    const contentBrief = savedBrief?.brief as unknown as AiContentBrief | undefined;
+    const contentDraft = savedBrief?.draft as {
+      title?: string;
+      bodyHtml?: string;
+      excerpt?: string;
+      metaTitle?: string;
+      metaDescription?: string;
+    } | null;
+    const briefPrefill = savedBrief && contentBrief ? {
+      id: savedBrief.id,
+      primaryKeyword: contentBrief.primaryKeyword || "",
+      secondaryKeywords: contentBrief.secondaryKeywords || [],
+      instruction: contentBriefDraftInstruction(contentBrief),
+      metaTitle: contentDraft?.metaTitle || "",
+      metaDescription: contentDraft?.metaDescription || "",
+      hasDraft: Boolean(contentDraft?.bodyHtml),
+    } : null;
+    if (contentBrief) {
+      article.title = contentDraft?.title || contentBrief.title || "";
+      article.handle = slugifySeoText(article.title);
+      article.body = contentDraft?.bodyHtml || "";
+      article.summary = contentDraft?.excerpt || "";
+    }
     const initialAudit = runSeoAudit({
       title: article.title,
       handle: article.handle,
@@ -344,6 +374,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       aiEnabled: isNineRouterConfigured(),
       contentRefresh: emptyContentRefreshContext(limits.canContentDecay),
       contentRefreshRequested: false,
+      briefPrefill,
     });
   }
 
@@ -497,6 +528,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     aiEnabled: isNineRouterConfigured(),
     contentRefresh,
     contentRefreshRequested,
+    briefPrefill: null,
   });
 };
 
@@ -1402,7 +1434,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey, aiEnabled, contentRefresh, contentRefreshRequested } =
+  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey, aiEnabled, contentRefresh, contentRefreshRequested, briefPrefill } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const aiFetcher = useFetcher<typeof action>();
@@ -1424,11 +1456,11 @@ export default function ArticleDetail() {
     stripHtml(seoData?.metaDescription || article.summary || makeMetaDescription(article.title, article.body || "")),
   );
   const [body, setBody] = useState(article.body || "");
-  const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
+  const [aiAssistantOpen, setAiAssistantOpen] = useState(Boolean(briefPrefill && !briefPrefill.hasDraft));
   const [aiWritingMode, setAiWritingMode] = useState<AiWritingMode>(article.body ? "improve" : "draft");
-  const [aiInstruction, setAiInstruction] = useState("");
-  const [aiPrimaryKeyword, setAiPrimaryKeyword] = useState(focusKeywordValue(seoData?.focusKeyword || "", 0));
-  const [aiSecondaryKeywords, setAiSecondaryKeywords] = useState(focusKeywordRest(seoData?.focusKeyword || ""));
+  const [aiInstruction, setAiInstruction] = useState(briefPrefill?.instruction || "");
+  const [aiPrimaryKeyword, setAiPrimaryKeyword] = useState(briefPrefill?.primaryKeyword || focusKeywordValue(seoData?.focusKeyword || "", 0));
+  const [aiSecondaryKeywords, setAiSecondaryKeywords] = useState(briefPrefill?.secondaryKeywords.join(", ") || focusKeywordRest(seoData?.focusKeyword || ""));
   const [aiPendingKeywords, setAiPendingKeywords] = useState("");
   const [seoFixReviewOpen, setSeoFixReviewOpen] = useState(false);
   const [seoFixSuggestion, setSeoFixSuggestion] = useState<AiSeoFixSuggestion | null>(null);
@@ -1448,8 +1480,8 @@ export default function ArticleDetail() {
   const [aiProductModalOpen, setAiProductModalOpen] = useState(false);
   const [aiProductRecommendations, setAiProductRecommendations] = useState<any[]>([]);
   const [selectedAiProductIds, setSelectedAiProductIds] = useState<string[]>([]);
-  const initialMetaTitle = seoData?.metaTitle || article.seoTitle?.value || "";
-  const initialMetaDescription = seoData?.metaDescription || article.seoDescription?.value || "";
+  const initialMetaTitle = briefPrefill?.metaTitle || seoData?.metaTitle || article.seoTitle?.value || "";
+  const initialMetaDescription = briefPrefill?.metaDescription || seoData?.metaDescription || article.seoDescription?.value || "";
   const [metaTitle, setMetaTitle] = useState(getInitialMetaTitle(initialMetaTitle, article.title));
   const [metaTitleTouched, setMetaTitleTouched] = useState(isInitialMetaTitleCustom(initialMetaTitle, article.title));
   const [metaDescription, setMetaDescription] = useState(
@@ -1492,7 +1524,11 @@ export default function ArticleDetail() {
   const handledSeoFixFetcherDataRef = useRef<any>(null);
   const handledContentRefreshFetcherDataRef = useRef<any>(null);
   const handledProductAiFetcherDataRef = useRef<any>(null);
-  const [focusKeyword, setFocusKeyword] = useState(seoData?.focusKeyword || "");
+  const [focusKeyword, setFocusKeyword] = useState(
+    briefPrefill
+      ? [briefPrefill.primaryKeyword, ...briefPrefill.secondaryKeywords].filter(Boolean).join(", ")
+      : seoData?.focusKeyword || "",
+  );
   const [pendingInternalLink, setPendingInternalLink] = useState<LinkSuggestion | null>(null);
   const [internalLinkAnchor, setInternalLinkAnchor] = useState("");
   const [internalLinkPlacement, setInternalLinkPlacement] = useState<"selection" | "automatic" | "end">("automatic");
@@ -1532,7 +1568,8 @@ export default function ArticleDetail() {
   const selectedBlockProducts = useMemo(
     () =>
       embeddedProducts.filter(
-        (product: any) => getProductBlockId(product.blockId) === selectedProductBlock?.id,
+        (product): product is NonNullable<typeof product> =>
+          product !== null && getProductBlockId(product.blockId) === selectedProductBlock?.id,
       ),
     [embeddedProducts, selectedProductBlock?.id],
   );
@@ -1570,7 +1607,9 @@ export default function ArticleDetail() {
       ),
     [article.id, body, currentBlog?.handle, handle, internalLinkCandidates, shopDomains, title],
   );
-  const topProduct = [...embeddedProducts].sort((a, b) => b.clicks - a.clicks)[0] || embeddedProducts[0];
+  const topProduct = [...embeddedProducts]
+    .filter((product): product is NonNullable<typeof product> => Boolean(product))
+    .sort((a, b) => b.clicks - a.clicks)[0];
   const isSubmitting = fetcher.state !== "idle";
   const isAiGenerating = aiFetcher.state !== "idle";
   const isSeoFixGenerating = seoFixFetcher.state !== "idle";
@@ -3081,7 +3120,7 @@ export default function ArticleDetail() {
               value={aiInstruction}
               onChange={setAiInstruction}
               multiline={4}
-              maxLength={1200}
+              maxLength={12000}
               showCharacterCount
               autoComplete="off"
               disabled={isAiGenerating}
