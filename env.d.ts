@@ -18,5 +18,6 @@ declare namespace NodeJS {
     NINE_ROUTER_API_KEY?: string;
     NINE_ROUTER_MODEL?: string;
     NINE_ROUTER_TIMEOUT_MS?: string;
+    FULL_ACCESS_SHOPS?: string;
   }
 }

@@ -41,7 +41,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   }
   let planAccess: Awaited<ReturnType<typeof getActivePlanAndLimits>>;
   try {
-    planAccess = await getActivePlanAndLimits(billing);
+    planAccess = await getActivePlanAndLimits(billing, session.shop);
   } catch (error) {
     console.error("Catalog SEO editor billing lookup failed; using safe free-plan access", error);
     planAccess = { limits: PLAN_LIMITS.free, planKey: "free", planName: "" };

@@ -60,6 +60,54 @@ const MANUAL_ONLY_TYPES = new Set([
   "eeat_experience",
   "products",
 ]);
+const SEO_FIX_RESPONSE_SCHEMA = {
+  name: "seo_fix_result",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["summary", "changes", "manualActions"],
+    properties: {
+      summary: { type: "string" },
+      changes: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["field", "after", "replacements", "explanation", "issueTypes"],
+          properties: {
+            field: { type: "string", enum: [...AI_SEO_FIX_FIELDS] },
+            after: { type: "string" },
+            replacements: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["find", "replace"],
+                properties: { find: { type: "string" }, replace: { type: "string" } },
+              },
+            },
+            explanation: { type: "string" },
+            issueTypes: { type: "array", items: { type: "string" } },
+          },
+        },
+      },
+      manualActions: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["issueType", "explanation", "action"],
+          properties: {
+            issueType: { type: "string" },
+            explanation: { type: "string" },
+            action: { type: "string" },
+          },
+        },
+      },
+    },
+  },
+} as const;
 
 export function isManualOnlySeoIssue(type: string) {
   return MANUAL_ONLY_TYPES.has(type);
@@ -96,23 +144,28 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
       model,
       stream: false,
       ...getNineRouterGenerationOptions(model, 0.2),
-      response_format: { type: "json_object" },
+      response_format: { type: "json_schema", json_schema: SEO_FIX_RESPONSE_SCHEMA },
       messages: [
         {
           role: "system",
           content: [
             "You are an ecommerce SEO Fix Copilot. Return only one JSON object with summary, changes, and manualActions.",
-            "changes is an array of objects with field, after, explanation, and issueTypes. Allowed fields are body, excerpt, metaTitle, metaDescription, and featuredImageAlt.",
+            "changes is an array of objects with field, after, replacements, explanation, and issueTypes. Allowed fields are body, excerpt, metaTitle, metaDescription, and featuredImageAlt.",
             "manualActions is an array of objects with issueType, explanation, and action.",
             "Fix only the supplied issues and preserve the article language, meaning, voice, factual claims, and useful detail.",
             "Never invent products, links, sources, statistics, prices, testimonials, guarantees, author credentials, tests, or first-hand experience.",
             "For manualOnly issues, do not change a field; return a concrete manual action instead.",
-            "When changing body, return the complete HTML fragment. Do not use h1, scripts, styles, iframes, forms, SVG, event attributes, inline CSS, or markdown fences.",
+            "Treat metadata, content, media, authority, linking, and settings issue groups independently. Do not rewrite body content to solve a metadata, media, linking, authority, or settings-only issue.",
+            "For body changes, never return the complete article in after. Set after to an empty string and return at most 12 small replacements, each with an exact find substring copied verbatim from bodyHtml and its replacement HTML. Each find must occur exactly once.",
+            "If a safe exact body replacement is not possible, do not return a body change; return a manual action. Do not use h1, scripts, styles, iframes, forms, SVG, event attributes, inline CSS, or markdown fences.",
             "Preserve every existing href and img src exactly. Preserve every [[SBS_PRODUCTS...]] and [[SBS_TOC...]] marker exactly.",
             "You may edit inline image alt attributes only when an image-alt issue was selected. Do not remove images, links, tables, or product blocks.",
             "Use natural keywords; do not stuff or force exact matches. Do not expand content with unsupported claims merely to reach a word count.",
+            "Metadata fixes must accurately describe the supplied article. Use the focus keyword naturally only when one is supplied. Body fixes should address search intent, clarity, heading structure, readability, or early topical relevance only when the selected issue requires it.",
+            "Image alt fixes must describe what the supplied image context actually supports; never turn alt text into a keyword list.",
             "metaTitle must be at most 70 characters, metaDescription at most 160, excerpt at most 400, and featuredImageAlt at most 255.",
             "Return only fields that actually change. Every change and manual action must reference only supplied issue types.",
+            "The summary must describe only entries actually returned in changes and manualActions, without claiming that anything was published or saved.",
           ].join(" "),
         },
         {
@@ -124,6 +177,7 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
               message: issue.message,
               severity: issue.severity,
               fix: issue.fix || "",
+              group: seoIssueGroup(issue.type),
               manualOnly: isManualOnlySeoIssue(issue.type),
             })),
             article: {
@@ -168,7 +222,9 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
   }
 
   return {
-    summary: cleanLine(parsed.summary).slice(0, 500) || "Review the proposed SEO improvements below.",
+    summary: parsedChanges.rejectedIssueTypes.length
+      ? "Safe SEO changes are ready for review. Some article-content suggestions were moved to manual actions because they did not pass safety checks."
+      : cleanLine(parsed.summary).slice(0, 500) || "Review the proposed SEO improvements below.",
     changes,
     manualActions,
   };
@@ -232,7 +288,9 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
       ? [...new Set(item.issueTypes.map(cleanLine).filter((type) => selectedTypes.has(type)))]
       : [];
     if (!issueTypes.length || issueTypes.every(isManualOnlySeoIssue)) continue;
-    let after = stringValue(item.after).trim();
+    let after = field === "body"
+      ? applyBodyReplacements(input.body, item.replacements) || stringValue(item.after).trim()
+      : stringValue(item.after).trim();
     if (!after) continue;
 
     if (field === "body") {
@@ -260,6 +318,31 @@ function parseChanges(value: unknown, selectedTypes: Set<string>, input: AiSeoFi
   }
 
   return { changes, rejectedIssueTypes: [...rejectedIssueTypes] };
+}
+
+function seoIssueGroup(type: string) {
+  if (["meta_title", "meta_description", "kw_title", "kw_meta", "title_length", "description_length"].includes(type)) return "metadata";
+  if (/image|media|alt/.test(type)) return "media";
+  if (/link|url/.test(type)) return "linking";
+  if (/eeat|source|author|experience/.test(type)) return "authority";
+  if (["toc", "products", "kw_missing"].includes(type)) return "settings";
+  return "content";
+}
+
+function applyBodyReplacements(original: string, value: unknown) {
+  if (!Array.isArray(value) || !value.length || value.length > 12) return "";
+  let updated = original;
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") return "";
+    const item = raw as Record<string, unknown>;
+    const find = stringValue(item.find);
+    const replace = stringValue(item.replace);
+    if (find.length < 3 || find.length > 4_000 || replace.length > 8_000) return "";
+    const firstIndex = updated.indexOf(find);
+    if (firstIndex < 0 || updated.indexOf(find, firstIndex + find.length) >= 0) return "";
+    updated = `${updated.slice(0, firstIndex)}${replace}${updated.slice(firstIndex + find.length)}`;
+  }
+  return updated === original ? "" : updated;
 }
 
 function parseManualActions(value: unknown, selectedTypes: Set<string>) {

@@ -14,7 +14,7 @@ type UpdateItem = { id: string; metaTitle: string; metaDescription: string; imag
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, billing, session } = await authenticate.admin(request);
-  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canBulkReview) return redirect(`/app/pricing?reason=bulk_edit&plan=${planKey}`);
   const ids = parseIds(new URL(request.url).searchParams.get("ids") || "");
   if (!ids.length) return redirect("/app/blogs");
@@ -39,7 +39,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, billing, session } = await authenticate.admin(request);
-  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canBulkReview) return json({ error: "Bulk Review is a Growth plan feature.", planKey }, { status: 403 });
   const form = await request.formData();
   const intent = String(form.get("intent") || "apply");

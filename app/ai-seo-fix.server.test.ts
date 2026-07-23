@@ -40,6 +40,8 @@ describe("AI SEO Fix Copilot", () => {
     expect(result.changes[0].after).toContain("[[SBS_PRODUCTS:featured]]");
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.stream).toBe(false);
+    expect(request.response_format.type).toBe("json_schema");
+    expect(request.response_format.json_schema.strict).toBe(true);
     expect(request.reasoning_effort).toBe("low");
     expect(request.temperature).toBeUndefined();
   });
@@ -60,6 +62,28 @@ describe("AI SEO Fix Copilot", () => {
     const result = await generateAiSeoFix(baseInput());
     expect(result.changes).toEqual([]);
     expect(result.manualActions).toEqual([expect.objectContaining({ issueType: "kw_early" })]);
+  });
+
+  it("applies small exact body replacements without regenerating the article", async () => {
+    configure();
+    stubResult({
+      summary: "Improved the introduction.",
+      changes: [{
+        field: "body",
+        after: "",
+        replacements: [{ find: "Original introduction.", replace: "A practical travel bag introduction." }],
+        explanation: "Makes the topic clear early.",
+        issueTypes: ["kw_early"],
+      }],
+      manualActions: [],
+    });
+
+    const result = await generateAiSeoFix(baseInput());
+
+    expect(result.changes[0]).toEqual(expect.objectContaining({
+      field: "body",
+      after: '<p>A practical travel bag introduction.</p><img src="https://cdn.example.com/a.jpg">[[SBS_PRODUCTS:featured]]',
+    }));
   });
 
   it("keeps valid metadata when an unsafe body change is rejected", async () => {

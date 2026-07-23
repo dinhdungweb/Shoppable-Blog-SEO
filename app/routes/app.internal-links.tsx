@@ -15,7 +15,7 @@ const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/empt
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
-  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canInternalLinking) {
     return json({ report: null, analyzedAt: null, canInternalLinking: false, planKey });
   }
@@ -31,7 +31,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
-  const { limits } = await getActivePlanAndLimits(billing);
+  const { limits } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canInternalLinking) {
     return json({ error: "Internal Linking Assistant is available on Pro and Growth plans." }, { status: 403 });
   }

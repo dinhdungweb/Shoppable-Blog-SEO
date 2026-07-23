@@ -80,3 +80,13 @@ export function getLimitsForPlan(activePlanName: string): PlanLimits {
 export function formatLimit(value: number): string {
   return value === Infinity ? "Unlimited" : String(value);
 }
+
+export function isFullAccessShop(shop: string, configuredShops: string) {
+  const normalizedShop = shop.trim().toLowerCase();
+  if (!normalizedShop.endsWith(".myshopify.com")) return false;
+  return configuredShops
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(normalizedShop);
+}

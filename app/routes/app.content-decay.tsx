@@ -17,7 +17,7 @@ const ISSUE_PAGE_SIZE = 20;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
-  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canContentDecay) return json({ report: null, analyzedAt: null, canContentDecay: false, planKey });
   const saved = await prisma.contentDecayAnalysis.findUnique({ where: { shop: session.shop } });
   const report = saved?.report as unknown as ContentDecayReport | undefined;
@@ -26,7 +26,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
-  const { limits } = await getActivePlanAndLimits(billing);
+  const { limits } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canContentDecay) return json({ error: "Content Decay Monitor is available on the Growth plan." }, { status: 403 });
   const formData = await request.formData();
   if (String(formData.get("intent") || "") !== "analyze") return json({ error: "Unsupported action." }, { status: 400 });

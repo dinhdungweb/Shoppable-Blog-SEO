@@ -128,7 +128,7 @@ function buildTabCounts(articles: any[]) {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
-  const { limits } = await getActivePlanAndLimits(billing);
+  const { limits } = await getActivePlanAndLimits(billing, shop);
   const url = new URL(request.url);
   const search = cleanParam(url.searchParams.get("search"));
   const blogId = cleanParam(url.searchParams.get("blog"));
@@ -353,7 +353,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
-  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing, shop);
   const formData = await request.formData();
   
   const intent = formData.get("intent");

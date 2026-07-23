@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatLimit, getLimitsForPlan, getPlanKey } from "./pricing-plans";
+import { formatLimit, getLimitsForPlan, getPlanKey, isFullAccessShop } from "./pricing-plans";
 
 describe("pricing plan enforcement", () => {
   it("fails closed for unknown plan names", () => {
@@ -17,5 +17,13 @@ describe("pricing plan enforcement", () => {
     expect(getLimitsForPlan("Pro").canInternalLinking).toBe(true);
     expect(getLimitsForPlan("Growth").canInternalLinking).toBe(true);
     expect(formatLimit(Infinity)).toBe("Unlimited");
+  });
+
+  it("matches only exact configured myshopify domains for full access", () => {
+    const configured = "store-a.myshopify.com, HELIOSJEWELS-VN.MYSHOPIFY.COM ";
+    expect(isFullAccessShop("heliosjewels-vn.myshopify.com", configured)).toBe(true);
+    expect(isFullAccessShop("store-a.myshopify.com", configured)).toBe(true);
+    expect(isFullAccessShop("evil-heliosjewels-vn.myshopify.com", configured)).toBe(false);
+    expect(isFullAccessShop("heliosjewels-vn.example.com", configured)).toBe(false);
   });
 });

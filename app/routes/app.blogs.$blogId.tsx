@@ -274,7 +274,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const shopDomains = await fetchShopDomains(admin, shop);
-  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing, shop);
   const tocAuditOptions = await getSeoTocAuditOptions(shop, limits.canContentNavigation);
   const rawArticleParam = params.blogId || "";
   const isNewPost = isNewArticleParam(rawArticleParam);
@@ -500,7 +500,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   let activePlanPromise: ReturnType<typeof getActivePlanAndLimits> | null = null;
   let tocAuditOptionsPromise: Promise<SeoTocAuditOptions> | null = null;
   const getActivePlan = () => {
-    activePlanPromise ||= getActivePlanAndLimits(billing);
+    activePlanPromise ||= getActivePlanAndLimits(billing, shop);
     return activePlanPromise;
   };
   const getTocAuditOptions = () => {

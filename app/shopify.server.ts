@@ -7,7 +7,7 @@ import {
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { GROWTH_PLAN, PAID_PLANS, PRO_PLAN, getPlanKey, getLimitsForPlan } from "./pricing-plans";
+import { GROWTH_PLAN, PAID_PLANS, PRO_PLAN, getPlanKey, getLimitsForPlan, isFullAccessShop } from "./pricing-plans";
 import type { PlanKey, PlanLimits } from "./pricing-plans";
 
 export function isBillingTestMode() {
@@ -115,7 +115,11 @@ export async function getActivePlanName(
  */
 export async function getActivePlanAndLimits(
   billing: Awaited<ReturnType<typeof authenticate.admin>>["billing"],
+  shop?: string,
 ): Promise<{ planKey: PlanKey; planName: string; limits: PlanLimits }> {
+  if (shop && hasFullAccessOverride(shop)) {
+    return { planKey: "growth", planName: GROWTH_PLAN, limits: getLimitsForPlan(GROWTH_PLAN) };
+  }
   const planName = await getActivePlanName(billing);
   const planKey = getPlanKey(planName);
   const limits = getLimitsForPlan(planName);
@@ -127,6 +131,7 @@ export async function getActivePlanAndLimits(
  * is not available. Used only for entitlement checks on public widget APIs.
  */
 export async function getUnauthenticatedActivePlanName(shop: string): Promise<string> {
+  if (hasFullAccessOverride(shop)) return GROWTH_PLAN;
   try {
     const { admin } = await unauthenticated.admin(shop);
     const response = await admin.graphql(
@@ -158,4 +163,8 @@ export async function getUnauthenticatedActivePlanName(shop: string): Promise<st
     console.error("[billing] unauthenticated active plan check failed:", err);
     return "free";
   }
+}
+
+export function hasFullAccessOverride(shop: string) {
+  return isFullAccessShop(shop, process.env.FULL_ACCESS_SHOPS || "");
 }

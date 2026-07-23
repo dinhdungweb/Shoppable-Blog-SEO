@@ -55,7 +55,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const url = new URL(request.url);
-  const { limits, planKey } = await getActivePlanAndLimits(billing);
+  const { limits, planKey } = await getActivePlanAndLimits(billing, shop);
 
   let config = await prisma.shopConfig.findUnique({
     where: { shop },
@@ -86,7 +86,7 @@ function getInitialSettingsTab(tab: string | null) {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
-  const { limits } = await getActivePlanAndLimits(billing);
+  const { limits } = await getActivePlanAndLimits(billing, shop);
   const formData = await request.formData();
   const maxProducts = clampSettingNumber(formData.get("maxProducts"), 1, 12, 6);
   const gridColumns = clampSettingNumber(formData.get("gridColumns"), 2, 4, 3);

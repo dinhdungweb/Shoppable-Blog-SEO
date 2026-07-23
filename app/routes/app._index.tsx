@@ -110,7 +110,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = session.shop;
 
   // Resolve plan limits to determine the analytics window
-  const { planKey, limits } = await getActivePlanAndLimits(billing);
+  const { planKey, limits } = await getActivePlanAndLimits(billing, shop);
   const windowDays = limits.analyticsWindowDays; // e.g. 7, 30, or 90
 
   const now = new Date();

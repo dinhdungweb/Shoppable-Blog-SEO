@@ -102,7 +102,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
   const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
-  const { limits } = await getActivePlanAndLimits(billing);
+  const { limits } = await getActivePlanAndLimits(billing, shop);
   const windowDays = limits.analyticsWindowDays;
 
   const now = new Date();
