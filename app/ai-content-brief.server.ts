@@ -94,7 +94,17 @@ export async function generateAiContentBrief(input: GenerateContentBriefInput): 
       description: visibleText(product.description).slice(0, 900),
     })),
   });
-  const requestContent = async (responseFormat: Record<string, unknown>, retry = false) => {
+  const requestContent = async ({
+    responseFormat,
+    system,
+    user = userMessage,
+    label,
+  }: {
+    responseFormat?: Record<string, unknown>;
+    system: string;
+    user?: string;
+    label: string;
+  }) => {
     const response = await fetchNineRouter(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -102,49 +112,112 @@ export async function generateAiContentBrief(input: GenerateContentBriefInput): 
         model,
         stream: false,
         ...getNineRouterGenerationOptions(model, 0.2),
-        response_format: responseFormat,
+        ...(responseFormat ? { response_format: responseFormat } : {}),
         messages: [
-          {
-            role: "system",
-            content: retry
-              ? `${systemMessage} This is a structured-output retry. The root object must contain exactly these keys: title, searchIntent, audience, objective, contentAngle, primaryKeyword, secondaryKeywords, entities, outline, questions, internalLinks, productPlacements, cannibalizationRisks, sourceQueries. Begin with { and end with }.`
-              : systemMessage,
-          },
-          { role: "user", content: userMessage },
+          { role: "system", content: system },
+          { role: "user", content: user },
         ],
       }),
     }, timeoutMs);
-    if (!response.ok) throw await createNineRouterResponseError(response, retry ? "content brief JSON retry" : "content brief");
+    if (!response.ok) throw await createNineRouterResponseError(response, label);
     const payload: any = await readNineRouterJson(response);
-    const content = payload?.choices?.[0]?.message?.content;
-    if (typeof content !== "string") throw new Error("9Router returned no message content");
+    const rawContent = payload?.choices?.[0]?.message?.content;
+    const content = typeof rawContent === "string"
+      ? rawContent
+      : Array.isArray(rawContent)
+        ? rawContent.map((part) => typeof part === "string" ? part : typeof part?.text === "string" ? part.text : "").join("")
+        : "";
+    if (!content) throw new Error("9Router returned no message content");
     return content;
   };
 
-  const primaryContent = await requestContent({
-    type: "json_schema",
-    json_schema: {
-      name: "content_brief",
-      strict: true,
-      schema: contentBriefSchema(),
-    },
-  });
+  let latestCandidate: Record<string, unknown> | null = null;
+  let lastError: unknown = null;
+
   try {
-    return validateBrief(parseJsonObject(primaryContent), input);
+    const primaryContent = await requestContent({
+      responseFormat: {
+        type: "json_schema",
+        json_schema: {
+          name: "content_brief",
+          strict: true,
+          schema: contentBriefSchema(),
+        },
+      },
+      system: systemMessage,
+      label: "content brief",
+    });
+    latestCandidate = parseJsonObject(primaryContent);
+    return validateBrief(latestCandidate, input);
   } catch (error) {
+    lastError = error;
     console.warn("9Router ignored or failed the content brief JSON schema; retrying with JSON object mode", {
       error: error instanceof Error ? error.message : String(error),
-      contentPrefix: primaryContent.slice(0, 80),
     });
   }
 
-  const fallbackContent = await requestContent({ type: "json_object" }, true);
   try {
-    return validateBrief(parseJsonObject(fallbackContent), input);
+    const fallbackContent = await requestContent({
+      responseFormat: { type: "json_object" },
+      system: `${systemMessage} This is a structured-output retry. The root object must contain exactly these keys: title, searchIntent, audience, objective, contentAngle, primaryKeyword, secondaryKeywords, entities, outline, questions, internalLinks, productPlacements, cannibalizationRisks, sourceQueries. The outline must be a non-empty array such as [{"level":"h2","heading":"Specific section heading","purpose":"What this section helps the reader do"}]. Begin with { and end with }.`,
+      label: "content brief JSON retry",
+    });
+    latestCandidate = parseJsonObject(fallbackContent);
+    return validateBrief(latestCandidate, input);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`9Router returned an invalid content brief after the JSON retry: ${detail}`);
+    lastError = error;
   }
+
+  if (!latestCandidate) {
+    try {
+      const plainContent = await requestContent({
+        system: `${systemMessage} Your API does not support response_format, so follow the JSON instructions in the message itself. The outline must be a non-empty array of {"level":"h2"|"h3","heading":"...","purpose":"..."} objects. Begin with { and end with }.`,
+        label: "content brief plain JSON fallback",
+      });
+      latestCandidate = parseJsonObject(plainContent);
+      return validateBrief(latestCandidate, input);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (latestCandidate) {
+    const repairSystem = [
+      "Return only one JSON object with one key named outline.",
+      "outline must be a non-empty array of section objects.",
+      'Every section object must use this exact shape: {"level":"h2","heading":"Specific heading","purpose":"Reader value of this section"}.',
+      "level must be h2 or h3. Do not return Markdown, prose, an array of strings, an H1, or keys outside outline.",
+    ].join(" ");
+    const repairUser = JSON.stringify({
+      requestedTopic: input.title,
+      seedKeyword: input.seedKeyword,
+      audience: cleanLine(latestCandidate.audience) || input.audience,
+      objective: cleanLine(latestCandidate.objective) || input.objective,
+      contentAngle: cleanLine(latestCandidate.contentAngle),
+      primaryKeyword: cleanLine(latestCandidate.primaryKeyword) || input.seedKeyword,
+      secondaryKeywords: stringArray(latestCandidate.secondaryKeywords, 12, 120),
+      entities: stringArray(latestCandidate.entities, 20, 120),
+      questions: stringArray(latestCandidate.questions, 15, 300),
+    });
+    for (const responseFormat of [{ type: "json_object" } as Record<string, unknown>, undefined]) {
+      try {
+        const outlineContent = await requestContent({
+          responseFormat,
+          system: repairSystem,
+          user: repairUser,
+          label: responseFormat ? "content brief outline repair" : "content brief plain outline repair",
+        });
+        const repairedOutline = normalizeOutline(parseJsonObject(outlineContent));
+        if (!repairedOutline.length) throw new Error("9Router outline repair returned no usable sections");
+        return validateBrief({ ...latestCandidate, outline: repairedOutline }, input);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`9Router returned an invalid content brief after JSON and outline repair: ${detail}`);
 }
 
 export function contentBriefDraftInstruction(brief: AiContentBrief) {
@@ -230,12 +303,7 @@ function validateBrief(raw: Record<string, unknown>, input: GenerateContentBrief
     }];
   }).slice(0, 12);
 
-  const outline = arrayOfObjects(raw.outline).flatMap((item) => {
-    const level = cleanLine(item.level).toLowerCase();
-    const heading = cleanLine(item.heading).slice(0, 200);
-    if (!["h2", "h3"].includes(level) || !heading) return [];
-    return [{ level: level as "h2" | "h3", heading, purpose: cleanLine(item.purpose).slice(0, 400) }];
-  }).slice(0, 20);
+  const outline = normalizeOutline(raw);
   if (!outline.length) throw new Error("9Router returned no usable content outline");
 
   return {
@@ -291,10 +359,123 @@ function resourceArray(required: string[], properties: Record<string, unknown>, 
 }
 
 function parseJsonObject(value: string): Record<string, unknown> {
-  const parsed = JSON.parse(value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
+  const cleaned = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (directError) {
+    const extracted = extractFirstJsonObject(cleaned);
+    if (!extracted) throw directError;
+    parsed = JSON.parse(extracted);
+  }
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("9Router returned invalid JSON");
-  return parsed;
+  return parsed as Record<string, unknown>;
 }
+
+function extractFirstJsonObject(value: string) {
+  const start = value.indexOf("{");
+  if (start < 0) return "";
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') {
+      quoted = true;
+      continue;
+    }
+    if (character === "{") depth += 1;
+    if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return value.slice(start, index + 1);
+    }
+  }
+  return "";
+}
+
+function normalizeOutline(raw: Record<string, unknown>): AiContentBrief["outline"] {
+  const directSources = [
+    raw.outline,
+    raw.contentOutline,
+    raw.content_outline,
+    raw.recommendedOutline,
+    raw.recommended_outline,
+    raw.sections,
+    raw.headings,
+  ];
+  const items = directSources.flatMap(outlineItems);
+  const normalized = items.flatMap(normalizeOutlineItem);
+  const unique = uniqueBy(normalized, (item) => item.heading.toLowerCase()).slice(0, 20);
+  if (unique.length && !unique.some((item) => item.level === "h2")) unique[0] = { ...unique[0], level: "h2" };
+  return unique;
+}
+
+function outlineItems(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.flatMap((item) => outlineItems(item));
+  if (typeof value === "string") {
+    return value
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const nested = record.sections ?? record.outline ?? record.items ?? record.headings;
+  if (nested !== undefined) return outlineItems(nested);
+  const headingGroups = ["h2", "H2", "h3", "H3"].flatMap((key) => {
+    const group = record[key];
+    if (!Array.isArray(group)) return [];
+    return group.flatMap((item) => {
+      if (typeof item === "string") return [{ level: key, heading: item }];
+      if (item && typeof item === "object" && !Array.isArray(item)) return [{ level: key, ...(item as Record<string, unknown>) }];
+      return [];
+    });
+  });
+  if (headingGroups.length) return headingGroups;
+  if (outlineHeading(record)) return [record];
+  return Object.entries(record).flatMap(([key, item]) => {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      return [{ level: key, ...(item as Record<string, unknown>) }];
+    }
+    if (typeof item === "string") {
+      return /^h[23](?:\b|\s|[-_:])/i.test(key)
+        ? [{ level: key, heading: item }]
+        : [{ level: "h2", heading: key, purpose: item }];
+    }
+    return [];
+  });
+}
+
+function normalizeOutlineItem(value: unknown): AiContentBrief["outline"] {
+  if (typeof value === "string") {
+    const line = value.replace(/^\s*(?:[-*]\s*)?/, "");
+    const level: "h2" | "h3" = /^(?:#{3}\s+|h3\b|3[.)]\s+)/i.test(line) ? "h3" : "h2";
+    const withoutPrefix = line.replace(/^\s*(?:#{2,3}\s+|h[23]\s*[:.)-]?\s*|\d+(?:\.\d+)*[.)]\s*)/i, "").trim();
+    const [heading, ...purposeParts] = withoutPrefix.split(/\s+[—–-]\s+/);
+    const cleanHeading = cleanLine(heading).slice(0, 200);
+    if (!cleanHeading) return [];
+    return [{ level, heading: cleanHeading, purpose: cleanLine(purposeParts.join(" — ")).slice(0, 400) }];
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const item = value as Record<string, unknown>;
+  const levelValue = cleanLine(item.level ?? item.type ?? item.tag ?? item.headingLevel ?? item.heading_level ?? (item.h3 ? "h3" : "")).toLowerCase();
+  const level: "h2" | "h3" = /(?:h?3|sub)/i.test(levelValue) ? "h3" : "h2";
+  const heading = cleanLine(outlineHeading(item)).slice(0, 200);
+  if (!heading) return [];
+  const purpose = cleanLine(item.purpose ?? item.description ?? item.goal ?? item.intent ?? item.notes ?? item.rationale).slice(0, 400);
+  return [{ level, heading, purpose }];
+}
+
+function outlineHeading(item: Record<string, unknown>) {
+  return item.heading ?? item.title ?? item.name ?? item.text ?? item.section ?? item.topic ?? item.h2 ?? item.h3;
+}
+
 
 function articleUrl(article: { blogHandle: string; handle: string }) {
   return `/blogs/${article.blogHandle}/${article.handle}`.toLowerCase();
