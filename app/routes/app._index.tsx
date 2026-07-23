@@ -333,6 +333,7 @@ export default function Dashboard() {
   const setupFetcher = useFetcher<any>();
   const pixelFetcher = useFetcher<any>();
   const pixelAutoActivationAttempted = useRef(false);
+  const pixelSuccessHandled = useRef(false);
   const navigate = useNavigate();
   const revalidator = useRevalidator();
 
@@ -347,7 +348,9 @@ export default function Dashboard() {
   }, [setupFetcher]);
 
   useEffect(() => {
-    if (pixelFetcher.data?.success) setupFetcher.load("/app/dashboard-status");
+    if (!pixelFetcher.data?.success || pixelSuccessHandled.current) return;
+    pixelSuccessHandled.current = true;
+    setupFetcher.load("/app/dashboard-status");
   }, [pixelFetcher.data, setupFetcher]);
 
   useEffect(() => {

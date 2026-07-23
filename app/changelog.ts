@@ -35,6 +35,7 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Fixed", text: "New installs now attempt to activate conversion tracking automatically, while Web Pixel status errors keep a visible Retry action instead of replacing the button." },
       { type: "Improved", text: "Shopify Admin and storefront app-proxy links now use the RankAI SEO Optimizer handle consistently." },
       { type: "Fixed", text: "Shopify's missing-Web-Pixel response is now treated as an inactive state so new stores proceed to pixel creation instead of stopping with a status error." },
+      { type: "Fixed", text: "Dashboard setup status refreshes only once after Web Pixel activation, preventing repeated theme checks from triggering Shopify API rate limits." },
     ],
   },
   {
