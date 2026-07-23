@@ -86,6 +86,61 @@ describe("AI SEO Fix Copilot", () => {
     }));
   });
 
+  it("allows a paragraph fix when unchanged legacy inline styles already exist", async () => {
+    configure();
+    stubResult({
+      summary: "Split the long paragraph for readability.",
+      changes: [{
+        field: "body",
+        after: "",
+        replacements: [{
+          find: "First sentence. Second sentence.",
+          replace: "First sentence.</p><p>Second sentence.",
+        }],
+        explanation: "Splits only the affected paragraph.",
+        issueTypes: ["paragraph_length"],
+      }],
+      manualActions: [],
+    });
+
+    const result = await generateAiSeoFix({
+      ...baseInput(),
+      body: '<p style="text-align: left">First sentence. Second sentence.</p>',
+      issues: [{
+        type: "paragraph_length",
+        label: "Paragraph Length",
+        message: "1 paragraph is over 120 words.",
+        severity: "warning",
+        details: [{ index: 1, wordCount: 146, preview: "First sentence. Second sentence." }],
+      }],
+    });
+
+    expect(result.changes[0]).toEqual(expect.objectContaining({
+      field: "body",
+      after: '<p style="text-align: left">First sentence.</p><p>Second sentence.</p>',
+    }));
+    expect(result.manualActions).toEqual([]);
+  });
+
+  it("still rejects a body fix that introduces a new inline style", async () => {
+    configure();
+    stubResult({
+      summary: "Changed the paragraph.",
+      changes: [{
+        field: "body",
+        after: "",
+        replacements: [{ find: "<p>Original introduction.</p>", replace: '<p style="display:none">Changed.</p>' }],
+        explanation: "Changes the paragraph.",
+        issueTypes: ["kw_early"],
+      }],
+      manualActions: [],
+    });
+
+    const result = await generateAiSeoFix(baseInput());
+    expect(result.changes).toEqual([]);
+    expect(result.manualActions).toEqual([expect.objectContaining({ issueType: "kw_early" })]);
+  });
+
   it("keeps valid metadata when an unsafe body change is rejected", async () => {
     configure();
     stubResult({

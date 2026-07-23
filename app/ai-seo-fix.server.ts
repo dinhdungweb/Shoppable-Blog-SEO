@@ -443,13 +443,12 @@ function safePublicHttpsUrl(value: string) {
 
 function validateBodyChange(original: string, proposed: string, issueTypes: string[]) {
   if (proposed.length > MAX_ARTICLE_CHARS) throw new Error("9Router returned body over the allowed length");
-  if (/<\s*\/?\s*(script|style|iframe|object|embed|svg|form|input|button|meta|link)\b/i.test(proposed)
-    || /\son[a-z]+\s*=/i.test(proposed)
-    || /\sstyle\s*=/i.test(proposed)
-    || /(?:javascript|data|vbscript)\s*:/i.test(proposed)) {
+  if (hasNewUnsafeMarkup(original, proposed)) {
     throw new Error("9Router returned unsafe article markup");
   }
-  if (/<\s*h1\b/i.test(proposed)) throw new Error("9Router returned an H1 inside the article body");
+  if (countMatches(proposed, /<\s*h1\b/gi) > countMatches(original, /<\s*h1\b/gi)) {
+    throw new Error("9Router returned an H1 inside the article body");
+  }
   if (!sameStringMultiset(extractAttributeValues(original, "href"), extractAttributeValues(proposed, "href"))) {
     throw new Error("9Router did not preserve the article links");
   }
@@ -463,6 +462,38 @@ function validateBodyChange(original: string, proposed: string, issueTypes: stri
   if (!altIssueSelected && !sameStringMultiset(extractAttributeValues(original, "alt"), extractAttributeValues(proposed, "alt"))) {
     throw new Error("9Router changed image alt text for an unrelated issue");
   }
+}
+
+function hasNewUnsafeMarkup(original: string, proposed: string) {
+  const unsafePatterns = [
+    /<\s*\/?\s*(?:script|style|iframe|object|embed|svg|form|input|button|meta|link)\b[^>]*>/gi,
+    /\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+    /\sstyle\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+    /\s(?:href|src)\s*=\s*(?:"\s*(?:javascript|data|vbscript)\s*:[^"]*"|'\s*(?:javascript|data|vbscript)\s*:[^']*'|(?:javascript|data|vbscript)\s*:[^\s>]+)/gi,
+  ];
+  return unsafePatterns.some((pattern) => !isSubsetMultiset(
+    extractNormalizedMatches(proposed, pattern),
+    extractNormalizedMatches(original, pattern),
+  ));
+}
+
+function extractNormalizedMatches(value: string, pattern: RegExp) {
+  return [...value.matchAll(pattern)].map((match) => match[0].replace(/\s+/g, " ").trim().toLowerCase());
+}
+
+function isSubsetMultiset(values: string[], allowedValues: string[]) {
+  const allowed = new Map<string, number>();
+  for (const value of allowedValues) allowed.set(value, (allowed.get(value) || 0) + 1);
+  for (const value of values) {
+    const remaining = allowed.get(value) || 0;
+    if (remaining < 1) return false;
+    allowed.set(value, remaining - 1);
+  }
+  return true;
+}
+
+function countMatches(value: string, pattern: RegExp) {
+  return [...value.matchAll(pattern)].length;
 }
 
 function currentFieldValue(input: AiSeoFixInput, field: AiSeoFixField) {
