@@ -84,7 +84,6 @@ import {
 import { generateAiBlogDraft, isAiWritingMode, type AiWritingMode } from "../ai-blog.server";
 import {
   generateAiSeoFix,
-  isManualOnlySeoIssue,
   type AiSeoFixField,
   type AiSeoFixSuggestedLink,
   type AiSeoFixSuggestion,
@@ -5226,7 +5225,7 @@ function SeoSidebar({
                         {issue.severity !== "good" && issue.type !== "toc" && (
                           <Button
                             size="micro"
-                            icon={issue.type === "products" || issue.type === "internal_links" || isManualOnlySeoIssue(issue.type) ? LinkIcon : MagicIcon}
+                            icon={issue.type === "products" || issue.type === "internal_links" || isManualOnlySeoIssueForUi(issue.type) ? LinkIcon : MagicIcon}
                             onClick={() => issue.type === "products"
                               ? onManageProducts()
                               : issue.type === "internal_links"
@@ -5239,7 +5238,7 @@ function SeoSidebar({
                               ? "Manage"
                               : issue.type === "internal_links"
                                 ? "Review suggestions"
-                                : isManualOnlySeoIssue(issue.type) && !["external_links", "dofollow_external_links", "eeat_sources"].includes(issue.type)
+                                : isManualOnlySeoIssueForUi(issue.type) && !["external_links", "dofollow_external_links", "eeat_sources"].includes(issue.type)
                                   ? "Review steps"
                                   : "Fix with AI"}
                           </Button>
@@ -5272,6 +5271,29 @@ function SeoSidebar({
       </Card>
     </BlockStack>
   );
+}
+
+const MANUAL_ONLY_SEO_ISSUES_FOR_UI = new Set([
+  "url_length",
+  "kw_url",
+  "kw_missing",
+  "external_links",
+  "dofollow_external_links",
+  "internal_links",
+  "media",
+  "images_missing_dimensions",
+  "generic_image_filenames",
+  "uncrawlable_image_urls",
+  "small_article_images",
+  "toc",
+  "eeat_author",
+  "eeat_sources",
+  "eeat_experience",
+  "products",
+]);
+
+function isManualOnlySeoIssueForUi(type: string) {
+  return MANUAL_ONLY_SEO_ISSUES_FOR_UI.has(type);
 }
 
 function ContentRefreshCard({
