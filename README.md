@@ -1,4 +1,4 @@
-# RankAI SEO Audit & Optimizer
+# Rankmath SEO Audit & Optimizer
 
 Shopify embedded app for linking products to blog articles, rendering storefront
 product widgets, auditing SEO, configuring breadcrumbs/table of contents, and

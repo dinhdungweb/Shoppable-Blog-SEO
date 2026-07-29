@@ -271,8 +271,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     { 
       label: "App enabled in theme", 
       done: appEmbedEnabled,
-      actionUrl: appEmbedEnabled ? undefined : `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${process.env.SHOPIFY_API_KEY}/sbs-article-embed`,
-      actionLabel: appEmbedError === "Checking…" ? "Checking…" : appEmbedError ? `Error: ${appEmbedError}` : "Enable"
+      actionUrl: "/app/theme-setup",
+      actionLabel: appEmbedError === "Checking…" ? "Checking…" : "View setup guide",
+      actionError: appEmbedError && appEmbedError !== "Checking…" ? appEmbedError : undefined,
     },
     {
       label: "Conversion tracking (Web Pixel) active",
@@ -1085,7 +1086,12 @@ function buildRecommendedActions({
 function mergeSetupStatus(setup: any, status: any, pixelActionError?: string) {
   if (!status || status.error) return setup;
   const items = setup.items.map((item: any) => {
-    if (item.label === "App enabled in theme") return { ...item, done: Boolean(status.appEmbedEnabled), actionLabel: status.appEmbedError || (status.appEmbedEnabled ? undefined : "Enable") };
+    if (item.label === "App enabled in theme") return {
+      ...item,
+      done: Boolean(status.appEmbedEnabled),
+      actionLabel: "View setup guide",
+      actionError: status.appEmbedError || undefined,
+    };
     if (item.label === "Conversion tracking (Web Pixel) active") return {
       ...item,
       done: Boolean(status.webPixelEnabled),

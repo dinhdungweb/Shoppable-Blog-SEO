@@ -96,13 +96,19 @@ export async function getActivePlanName(
   billing: Awaited<ReturnType<typeof authenticate.admin>>["billing"],
 ): Promise<string> {
   try {
+    // Omit isTest so Shopify's billing helper returns every active subscription.
+    // Passing false hides test subscriptions, which prevents app-review and
+    // development stores from seeing the plan they just approved.
     const billingCheck = await billing.check({
       plans: [...PAID_PLANS],
-      isTest: isBillingTestMode(),
     });
 
-    if (billingCheck.hasActivePayment && billingCheck.appSubscriptions?.[0]?.name) {
-      return billingCheck.appSubscriptions[0].name;
+    const activeSubscription = billingCheck.appSubscriptions?.find(
+      (subscription) => getPlanKey(String(subscription?.name || "")) !== "free",
+    );
+
+    if (billingCheck.hasActivePayment && activeSubscription?.name) {
+      return activeSubscription.name;
     }
   } catch (err) {
     console.error("[billing] getActivePlanName check failed:", err);
@@ -148,13 +154,11 @@ export async function getUnauthenticatedActivePlanName(shop: string): Promise<st
     );
     const payload = await response.json();
     const subscriptions = payload.data?.currentAppInstallation?.activeSubscriptions || [];
-    const shouldUseTestSubscriptions = isBillingTestMode();
     const activeSubscription = subscriptions.find((subscription: any) => {
       const name = String(subscription?.name || "");
       return (
         getPlanKey(name) !== "free" &&
-        String(subscription?.status || "").toUpperCase() === "ACTIVE" &&
-        Boolean(subscription?.test) === shouldUseTestSubscriptions
+        String(subscription?.status || "").toUpperCase() === "ACTIVE"
       );
     });
 

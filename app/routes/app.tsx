@@ -42,6 +42,7 @@ export default function App() {
         <Link to="/app/seo">SEO Center</Link>
         <Link to="/app/catalog-seo?view=manager&type=product">Catalog</Link>
         <Link to="/app/analytics">Insights</Link>
+        <Link to="/app/theme-setup">Theme setup</Link>
         <Link to="/app/pricing">Plans</Link>
         <Link to="/app/changelog">What&apos;s new</Link>
         <Link to="/app/settings">Settings</Link>

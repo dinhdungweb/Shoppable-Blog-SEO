@@ -136,6 +136,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { billing, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const reason = url.searchParams.get("reason") || "";
+  const billingReturn = url.searchParams.get("billing") === "approved";
 
   let activePlan = "Free";
   let activeSubscription: ActiveSubscription | null = null;
@@ -144,10 +145,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const billingCheck = await billing.check({
       plans: [...PAID_PLANS],
-      isTest: isBillingTestMode(),
     });
 
-    activeSubscription = (billingCheck.appSubscriptions?.[0] || null) as ActiveSubscription | null;
+    activeSubscription = (
+      billingCheck.appSubscriptions?.find(
+        (subscription) => getPlanKey(String(subscription?.name || "")) !== "free",
+      ) || null
+    ) as ActiveSubscription | null;
     if (billingCheck.hasActivePayment && activeSubscription?.name) {
       activePlan = activeSubscription.name;
     }
@@ -162,6 +166,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     activeSubscription,
     billingError,
     isTestMode: isBillingTestMode(),
+    billingReturn,
     upgradeReason: reason,
   });
 };
@@ -173,18 +178,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (selectedPlan === "free") {
     try {
-      let billingCheck = await billing.check({
+      const billingCheck = await billing.check({
         plans: [...PAID_PLANS],
-        isTest: isBillingTestMode(),
       });
 
-      if (!billingCheck.hasActivePayment) {
-        billingCheck = await billing.check({
-          plans: [...PAID_PLANS],
-        });
-      }
-
-      const activeSubscription = billingCheck.appSubscriptions?.[0];
+      const activeSubscription = billingCheck.appSubscriptions?.find(
+        (subscription) => getPlanKey(String(subscription?.name || "")) !== "free",
+      );
 
       if (billingCheck.hasActivePayment && activeSubscription?.id) {
         await billing.cancel({
@@ -220,11 +220,12 @@ function getBillingReturnUrl(request: Request, url: URL, shop: string) {
 
   if (apiKey) {
     const shopAdminSlug = shop.replace(/\.myshopify\.com$/i, "");
-    return `https://admin.shopify.com/store/${encodeURIComponent(shopAdminSlug)}/apps/${encodeURIComponent(apiKey)}/app/pricing`;
+    return `https://admin.shopify.com/store/${encodeURIComponent(shopAdminSlug)}/apps/${encodeURIComponent(apiKey)}/app/pricing?billing=approved`;
   }
 
   const fallbackUrl = new URL("/app/pricing", url.origin);
   fallbackUrl.searchParams.set("shop", shop);
+  fallbackUrl.searchParams.set("billing", "approved");
   if (host) {
     fallbackUrl.searchParams.set("host", host);
   }
@@ -247,7 +248,13 @@ function getSearchParam(url: URL, request: Request, param: string) {
 }
 
 export default function PricingPage() {
-  const { activePlan, billingError, upgradeReason } = useLoaderData<typeof loader>();
+  const {
+    activePlan,
+    activeSubscription,
+    billingError,
+    billingReturn,
+    upgradeReason,
+  } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const activePlanKey = getPlanKey(activePlan);
   const upgradeMessage = UPGRADE_REASON_MESSAGES[upgradeReason] || "";
@@ -280,6 +287,27 @@ export default function PricingPage() {
 
         {billingError && <Banner tone="warning">{billingError}</Banner>}
         {actionData?.error && <Banner tone="critical">{actionData.error}</Banner>}
+        {!billingError && activePlanKey !== "free" && (
+          <Banner
+            tone="success"
+            title={billingReturn ? `${activePlan} plan approved` : `Current plan: ${activePlan}`}
+          >
+            <p>
+              Shopify billing is active
+              {activeSubscription?.test ? " in test mode" : ""}
+              {activeSubscription?.status ? ` (${activeSubscription.status.toLowerCase()})` : ""}.
+              Paid features are available now.
+            </p>
+          </Banner>
+        )}
+        {!billingError && billingReturn && activePlanKey === "free" && (
+          <Banner tone="warning" title="Shopify is still confirming the subscription">
+            <p>
+              Refresh this page in a moment. If the plan remains Free, choose the paid plan again
+              to reopen Shopify&apos;s approval screen.
+            </p>
+          </Banner>
+        )}
 
         <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
           {PRICING_PLANS.map((plan) => (
