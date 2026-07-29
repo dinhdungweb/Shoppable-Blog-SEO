@@ -50,6 +50,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "The app identity is now Rankmath SEO Audit & Optimizer, with the concise Rankmath SEO label in Shopify configuration." },
       { type: "New", text: "Theme setup now provides detailed app embed and app block installation, configuration, removal and storefront verification instructions with direct Shopify theme editor links." },
       { type: "Fixed", text: "Approved Shopify subscriptions, including app-review test subscriptions, now appear immediately as the current plan and unlock the corresponding paid features." },
+      { type: "New", text: "Product and collection editors now include an AI content assistant for writing or improving storefront descriptions and search metadata, with field-level before-and-after review before anything is applied to the draft." },
+      { type: "Fixed", text: "Catalog AI preserves existing links, media and tables, rejects unsafe markup, respects the shared monthly AI allowance and never saves generated changes to Shopify without merchant approval." },
       { type: "Fixed", text: "New installs now attempt to activate conversion tracking automatically, while Web Pixel status errors keep a visible Retry action instead of replacing the button." },
       { type: "Improved", text: "Shopify Admin and storefront app-proxy links now use the app handle consistently." },
       { type: "Fixed", text: "Shopify's missing-Web-Pixel response is now treated as an inactive state so new stores proceed to pixel creation instead of stopping with a status error." },

@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, isRouteErrorResponse, useActionData, useLoaderData, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
-import { Badge, Banner, BlockStack, Button, Card, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField, Toast } from "@shopify/polaris";
-import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
+import { Form, isRouteErrorResponse, useActionData, useFetcher, useLoaderData, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
+import { Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField, Toast } from "@shopify/polaris";
+import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, MagicIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { auditCatalogResource, type CatalogResourceInput, type CatalogResourceType, type CatalogSeoIssue } from "../catalog-seo";
 import { suggestInternalLinksForDraft, insertApprovedLink, type LinkSuggestion } from "../internal-linking";
 import { PLAN_LIMITS } from "../pricing-plans";
+import { isNineRouterConfigured } from "../ai-seo.server";
+import { generateAiCatalogDraft, isAiCatalogMode, type AiCatalogDraft, type AiCatalogMode } from "../ai-catalog.server";
+import { getAiUsageStatus, isAiQuotaExceededError, runWithAiUsage } from "../ai-usage.server";
+import { getPublicNineRouterErrorMessage } from "../nine-router.server";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
@@ -47,11 +51,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     planAccess = { limits: PLAN_LIMITS.free, planKey: "free", planName: "" };
   }
   const { limits, planKey } = planAccess;
+  const aiUsage = await getAiUsageStatus(session.shop, limits.aiRequestsPerMonth);
   const linkTargets = limits.canInternalLinking ? await prisma.articleSEO.findMany({ where: { shop: session.shop }, select: { articleId: true, articleTitle: true, articleHandle: true, blogHandle: true }, orderBy: { sourceUpdatedAt: "desc" }, take: 250 }) : [];
   const details = type === "product"
     ? { status: String(node.status || ""), vendor: String(node.vendor || ""), productType: String(node.productType || ""), tags: Array.isArray(node.tags) ? node.tags : [], collectionKind: "", itemCount: 0 }
     : { status: "", vendor: "", productType: "", tags: [], collectionKind: node.ruleSet ? "Automated" : "Manual", itemCount: Number(node.productsCount?.count || 0) };
-  return json({ resource, details, audit: liveAudit, savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}`, canInternalLinking: limits.canInternalLinking, planKey, linkTargets });
+  return json({ resource, details, audit: liveAudit, savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}`, canInternalLinking: limits.canInternalLinking, planKey, linkTargets, aiEnabled: isNineRouterConfigured(), aiUsage });
   } catch (error: any) {
     if (error instanceof Response) throw error;
     const message = readableServerError(error);
@@ -61,7 +66,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { admin, session } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const type = resourceType(params.resourceType);
   const gid = shopifyGid(type, params.resourceId);
   const form = await request.formData();
@@ -77,6 +82,48 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const focusKeyword = field(form, "focusKeyword", 500);
   const imageAlt = field(form, "imageAlt", 500);
   if (!title) return json({ error: "Title is required." }, { status: 400 });
+  const intent = field(form, "intent", 100);
+  if (intent === "generate_ai_catalog") {
+    const modeValue = field(form, "mode", 20);
+    if (!isAiCatalogMode(modeValue)) return json({ success: false, error: "Unknown AI writing mode." }, { status: 400 });
+    try {
+      const { limits } = await getActivePlanAndLimits(billing, session.shop);
+      const { result, aiUsage } = await runWithAiUsage(
+        { shop: session.shop, limit: limits.aiRequestsPerMonth },
+        () => generateAiCatalogDraft({
+          type,
+          mode: modeValue,
+          title,
+          descriptionHtml,
+          seoTitle,
+          seoDescription,
+          focusKeyword,
+          instruction: field(form, "instruction", 4_000),
+          imageAlt,
+          hasImage: field(form, "hasImage", 10) === "true",
+          vendor,
+          productType,
+          tags,
+        }),
+      );
+      return json({ success: true, intent, suggestion: result, aiUsage });
+    } catch (error) {
+      if (isAiQuotaExceededError(error)) {
+        return json({
+          success: false,
+          intent,
+          error: `${error.message} Upgrade to Pro for unlimited AI.`,
+          aiUsage: error.status,
+          upgradeUrl: "/app/pricing?reason=ai_limit",
+        }, { status: 429 });
+      }
+      return json({
+        success: false,
+        intent,
+        error: getPublicNineRouterErrorMessage(error, `AI could not generate this ${type} draft. Please try again.`),
+      }, { status: 502 });
+    }
+  }
   const variableKey = type === "product" ? "product" : "input";
   const input = { id: gid, title, handle, descriptionHtml, seo: { title: seoTitle || null, description: seoDescription || null }, ...(type === "product" ? { status, vendor, productType, tags } : { ...(imageAlt !== field(form, "originalImageAlt", 500) ? { image: { src: field(form, "imageUrl", 2_000), altText: imageAlt } } : {}) }) };
   let payload: any;
@@ -105,9 +152,28 @@ export async function action({ request, params }: ActionFunctionArgs) {
   return redirect(`/app/catalog-seo/${type}/${params.resourceId}?saved=1`);
 }
 
+type AiCatalogField = Exclude<keyof AiCatalogDraft, "summary">;
+
+const AI_CATALOG_FIELDS: AiCatalogField[] = [
+  "title",
+  "descriptionHtml",
+  "seoTitle",
+  "seoDescription",
+  "imageAlt",
+];
+
+const AI_CATALOG_FIELD_LABELS: Record<AiCatalogField, string> = {
+  title: "Title",
+  descriptionHtml: "Description",
+  seoTitle: "SEO title",
+  seoDescription: "Meta description",
+  imageAlt: "Image alt text",
+};
+
 export default function CatalogResourceEditor() {
-  const { resource, details, savedAt, adminUrl, canInternalLinking, planKey, linkTargets } = useLoaderData<typeof loader>();
+  const { resource, details, savedAt, adminUrl, canInternalLinking, planKey, linkTargets, aiEnabled, aiUsage } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
+  const aiFetcher = useFetcher<any>();
   const navigation = useNavigation();
   const [searchParams, setSearchParams] = useSearchParams();
   const savedToastShown = useRef(false);
@@ -130,6 +196,17 @@ export default function CatalogResourceEditor() {
   const [imageAlt, setImageAlt] = useState(resource.imageAlt);
   const [pendingLink, setPendingLink] = useState<LinkSuggestion | null>(null);
   const [linkAnchor, setLinkAnchor] = useState("");
+  const [aiComposeOpen, setAiComposeOpen] = useState(false);
+  const [aiReviewOpen, setAiReviewOpen] = useState(false);
+  const [aiMode, setAiMode] = useState<AiCatalogMode>(resource.descriptionHtml.trim() ? "improve" : "write");
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiSuggestion, setAiSuggestion] = useState<AiCatalogDraft | null>(null);
+  const [aiSelectedFields, setAiSelectedFields] = useState<AiCatalogField[]>([]);
+  const [aiBase, setAiBase] = useState<AiCatalogDraft | null>(null);
+  const aiBaseRef = useRef<AiCatalogDraft | null>(null);
+  const [aiError, setAiError] = useState("");
+  const [aiReviewError, setAiReviewError] = useState("");
+  const [currentAiUsage, setCurrentAiUsage] = useState(aiUsage);
   useEffect(() => {
     if (searchParams.get("saved") !== "1" || savedToastShown.current) return;
     savedToastShown.current = true;
@@ -138,6 +215,24 @@ export default function CatalogResourceEditor() {
     next.delete("saved");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+  useEffect(() => {
+    const data = aiFetcher.data;
+    if (!data) return;
+    if (!data.success) {
+      setAiError(data.error || "AI could not generate a catalog draft.");
+      if (data.aiUsage) setCurrentAiUsage(data.aiUsage);
+      return;
+    }
+    const suggestion = data.suggestion as AiCatalogDraft;
+    const base = aiBaseRef.current;
+    setAiSuggestion(suggestion);
+    setAiSelectedFields(base ? AI_CATALOG_FIELDS.filter((field) => suggestion[field] !== base[field]) : [...AI_CATALOG_FIELDS]);
+    if (data.aiUsage) setCurrentAiUsage(data.aiUsage);
+    setAiError("");
+    setAiComposeOpen(false);
+    setAiReviewError("");
+    setAiReviewOpen(true);
+  }, [aiFetcher.data]);
   const currentAudit = useMemo(() => auditCatalogResource({ ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword }), [resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword]);
   const typeLabel = resource.type === "product" ? "Product" : "Collection";
   const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== initialSeoTitle || seoDescription !== initialSeoDescription || handle !== resource.handle || imageAlt !== resource.imageAlt || focusKeyword !== (resource.focusKeyword || "") || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
@@ -147,15 +242,59 @@ export default function CatalogResourceEditor() {
   const setTitle = (next: string) => { setTitleState(next); if (seoTitleAutomatic.current) setSeoTitle(next.slice(0, 70)); };
   const setDescription = (next: string) => { setDescriptionHtml(next); if (seoDescriptionAutomatic.current) setSeoDescription(stripHtml(next).slice(0, 165)); };
   const reset = () => { setTitleState(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(initialSeoTitle); setSeoDescription(initialSeoDescription); seoTitleAutomatic.current = !resource.seoTitle.trim(); seoDescriptionAutomatic.current = !resource.seoDescription.trim(); setHandle(resource.handle); setStatus(details.status || "ACTIVE"); setVendor(details.vendor); setProductType(details.productType); setTags(details.tags.join(", ")); setImageAlt(resource.imageAlt); setFocusKeyword(resource.focusKeyword || ""); };
+  const generateAiDraft = () => {
+    const base: AiCatalogDraft = { title, descriptionHtml, seoTitle, seoDescription, imageAlt, summary: "" };
+    setAiBase(base);
+    aiBaseRef.current = base;
+    setAiError("");
+    aiFetcher.submit({
+      intent: "generate_ai_catalog",
+      mode: aiMode,
+      title,
+      descriptionHtml,
+      seoTitle,
+      seoDescription,
+      focusKeyword,
+      instruction: aiInstruction,
+      imageAlt,
+      hasImage: resource.imageUrl ? "true" : "false",
+      vendor,
+      productType,
+      tags,
+    }, { method: "post" });
+  };
+  const applyAiDraft = () => {
+    if (!aiSuggestion || !aiBase || !aiSelectedFields.length) return;
+    const current: AiCatalogDraft = { title, descriptionHtml, seoTitle, seoDescription, imageAlt, summary: "" };
+    if (aiSelectedFields.some((field) => current[field] !== aiBase[field])) {
+      setAiReviewError("The draft changed while AI was working. Close this preview and generate a new suggestion.");
+      return;
+    }
+    const selected = new Set(aiSelectedFields);
+    if (selected.has("title")) setTitleState(aiSuggestion.title);
+    if (selected.has("descriptionHtml")) setDescriptionHtml(aiSuggestion.descriptionHtml);
+    if (selected.has("seoTitle")) {
+      seoTitleAutomatic.current = false;
+      setSeoTitle(aiSuggestion.seoTitle);
+    }
+    if (selected.has("seoDescription")) {
+      seoDescriptionAutomatic.current = false;
+      setSeoDescription(aiSuggestion.seoDescription);
+    }
+    if (selected.has("imageAlt")) setImageAlt(aiSuggestion.imageAlt);
+    setAiReviewOpen(false);
+    setAiReviewError("");
+  };
   const groups = checklistGroups(currentAudit.issues, { ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword });
   const linkSuggestions = useMemo(() => canInternalLinking ? suggestInternalLinksForDraft({ id: resource.id, title, handle, blogHandle: resource.type === "product" ? "products" : "collections", body: descriptionHtml }, linkTargets.map((item) => ({ id: item.articleId, title: item.articleTitle, handle: item.articleHandle, blogHandle: item.blogHandle, body: "" })), 8) : [], [canInternalLinking, descriptionHtml, handle, linkTargets, resource.id, resource.type, title]);
+  const aiQuotaExhausted = currentAiUsage.limited && currentAiUsage.remaining === 0;
   return <Frame><Page fullWidth backAction={{ content: `${typeLabel} SEO`, url: `/app/catalog-seo?type=${resource.type}` }}>
     <TitleBar title={`Edit ${typeLabel.toLowerCase()}`}><button variant="primary" type="submit" form="catalog-resource-form" disabled={!dirty}>Save changes</button></TitleBar>
     <div className="bp-catalog-editor-shell"><Form method="post" id="catalog-resource-form"><BlockStack gap="500">
       <input type="hidden" name="descriptionHtml" value={descriptionHtml} />
       <input type="hidden" name="focusKeyword" value={focusKeyword} /><input type="hidden" name="originalImageAlt" value={resource.imageAlt} /><input type="hidden" name="imageUrl" value={resource.imageUrl} /><input type="hidden" name="mediaId" value={(resource as any).mediaId || ""} />
       <InlineStack align="space-between" blockAlign="center" gap="300"><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">{title || resource.title}</Text><Text as="p" tone="subdued">Improve storefront content, search appearance and image signals without leaving the app.</Text></BlockStack><InlineStack gap="200"><Button url={adminUrl} target="_blank">Open in Shopify</Button><Button variant="primary" submit loading={navigation.state === "submitting"} disabled={!dirty}>Save changes</Button></InlineStack></InlineStack>
-      {actionData?.error && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
+      {actionData && "error" in actionData && actionData.error && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
       <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="300">
         <EditorMetric label="SEO score" value={`${currentAudit.score}/100`} icon={CheckCircleIcon} tone={scoreTone(currentAudit.score)} />
         <EditorMetric label="Open issues" value={String(currentAudit.issues.length)} icon={AlertTriangleIcon} tone={currentAudit.issues.length ? "warning" : "success"} />
@@ -163,6 +302,39 @@ export default function CatalogResourceEditor() {
         <EditorMetric label={resource.type === "product" ? "Resource" : "Products"} value={resource.type === "product" ? "Product" : String(details.itemCount)} icon={resource.type === "product" ? ProductIcon : CollectionIcon} tone="info" />
       </InlineGrid>
       <div className="bp-catalog-editor-main"><main className="bp-catalog-editor-content"><BlockStack gap="400">
+        <Card>
+          <InlineStack align="space-between" blockAlign="center" gap="300">
+            <InlineStack gap="300" blockAlign="center">
+              <Icon source={MagicIcon} tone={aiEnabled ? "magic" : "subdued"} />
+              <BlockStack gap="100">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h2" variant="headingMd">AI content assistant</Text>
+                  {aiEnabled ? <Badge tone="magic">AI ready</Badge> : <Badge>9Router required</Badge>}
+                  {currentAiUsage.limited && (
+                    <Badge tone={aiQuotaExhausted ? "critical" : "info"}>
+                      {`${currentAiUsage.remaining}/${currentAiUsage.limit} AI left`}
+                    </Badge>
+                  )}
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Write or improve {typeLabel.toLowerCase()} content and SEO metadata, then review every field before applying it.
+                </Text>
+              </BlockStack>
+            </InlineStack>
+            <Button
+              variant="primary"
+              icon={MagicIcon}
+              disabled={!aiEnabled}
+              url={aiQuotaExhausted ? "/app/pricing?reason=ai_limit" : undefined}
+              onClick={aiQuotaExhausted ? undefined : () => {
+                setAiError("");
+                setAiComposeOpen(true);
+              }}
+            >
+              {!aiEnabled ? "AI not configured" : aiQuotaExhausted ? "Upgrade AI" : "Generate with AI"}
+            </Button>
+          </InlineStack>
+        </Card>
         <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">{typeLabel} content</Text><Text as="p" variant="bodySm" tone="subdued">Write useful storefront copy for shoppers, not search engines alone.</Text></BlockStack><Badge>{`${wordCount} words`}</Badge></InlineStack><TextField name="title" label="Title" value={title} onChange={setTitle} autoComplete="off" maxLength={255} showCharacterCount /><BlockStack gap="200"><Text as="h3" fontWeight="semibold">Description</Text><RichTextEditor value={descriptionHtml} onChange={setDescription} /></BlockStack></BlockStack></Card>
         <Card><BlockStack gap="400"><div className="bp-icon-heading"><Icon source={SearchIcon} tone="info" /><BlockStack gap="100"><Text as="h2" variant="headingMd">Search engine listing</Text><Text as="p" tone="subdued">Preview and edit the title, description and Shopify URL.</Text></BlockStack></div><div className="bp-search-preview"><div className="bp-search-preview__site">Your store · {resource.type}</div><div className="bp-search-preview__title">{displaySeoTitle}</div><div className="bp-search-preview__url">/{resource.type === "product" ? "products" : "collections"}/{handle}</div><div className="bp-search-preview__description">{displaySeoDescription}</div></div><TextField name="seoTitle" label="Page title" value={seoTitle} onChange={(next) => { seoTitleAutomatic.current = false; setSeoTitle(next); }} autoComplete="off" maxLength={70} showCharacterCount helpText="Automatically follows the resource title until you edit this field manually." /><TextField name="seoDescription" label="Meta description" value={seoDescription} onChange={(next) => { seoDescriptionAutomatic.current = false; setSeoDescription(next); }} multiline={4} autoComplete="off" maxLength={165} showCharacterCount helpText="Automatically follows the description until you edit this field manually." /><TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} /></BlockStack></Card>
         <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
@@ -176,8 +348,148 @@ export default function CatalogResourceEditor() {
       {dirty && <div className="bp-editor-savebar"><InlineStack align="space-between" blockAlign="center" gap="300"><Text as="p" fontWeight="semibold">You have unsaved changes</Text><InlineStack gap="200"><Button onClick={reset}>Discard</Button><Button variant="primary" submit loading={navigation.state === "submitting"}>Save changes</Button></InlineStack></InlineStack></div>}
     </BlockStack></Form></div>
     <Modal open={Boolean(pendingLink)} onClose={() => setPendingLink(null)} title="Review internal link" primaryAction={{ content: "Insert link", onAction: () => { if (!pendingLink) return; setDescriptionHtml(insertApprovedLink(descriptionHtml, linkAnchor.trim() || pendingLink.anchorText, pendingLink.targetUrl).body); setPendingLink(null); } }} secondaryActions={[{ content: "Cancel", onAction: () => setPendingLink(null) }]}><Modal.Section><BlockStack gap="300"><Text as="p">Link to <strong>{pendingLink?.targetTitle}</strong></Text><TextField label="Anchor text" value={linkAnchor} onChange={setLinkAnchor} autoComplete="off" /><Text as="p" variant="bodySm" tone="subdued">The link is inserted into the description only after you approve and save this resource.</Text></BlockStack></Modal.Section></Modal>
+    <Modal
+      open={aiComposeOpen}
+      onClose={() => {
+        if (aiFetcher.state === "idle") setAiComposeOpen(false);
+      }}
+      title={`Generate ${typeLabel.toLowerCase()} content with AI`}
+      primaryAction={{
+        content: "Generate draft",
+        icon: MagicIcon,
+        loading: aiFetcher.state !== "idle",
+        disabled: !aiEnabled || !title.trim() || aiFetcher.state !== "idle",
+        onAction: generateAiDraft,
+      }}
+      secondaryActions={[{ content: "Cancel", disabled: aiFetcher.state !== "idle", onAction: () => setAiComposeOpen(false) }]}
+    >
+      <Modal.Section>
+        <BlockStack gap="400">
+          {aiError && <Banner tone="critical" title="AI generation failed"><p>{aiError}</p></Banner>}
+          <Select
+            label="AI task"
+            value={aiMode}
+            onChange={(value) => setAiMode(value as AiCatalogMode)}
+            options={[
+              { label: "Improve current content and SEO", value: "improve" },
+              { label: "Write or complete content", value: "write" },
+              { label: "Optimize search metadata only", value: "seo" },
+            ]}
+          />
+          <TextField
+            label="Instructions"
+            value={aiInstruction}
+            onChange={setAiInstruction}
+            multiline={4}
+            maxLength={4_000}
+            showCharacterCount
+            autoComplete="off"
+            placeholder={`Example: Use a practical tone for shoppers comparing ${typeLabel.toLowerCase()} options.`}
+            helpText="Optional. AI can use only facts already present in this editor."
+          />
+          <Text as="p" variant="bodySm" tone="subdued">
+            AI returns a draft for review. Nothing is changed or saved to Shopify automatically.
+          </Text>
+        </BlockStack>
+      </Modal.Section>
+    </Modal>
+    <Modal
+      open={aiReviewOpen}
+      onClose={() => setAiReviewOpen(false)}
+      title="Review AI changes"
+      size="large"
+      primaryAction={{
+        content: "Apply selected to draft",
+        disabled: !aiSelectedFields.length,
+        onAction: applyAiDraft,
+      }}
+      secondaryActions={[{ content: "Cancel", onAction: () => setAiReviewOpen(false) }]}
+    >
+      <Modal.Section>
+        <BlockStack gap="400">
+          {aiReviewError && <Banner tone="critical"><p>{aiReviewError}</p></Banner>}
+          {aiSuggestion?.summary && <Banner tone="info"><p>{aiSuggestion.summary}</p></Banner>}
+          {aiSuggestion && aiBase && AI_CATALOG_FIELDS.some((field) => aiSuggestion[field] !== aiBase[field]) ? (
+            <BlockStack gap="300">
+              {AI_CATALOG_FIELDS.filter((field) => aiSuggestion[field] !== aiBase[field]).map((field) => (
+                <AiCatalogReviewField
+                  key={field}
+                  field={field}
+                  before={aiBase[field]}
+                  after={aiSuggestion[field]}
+                  checked={aiSelectedFields.includes(field)}
+                  onChange={(checked) => setAiSelectedFields((current) => checked
+                    ? [...new Set([...current, field])]
+                    : current.filter((item) => item !== field))}
+                />
+              ))}
+            </BlockStack>
+          ) : (
+            <Banner tone="warning"><p>AI did not propose a change to the current draft.</p></Banner>
+          )}
+          <Text as="p" variant="bodySm" tone="subdued">
+            Applied fields remain unsaved until you click Save changes.
+          </Text>
+        </BlockStack>
+      </Modal.Section>
+    </Modal>
   </Page>{savedToastActive && <Toast content={`${typeLabel} updated successfully`} onDismiss={() => setSavedToastActive(false)} duration={4000} />}</Frame>;
 }
+
+function AiCatalogReviewField({
+  field,
+  before,
+  after,
+  checked,
+  onChange,
+}: {
+  field: AiCatalogField;
+  before: string;
+  after: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Checkbox
+          label={AI_CATALOG_FIELD_LABELS[field]}
+          checked={checked}
+          onChange={onChange}
+        />
+        <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+          <BlockStack gap="100">
+            <Text as="p" variant="bodySm" fontWeight="semibold" tone="subdued">Before</Text>
+            <div style={aiPreviewStyle}>
+              <Text as="p" variant="bodySm">{formatAiPreview(field, before) || "Empty"}</Text>
+            </div>
+          </BlockStack>
+          <BlockStack gap="100">
+            <Text as="p" variant="bodySm" fontWeight="semibold" tone="subdued">After</Text>
+            <div style={aiPreviewStyle}>
+              <Text as="p" variant="bodySm">{formatAiPreview(field, after) || "Empty"}</Text>
+            </div>
+          </BlockStack>
+        </InlineGrid>
+      </BlockStack>
+    </Card>
+  );
+}
+
+function formatAiPreview(field: AiCatalogField, value: string) {
+  const normalized = field === "descriptionHtml" ? stripHtml(value) : value.replace(/\s+/g, " ").trim();
+  return normalized.length > 900 ? `${normalized.slice(0, 897)}...` : normalized;
+}
+
+const aiPreviewStyle = {
+  background: "#f7f7f7",
+  border: "1px solid #e3e3e3",
+  borderRadius: "8px",
+  minHeight: "72px",
+  padding: "12px",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+} as const;
 
 function EditorMetric({ label, value, icon, tone }: { label: string; value: string; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; tone: "success" | "warning" | "critical" | "info" }) {
   return <Card><BlockStack gap="150"><div className="bp-icon-heading bp-icon-heading--metric"><Icon source={icon} tone={tone} /><Text as="p" variant="bodySm" tone="subdued">{label}</Text></div><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack></Card>;
