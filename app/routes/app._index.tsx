@@ -740,7 +740,7 @@ function ProgressItem({ label, done, actionUrl, actionLabel, actionError, onActi
       ) : actionUrl || onAction ? (
         <InlineStack gap="200" blockAlign="center">
           {actionError ? <Badge tone="critical">{`Error: ${actionError}`}</Badge> : null}
-          <Button size="micro" url={actionUrl} target={actionUrl ? "_blank" : undefined} onClick={onAction} loading={loading}>{actionError ? "Retry" : actionLabel || "Enable"}</Button>
+          <Button size="micro" url={actionUrl} onClick={onAction} loading={loading}>{actionError ? "Retry" : actionLabel || "Enable"}</Button>
         </InlineStack>
       ) : (
         <Badge tone="new">Pending</Badge>
