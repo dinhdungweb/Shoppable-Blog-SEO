@@ -80,7 +80,8 @@ export async function generateAiCatalogDraft(input: AiCatalogInput): Promise<AiC
     "Preserve every existing href and every existing table, image, iframe, and video fragment exactly. Do not add new links or media.",
     "Do not return scripts, styles, event handlers, inline CSS, Markdown, an h1, or a full HTML document.",
     "title must be at most 255 characters, seoTitle at most 70 characters, seoDescription at most 165 characters, and imageAlt at most 255 characters.",
-    "Only improve imageAlt when a non-empty current imageAlt is supplied. Otherwise return it unchanged because you cannot inspect the image.",
+    "When an image exists, improve imageAlt from the supplied resource context. If the current alt text is empty, keep the suggestion conservative and do not invent visual details such as colors, materials, people, or composition.",
+    "When no image exists, return imageAlt unchanged.",
     "summary must briefly explain the proposed changes without marketing language.",
     MODE_INSTRUCTIONS[input.mode],
   ].join(" ");
@@ -170,7 +171,7 @@ function parseCatalogDraft(content: string, input: AiCatalogInput): AiCatalogDra
   const seoDescription = truncateAtWord(cleanLine(parsed.seoDescription), 165);
   if (!seoTitle || !seoDescription) throw new Error("9Router returned incomplete search metadata");
   const currentImageAlt = cleanLine(input.imageAlt).slice(0, 255);
-  const imageAlt = input.hasImage && currentImageAlt
+  const imageAlt = input.hasImage
     ? truncateAtWord(cleanLine(parsed.imageAlt), 255) || currentImageAlt
     : currentImageAlt;
 

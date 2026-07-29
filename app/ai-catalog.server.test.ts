@@ -74,6 +74,35 @@ describe("catalog AI", () => {
     expect(result.seoTitle).toBe("Summer Collection");
   });
 
+  it("can draft conservative alt text when an image exists without current alt text", async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      title: "Trail shoes",
+      descriptionHtml: "<p>Trail running shoes from Acme.</p>",
+      seoTitle: "Trail Running Shoes",
+      seoDescription: "Explore trail running shoes from Acme.",
+      imageAlt: "Acme trail running shoes",
+      summary: "Added concise image alt text.",
+    })) as any;
+
+    const result = await generateAiCatalogDraft({
+      type: "product",
+      mode: "improve",
+      title: "Trail shoes",
+      descriptionHtml: "<p>Trail running shoes from Acme.</p>",
+      seoTitle: "Trail Running Shoes",
+      seoDescription: "Explore trail running shoes from Acme.",
+      focusKeyword: "trail running shoes",
+      instruction: "",
+      imageAlt: "",
+      hasImage: true,
+      vendor: "Acme",
+      productType: "Shoes",
+      tags: ["trail", "running"],
+    });
+
+    expect(result.imageAlt).toBe("Acme trail running shoes");
+  });
+
   it("rejects a rewrite that removes existing links and media", async () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({
       title: "Product",

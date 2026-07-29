@@ -20,6 +20,13 @@
 .bp-editor-toolbar .Polaris-Select { min-width: 132px; }
 .bp-editor-icon-button { display: grid; width: 34px; height: 34px; padding: 6px; place-items: center; border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
 .bp-editor-icon-button:hover, .bp-editor-icon-button.is-active { background: var(--p-color-bg-fill-hover); }
+.bp-editor-icon-button:disabled { cursor: default; opacity: .55; }
+.bp-inline-ai-icon { display: inline-flex; width: 28px; height: 28px; padding: 5px; align-items: center; justify-content: center; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+.bp-inline-ai-icon:hover:not(:disabled) { background: var(--p-color-bg-surface-secondary); }
+.bp-inline-ai-icon:disabled { cursor: default; opacity: .55; }
+.bp-inline-ai-icon .Polaris-Icon { width: 16px; height: 16px; }
+.bp-inline-ai-icon--loading .Polaris-Icon, .bp-editor-icon-button--loading .Polaris-Icon { animation: bp-ai-pulse .8s ease-in-out infinite alternate; }
+@keyframes bp-ai-pulse { from { opacity: .35; transform: scale(.9); } to { opacity: 1; transform: scale(1.08); } }
 .bp-editor-separator { width: 1px; height: 24px; margin-inline: 4px; background: var(--p-color-border-secondary); }
 .bp-editor-code-button { margin-left: auto; }
 .bp-editor-canvas { min-height: 500px; max-height: 720px; overflow: auto; padding: 18px; line-height: 1.65; outline: none; }

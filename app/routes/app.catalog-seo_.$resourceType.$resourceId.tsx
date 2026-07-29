@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, isRouteErrorResponse, useActionData, useFetcher, useLoaderData, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
-import { Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField, Toast } from "@shopify/polaris";
+import { Form, isRouteErrorResponse, useActionData, useFetcher, useLoaderData, useNavigate, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
+import { ActionList, Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Popover, Select, Text, TextField, Toast } from "@shopify/polaris";
 import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, MagicIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
@@ -174,6 +174,7 @@ export default function CatalogResourceEditor() {
   const { resource, details, savedAt, adminUrl, canInternalLinking, planKey, linkTargets, aiEnabled, aiUsage } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const aiFetcher = useFetcher<any>();
+  const navigate = useNavigate();
   const navigation = useNavigation();
   const [searchParams, setSearchParams] = useSearchParams();
   const savedToastShown = useRef(false);
@@ -196,15 +197,21 @@ export default function CatalogResourceEditor() {
   const [imageAlt, setImageAlt] = useState(resource.imageAlt);
   const [pendingLink, setPendingLink] = useState<LinkSuggestion | null>(null);
   const [linkAnchor, setLinkAnchor] = useState("");
+  const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [aiComposeOpen, setAiComposeOpen] = useState(false);
   const [aiReviewOpen, setAiReviewOpen] = useState(false);
   const [aiMode, setAiMode] = useState<AiCatalogMode>(resource.descriptionHtml.trim() ? "improve" : "write");
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiSuggestion, setAiSuggestion] = useState<AiCatalogDraft | null>(null);
   const [aiSelectedFields, setAiSelectedFields] = useState<AiCatalogField[]>([]);
+  const [aiReviewFields, setAiReviewFields] = useState<AiCatalogField[]>(AI_CATALOG_FIELDS);
   const [aiBase, setAiBase] = useState<AiCatalogDraft | null>(null);
   const aiBaseRef = useRef<AiCatalogDraft | null>(null);
+  const aiTargetFieldsRef = useRef<AiCatalogField[]>(AI_CATALOG_FIELDS);
+  const aiRequestSourceRef = useRef<"composer" | "inline">("composer");
+  const [aiLoadingTarget, setAiLoadingTarget] = useState<string | null>(null);
   const [aiError, setAiError] = useState("");
+  const [aiToastError, setAiToastError] = useState("");
   const [aiReviewError, setAiReviewError] = useState("");
   const [currentAiUsage, setCurrentAiUsage] = useState(aiUsage);
   useEffect(() => {
@@ -218,22 +225,29 @@ export default function CatalogResourceEditor() {
   useEffect(() => {
     const data = aiFetcher.data;
     if (!data) return;
+    setAiLoadingTarget(null);
     if (!data.success) {
-      setAiError(data.error || "AI could not generate a catalog draft.");
+      const message = data.error || "AI could not generate a catalog draft.";
+      if (aiRequestSourceRef.current === "composer") setAiError(message);
+      else setAiToastError(message);
       if (data.aiUsage) setCurrentAiUsage(data.aiUsage);
       return;
     }
     const suggestion = data.suggestion as AiCatalogDraft;
     const base = aiBaseRef.current;
+    const targetFields = aiTargetFieldsRef.current;
     setAiSuggestion(suggestion);
-    setAiSelectedFields(base ? AI_CATALOG_FIELDS.filter((field) => suggestion[field] !== base[field]) : [...AI_CATALOG_FIELDS]);
+    setAiReviewFields(targetFields);
+    setAiSelectedFields(base ? targetFields.filter((field) => suggestion[field] !== base[field]) : [...targetFields]);
     if (data.aiUsage) setCurrentAiUsage(data.aiUsage);
     setAiError("");
+    setAiToastError("");
     setAiComposeOpen(false);
     setAiReviewError("");
     setAiReviewOpen(true);
   }, [aiFetcher.data]);
   const currentAudit = useMemo(() => auditCatalogResource({ ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword }), [resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword]);
+  const aiIssueFields = aiFieldsForCatalogIssues(currentAudit.issues, Boolean(resource.imageUrl));
   const typeLabel = resource.type === "product" ? "Product" : "Collection";
   const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== initialSeoTitle || seoDescription !== initialSeoDescription || handle !== resource.handle || imageAlt !== resource.imageAlt || focusKeyword !== (resource.focusKeyword || "") || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
   const wordCount = stripHtml(descriptionHtml).split(/\s+/).filter(Boolean).length;
@@ -242,26 +256,57 @@ export default function CatalogResourceEditor() {
   const setTitle = (next: string) => { setTitleState(next); if (seoTitleAutomatic.current) setSeoTitle(next.slice(0, 70)); };
   const setDescription = (next: string) => { setDescriptionHtml(next); if (seoDescriptionAutomatic.current) setSeoDescription(stripHtml(next).slice(0, 165)); };
   const reset = () => { setTitleState(resource.title); setDescriptionHtml(resource.descriptionHtml); setSeoTitle(initialSeoTitle); setSeoDescription(initialSeoDescription); seoTitleAutomatic.current = !resource.seoTitle.trim(); seoDescriptionAutomatic.current = !resource.seoDescription.trim(); setHandle(resource.handle); setStatus(details.status || "ACTIVE"); setVendor(details.vendor); setProductType(details.productType); setTags(details.tags.join(", ")); setImageAlt(resource.imageAlt); setFocusKeyword(resource.focusKeyword || ""); };
-  const generateAiDraft = () => {
+  const submitAiDraft = ({
+    mode,
+    fields,
+    instruction,
+    loadingTarget,
+    source,
+  }: {
+    mode: AiCatalogMode;
+    fields: AiCatalogField[];
+    instruction: string;
+    loadingTarget: string;
+    source: "composer" | "inline";
+  }) => {
+    if (aiFetcher.state !== "idle") return;
     const base: AiCatalogDraft = { title, descriptionHtml, seoTitle, seoDescription, imageAlt, summary: "" };
     setAiBase(base);
     aiBaseRef.current = base;
+    aiTargetFieldsRef.current = fields;
+    aiRequestSourceRef.current = source;
+    setAiLoadingTarget(loadingTarget);
     setAiError("");
+    setAiToastError("");
     aiFetcher.submit({
       intent: "generate_ai_catalog",
-      mode: aiMode,
+      mode,
       title,
       descriptionHtml,
       seoTitle,
       seoDescription,
       focusKeyword,
-      instruction: aiInstruction,
+      instruction,
       imageAlt,
       hasImage: resource.imageUrl ? "true" : "false",
       vendor,
       productType,
       tags,
     }, { method: "post" });
+  };
+  const generateAiDraft = () => submitAiDraft({
+    mode: aiMode,
+    fields: AI_CATALOG_FIELDS,
+    instruction: aiInstruction,
+    loadingTarget: "catalog_content",
+    source: "composer",
+  });
+  const generateAiForFields = (mode: AiCatalogMode, fields: AiCatalogField[], loadingTarget: string, instruction = "") => {
+    if (aiQuotaExhausted) {
+      navigate("/app/pricing?reason=ai_limit");
+      return;
+    }
+    submitAiDraft({ mode, fields, instruction, loadingTarget, source: "inline" });
   };
   const applyAiDraft = () => {
     if (!aiSuggestion || !aiBase || !aiSelectedFields.length) return;
@@ -293,7 +338,92 @@ export default function CatalogResourceEditor() {
     <div className="bp-catalog-editor-shell"><Form method="post" id="catalog-resource-form"><BlockStack gap="500">
       <input type="hidden" name="descriptionHtml" value={descriptionHtml} />
       <input type="hidden" name="focusKeyword" value={focusKeyword} /><input type="hidden" name="originalImageAlt" value={resource.imageAlt} /><input type="hidden" name="imageUrl" value={resource.imageUrl} /><input type="hidden" name="mediaId" value={(resource as any).mediaId || ""} />
-      <InlineStack align="space-between" blockAlign="center" gap="300"><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">{title || resource.title}</Text><Text as="p" tone="subdued">Improve storefront content, search appearance and image signals without leaving the app.</Text></BlockStack><InlineStack gap="200"><Button url={adminUrl} target="_blank">Open in Shopify</Button><Button variant="primary" submit loading={navigation.state === "submitting"} disabled={!dirty}>Save changes</Button></InlineStack></InlineStack>
+      <InlineStack align="space-between" blockAlign="center" gap="300">
+        <BlockStack gap="100">
+          <Text as="h1" variant="headingXl" fontWeight="bold">{title || resource.title}</Text>
+          <Text as="p" tone="subdued">Improve storefront content, search appearance and image signals without leaving the app.</Text>
+        </BlockStack>
+        <InlineStack gap="200" blockAlign="center">
+          {currentAiUsage.limited && (
+            <Badge tone={aiQuotaExhausted ? "critical" : "info"}>
+              {`${currentAiUsage.remaining}/${currentAiUsage.limit} AI left`}
+            </Badge>
+          )}
+          <Popover
+            active={aiCopilotOpen}
+            onClose={() => setAiCopilotOpen(false)}
+            preferredAlignment="right"
+            activator={(
+              <Button
+                icon={MagicIcon}
+                disclosure
+                disabled={!aiEnabled || Boolean(aiLoadingTarget)}
+                onClick={() => {
+                  if (aiQuotaExhausted) {
+                    navigate("/app/pricing?reason=ai_limit");
+                    return;
+                  }
+                  setAiCopilotOpen((open) => !open);
+                }}
+                accessibilityLabel={!aiEnabled
+                  ? "AI Copilot is not configured"
+                  : aiQuotaExhausted
+                    ? "AI limit reached; view upgrade options"
+                    : "Open AI Copilot"}
+              >
+                {!aiEnabled ? "AI not configured" : aiQuotaExhausted ? "Upgrade AI" : "AI Copilot"}
+              </Button>
+            )}
+          >
+            <ActionList
+              sections={[{
+                title: "Create and optimize",
+                items: [
+                  {
+                    content: "Write or rewrite content",
+                    onAction: () => {
+                      setAiCopilotOpen(false);
+                      setAiMode(descriptionHtml.trim() ? "improve" : "write");
+                      setAiError("");
+                      setAiComposeOpen(true);
+                    },
+                  },
+                  {
+                    content: "Fix SEO issues",
+                    disabled: aiIssueFields.length === 0,
+                    onAction: () => {
+                      setAiCopilotOpen(false);
+                      generateAiForFields(
+                        "improve",
+                        aiIssueFields,
+                        "seo_issues",
+                        "Fix the current SEO issues while preserving accurate resource facts.",
+                      );
+                    },
+                  },
+                  {
+                    content: "Optimize search listing",
+                    onAction: () => {
+                      setAiCopilotOpen(false);
+                      generateAiForFields("seo", ["seoTitle", "seoDescription"], "search_listing");
+                    },
+                  },
+                  {
+                    content: "Improve image alt text",
+                    disabled: !resource.imageUrl,
+                    onAction: () => {
+                      setAiCopilotOpen(false);
+                      generateAiForFields("improve", ["imageAlt"], "image_alt");
+                    },
+                  },
+                ],
+              }]}
+            />
+          </Popover>
+          <Button url={adminUrl} target="_blank">Open in Shopify</Button>
+          <Button variant="primary" submit loading={navigation.state === "submitting"} disabled={!dirty}>Save changes</Button>
+        </InlineStack>
+      </InlineStack>
       {actionData && "error" in actionData && actionData.error && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
       <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="300">
         <EditorMetric label="SEO score" value={`${currentAudit.score}/100`} icon={CheckCircleIcon} tone={scoreTone(currentAudit.score)} />
@@ -303,45 +433,125 @@ export default function CatalogResourceEditor() {
       </InlineGrid>
       <div className="bp-catalog-editor-main"><main className="bp-catalog-editor-content"><BlockStack gap="400">
         <Card>
-          <InlineStack align="space-between" blockAlign="center" gap="300">
-            <InlineStack gap="300" blockAlign="center">
-              <Icon source={MagicIcon} tone={aiEnabled ? "magic" : "subdued"} />
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
               <BlockStack gap="100">
-                <InlineStack gap="200" blockAlign="center">
-                  <Text as="h2" variant="headingMd">AI content assistant</Text>
-                  {aiEnabled ? <Badge tone="magic">AI ready</Badge> : <Badge>9Router required</Badge>}
-                  {currentAiUsage.limited && (
-                    <Badge tone={aiQuotaExhausted ? "critical" : "info"}>
-                      {`${currentAiUsage.remaining}/${currentAiUsage.limit} AI left`}
-                    </Badge>
-                  )}
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Write or improve {typeLabel.toLowerCase()} content and SEO metadata, then review every field before applying it.
-                </Text>
+                <Text as="h2" variant="headingMd">{typeLabel} content</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Write useful storefront copy for shoppers, not search engines alone.</Text>
               </BlockStack>
+              <Badge>{`${wordCount} words`}</Badge>
             </InlineStack>
-            <Button
-              variant="primary"
-              icon={MagicIcon}
-              disabled={!aiEnabled}
-              url={aiQuotaExhausted ? "/app/pricing?reason=ai_limit" : undefined}
-              onClick={aiQuotaExhausted ? undefined : () => {
-                setAiError("");
-                setAiComposeOpen(true);
-              }}
-            >
-              {!aiEnabled ? "AI not configured" : aiQuotaExhausted ? "Upgrade AI" : "Generate with AI"}
-            </Button>
-          </InlineStack>
+            <TextField
+              name="title"
+              label="Title"
+              value={title}
+              onChange={setTitle}
+              autoComplete="off"
+              maxLength={255}
+              showCharacterCount
+              suffix={<CatalogInlineAiButton
+                enabled={aiEnabled}
+                busy={Boolean(aiLoadingTarget)}
+                loading={aiLoadingTarget === "title"}
+                label="Write title with AI"
+                onClick={() => generateAiForFields(title.trim() ? "improve" : "write", ["title"], "title")}
+              />}
+            />
+            <BlockStack gap="200">
+              <Text as="h3" fontWeight="semibold">Description</Text>
+              <RichTextEditor
+                value={descriptionHtml}
+                onChange={setDescription}
+                onOpenAiAssistant={() => generateAiForFields(descriptionHtml.trim() ? "improve" : "write", ["descriptionHtml"], "description")}
+                aiEnabled={aiEnabled}
+                aiBusy={Boolean(aiLoadingTarget)}
+                aiLoading={aiLoadingTarget === "description"}
+              />
+            </BlockStack>
+          </BlockStack>
         </Card>
-        <Card><BlockStack gap="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">{typeLabel} content</Text><Text as="p" variant="bodySm" tone="subdued">Write useful storefront copy for shoppers, not search engines alone.</Text></BlockStack><Badge>{`${wordCount} words`}</Badge></InlineStack><TextField name="title" label="Title" value={title} onChange={setTitle} autoComplete="off" maxLength={255} showCharacterCount /><BlockStack gap="200"><Text as="h3" fontWeight="semibold">Description</Text><RichTextEditor value={descriptionHtml} onChange={setDescription} /></BlockStack></BlockStack></Card>
-        <Card><BlockStack gap="400"><div className="bp-icon-heading"><Icon source={SearchIcon} tone="info" /><BlockStack gap="100"><Text as="h2" variant="headingMd">Search engine listing</Text><Text as="p" tone="subdued">Preview and edit the title, description and Shopify URL.</Text></BlockStack></div><div className="bp-search-preview"><div className="bp-search-preview__site">Your store · {resource.type}</div><div className="bp-search-preview__title">{displaySeoTitle}</div><div className="bp-search-preview__url">/{resource.type === "product" ? "products" : "collections"}/{handle}</div><div className="bp-search-preview__description">{displaySeoDescription}</div></div><TextField name="seoTitle" label="Page title" value={seoTitle} onChange={(next) => { seoTitleAutomatic.current = false; setSeoTitle(next); }} autoComplete="off" maxLength={70} showCharacterCount helpText="Automatically follows the resource title until you edit this field manually." /><TextField name="seoDescription" label="Meta description" value={seoDescription} onChange={(next) => { seoDescriptionAutomatic.current = false; setSeoDescription(next); }} multiline={4} autoComplete="off" maxLength={165} showCharacterCount helpText="Automatically follows the description until you edit this field manually." /><TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} /></BlockStack></Card>
+        <Card>
+          <BlockStack gap="400">
+            <div className="bp-icon-heading">
+              <Icon source={SearchIcon} tone="info" />
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">Search engine listing</Text>
+                <Text as="p" tone="subdued">Preview and edit the title, description and Shopify URL.</Text>
+              </BlockStack>
+            </div>
+            <div className="bp-search-preview">
+              <div className="bp-search-preview__site">Your store · {resource.type}</div>
+              <div className="bp-search-preview__title">{displaySeoTitle}</div>
+              <div className="bp-search-preview__url">/{resource.type === "product" ? "products" : "collections"}/{handle}</div>
+              <div className="bp-search-preview__description">{displaySeoDescription}</div>
+            </div>
+            <TextField
+              name="seoTitle"
+              label="Page title"
+              value={seoTitle}
+              onChange={(next) => { seoTitleAutomatic.current = false; setSeoTitle(next); }}
+              autoComplete="off"
+              maxLength={70}
+              showCharacterCount
+              helpText="Automatically follows the resource title until you edit this field manually."
+              suffix={<CatalogInlineAiButton
+                enabled={aiEnabled}
+                busy={Boolean(aiLoadingTarget)}
+                loading={aiLoadingTarget === "seo_title"}
+                label="Optimize page title with AI"
+                onClick={() => generateAiForFields("seo", ["seoTitle"], "seo_title")}
+              />}
+            />
+            <TextField
+              name="seoDescription"
+              label="Meta description"
+              value={seoDescription}
+              onChange={(next) => { seoDescriptionAutomatic.current = false; setSeoDescription(next); }}
+              multiline={4}
+              autoComplete="off"
+              maxLength={165}
+              showCharacterCount
+              helpText="Automatically follows the description until you edit this field manually."
+              suffix={<CatalogInlineAiButton
+                enabled={aiEnabled}
+                busy={Boolean(aiLoadingTarget)}
+                loading={aiLoadingTarget === "seo_description"}
+                label="Optimize meta description with AI"
+                onClick={() => generateAiForFields("seo", ["seoDescription"], "seo_description")}
+              />}
+            />
+            <TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} />
+          </BlockStack>
+        </Card>
         <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="bodySm" tone="subdued">Every passed and failed check remains visible and updates while you edit.</Text></BlockStack><Badge tone={scoreTone(currentAudit.score)}>{`${currentAudit.score}/100`}</Badge></InlineStack><div className="bp-checklist-groups">{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</div></BlockStack></Card>
       </BlockStack></main><aside className="bp-catalog-editor-sidebar"><BlockStack gap="400">
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="headingXl" fontWeight="bold">{currentAudit.score}<Text as="span" variant="bodySm" tone="subdued">/100</Text></Text></InlineStack><div className="bp-catalog-score-track"><span style={{ width: `${currentAudit.score}%` }} /></div><Text as="p" variant="bodySm" tone="subdued">{savedAt ? `Last analyzed ${new Date(savedAt).toLocaleString()}` : "Calculated from current Shopify content."}</Text></BlockStack></Card>
-        <Card><BlockStack gap="300"><div className="bp-icon-heading"><Icon source={ImageIcon} tone="info" /><Text as="h2" variant="headingMd">Image</Text></div>{resource.imageUrl ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={imageAlt || resource.title} /></div> : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}<TextField name="imageAlt" label="Image alt text" value={imageAlt} onChange={setImageAlt} autoComplete="off" maxLength={500} helpText="Briefly describe the image for screen readers and image search." /><Button url={adminUrl} target="_blank" fullWidth>Change image in Shopify</Button></BlockStack></Card>
+        <Card>
+          <BlockStack gap="300">
+            <div className="bp-icon-heading"><Icon source={ImageIcon} tone="info" /><Text as="h2" variant="headingMd">Image</Text></div>
+            {resource.imageUrl
+              ? <div className="bp-editor-image"><img src={resource.imageUrl} alt={imageAlt || resource.title} /></div>
+              : <div className="bp-editor-image bp-editor-image--empty"><Icon source={ImageIcon} tone="subdued" /></div>}
+            <TextField
+              name="imageAlt"
+              label="Image alt text"
+              value={imageAlt}
+              onChange={setImageAlt}
+              autoComplete="off"
+              maxLength={500}
+              helpText="Briefly describe the image for screen readers and image search."
+              suffix={<CatalogInlineAiButton
+                enabled={aiEnabled && Boolean(resource.imageUrl)}
+                busy={Boolean(aiLoadingTarget)}
+                loading={aiLoadingTarget === "image_alt"}
+                label="Improve image alt text with AI"
+                onClick={() => generateAiForFields("improve", ["imageAlt"], "image_alt")}
+              />}
+            />
+            <Button url={adminUrl} target="_blank" fullWidth>Change image in Shopify</Button>
+          </BlockStack>
+        </Card>
         <InternalLinkCard allowed={canInternalLinking} planKey={planKey} suggestions={linkSuggestions} onReview={(suggestion) => { setPendingLink(suggestion); setLinkAnchor(suggestion.anchorText); }} />
         <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} settings</Text><Divider />{resource.type === "product" ? <><Select name="status" label="Status" value={status} onChange={setStatus} options={[{ label: "Active", value: "ACTIVE" }, { label: "Draft", value: "DRAFT" }, { label: "Archived", value: "ARCHIVED" }]} /><TextField name="vendor" label="Vendor" value={vendor} onChange={setVendor} autoComplete="off" /><TextField name="productType" label="Product type" value={productType} onChange={setProductType} autoComplete="off" /><TextField name="tags" label="Tags" value={tags} onChange={setTags} autoComplete="off" helpText="Separate tags with commas." /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Variants, pricing, inventory, collection rules and media remain in Shopify to prevent destructive edits.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></Card>
       </BlockStack></aside></div>
@@ -353,11 +563,11 @@ export default function CatalogResourceEditor() {
       onClose={() => {
         if (aiFetcher.state === "idle") setAiComposeOpen(false);
       }}
-      title={`Generate ${typeLabel.toLowerCase()} content with AI`}
+      title="AI Copilot · Writing"
       primaryAction={{
         content: "Generate draft",
         icon: MagicIcon,
-        loading: aiFetcher.state !== "idle",
+        loading: aiLoadingTarget === "catalog_content",
         disabled: !aiEnabled || !title.trim() || aiFetcher.state !== "idle",
         onAction: generateAiDraft,
       }}
@@ -409,9 +619,9 @@ export default function CatalogResourceEditor() {
         <BlockStack gap="400">
           {aiReviewError && <Banner tone="critical"><p>{aiReviewError}</p></Banner>}
           {aiSuggestion?.summary && <Banner tone="info"><p>{aiSuggestion.summary}</p></Banner>}
-          {aiSuggestion && aiBase && AI_CATALOG_FIELDS.some((field) => aiSuggestion[field] !== aiBase[field]) ? (
+          {aiSuggestion && aiBase && aiReviewFields.some((field) => aiSuggestion[field] !== aiBase[field]) ? (
             <BlockStack gap="300">
-              {AI_CATALOG_FIELDS.filter((field) => aiSuggestion[field] !== aiBase[field]).map((field) => (
+              {aiReviewFields.filter((field) => aiSuggestion[field] !== aiBase[field]).map((field) => (
                 <AiCatalogReviewField
                   key={field}
                   field={field}
@@ -433,7 +643,57 @@ export default function CatalogResourceEditor() {
         </BlockStack>
       </Modal.Section>
     </Modal>
-  </Page>{savedToastActive && <Toast content={`${typeLabel} updated successfully`} onDismiss={() => setSavedToastActive(false)} duration={4000} />}</Frame>;
+  </Page>
+  {savedToastActive && <Toast content={`${typeLabel} updated successfully`} onDismiss={() => setSavedToastActive(false)} duration={4000} />}
+  {aiToastError && <Toast content={aiToastError} error onDismiss={() => setAiToastError("")} duration={5000} />}
+  </Frame>;
+}
+
+function CatalogInlineAiButton({
+  enabled,
+  busy,
+  loading,
+  label,
+  onClick,
+}: {
+  enabled: boolean;
+  busy: boolean;
+  loading: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`bp-inline-ai-icon${loading ? " bp-inline-ai-icon--loading" : ""}`}
+      onClick={onClick}
+      disabled={!enabled || busy}
+      title={enabled ? label : "AI is not configured for this field"}
+      aria-label={label}
+      aria-busy={loading}
+    >
+      <Icon source={MagicIcon} tone={enabled ? "magic" : "subdued"} />
+    </button>
+  );
+}
+
+function aiFieldsForCatalogIssues(issues: CatalogSeoIssue[], hasImage: boolean) {
+  const fields = new Set<AiCatalogField>();
+  for (const issue of issues) {
+    if (/seo_title|title_word_count|title_all_caps|title_repeated_words|keyword_missing_title/.test(issue.type)) {
+      fields.add("seoTitle");
+    }
+    if (/meta_description|keyword_missing_description/.test(issue.type)) {
+      fields.add("seoDescription");
+    }
+    if (/description|content_depth|subheadings|long_paragraph|keyword_missing_content|keyword_missing_heading/.test(issue.type)) {
+      fields.add("descriptionHtml");
+    }
+    if (hasImage && /image_alt/.test(issue.type)) {
+      fields.add("imageAlt");
+    }
+  }
+  return [...fields];
 }
 
 function AiCatalogReviewField({
@@ -511,7 +771,21 @@ function InternalLinkCard({ allowed, planKey, suggestions, onReview }: { allowed
   return <Card><BlockStack gap="300"><div className="bp-card-heading"><div className="bp-icon-heading"><Icon source={LinkIcon} tone="info" /><Text as="h2" variant="headingMd">Internal link assistant</Text></div>{allowed && <Badge tone="info">{`${suggestions.length} suggestions`}</Badge>}</div>{!allowed ? <><Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text><Button url={`/app/pricing?reason=internal_linking&plan=${planKey}`} fullWidth>Upgrade to Pro</Button></> : suggestions.length ? <><Text as="p" variant="bodySm" tone="subdued">Review relevant Shopify articles before inserting a link into this description.</Text><div className="bp-catalog-link-list">{visible.map((suggestion) => <div className="bp-catalog-link-row" key={suggestion.id}><div className="bp-catalog-link-copy"><Text as="p" variant="bodySm" fontWeight="semibold">{suggestion.targetTitle}</Text><Text as="p" variant="bodySm" tone="subdued">Anchor: {suggestion.anchorText}</Text></div><Button size="micro" onClick={() => onReview(suggestion)}>Review</Button></div>)}</div>{suggestions.length > 3 && <Button variant="plain" onClick={() => setExpanded((value) => !value)} icon={expanded ? ChevronUpIcon : ChevronDownIcon}>{expanded ? "Show fewer" : `Show ${suggestions.length - 3} more`}</Button>}</> : <Text as="p" variant="bodySm" tone="subdued">No relevant article suggestion was found for the current title and description.</Text>}</BlockStack></Card>;
 }
 
-function RichTextEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function RichTextEditor({
+  value,
+  onChange,
+  onOpenAiAssistant,
+  aiEnabled,
+  aiBusy,
+  aiLoading,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onOpenAiAssistant: () => void;
+  aiEnabled: boolean;
+  aiBusy: boolean;
+  aiLoading: boolean;
+}) {
   const editor = useRef<HTMLDivElement>(null);
   const selection = useRef<Range | null>(null);
   const [htmlMode, setHtmlMode] = useState(false);
@@ -612,6 +886,19 @@ function RichTextEditor({ value, onChange }: { value: string; onChange: (value: 
   return <>
     <div className="bp-rich-editor">
       <div className="bp-editor-toolbar" role="toolbar" aria-label="Description formatting" onMouseDown={(event) => { if ((event.target as HTMLElement).closest(".Polaris-Select")) saveSelection(); }}>
+        <button
+          type="button"
+          className={`bp-editor-icon-button${aiLoading ? " bp-editor-icon-button--loading" : ""}`}
+          title={aiEnabled ? "Use AI for this field" : "AI writing assistant is not configured"}
+          aria-label={aiEnabled ? "Use AI for this field" : "AI writing assistant is not configured"}
+          aria-busy={aiLoading}
+          disabled={!aiEnabled || aiBusy}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onOpenAiAssistant}
+        >
+          <Icon source={MagicIcon} tone={aiEnabled ? "magic" : "subdued"} />
+        </button>
+        <span className="bp-editor-separator" />
         <Select label="Text style" labelHidden options={[{ label: "Paragraph", value: "p" }, { label: "Heading 2", value: "h2" }, { label: "Heading 3", value: "h3" }, { label: "Quote", value: "blockquote" }]} value={block} onChange={applyBlock} />
         <span className="bp-editor-separator" />
         {toolbarButton("Bold", TextBoldIcon, () => command("bold"))}
