@@ -41,7 +41,7 @@ export const PLAN_LIMITS = {
     canContentDecay: false,
   },
   plus: {
-    shoppableArticles: 15,
+    shoppableArticles: 40,
     analyticsWindowDays: 30,
     aiRequestsPerMonth: 25,
     seoBlogPosts: 15,

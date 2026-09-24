@@ -23,6 +23,7 @@ describe("pricing plan enforcement", () => {
     expect(getLimitsForPlan("Pro").canInternalLinking).toBe(true);
     expect(getLimitsForPlan("Growth").canInternalLinking).toBe(true);
     expect(getLimitsForPlan("Plus").aiRequestsPerMonth).toBe(25);
+    expect(getLimitsForPlan("Plus").shoppableArticles).toBe(40);
     expect(getLimitsForPlan("Pro").aiRequestsPerMonth).toBe(100);
     expect(getLimitsForPlan("Growth").aiRequestsPerMonth).toBe(300);
     expect(getLimitsForPlan("Plus").canCatalogSeo).toBe(true);

@@ -286,9 +286,10 @@ export default function PricingPage() {
   const upgradeMessage = UPGRADE_REASON_MESSAGES[upgradeReason] || "";
 
   return (
-    <Page>
+    <Page fullWidth>
       <TitleBar title="Pricing" />
-      <BlockStack gap="500">
+      <div style={{ width: "100%", maxWidth: "1280px", margin: "0 auto" }}>
+        <BlockStack gap="500">
         <InlineStack align="space-between" blockAlign="end" gap="400">
           <BlockStack gap="100">
             <Text as="h2" variant="headingLg" fontWeight="bold">
@@ -346,7 +347,8 @@ export default function PricingPage() {
           ))}
         </InlineGrid>
 
-      </BlockStack>
+        </BlockStack>
+      </div>
     </Page>
   );
 }

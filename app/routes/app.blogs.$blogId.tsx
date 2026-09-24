@@ -71,7 +71,7 @@ import {
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
-import { formatLimit } from "../pricing-plans";
+import { formatLimit, PLAN_LIMITS } from "../pricing-plans";
 import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import type { SeoAuditIssue } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
@@ -1376,7 +1376,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       if (!alreadyShoppable && articlesWithProducts.length >= limits.shoppableArticles) {
         const upgradeTarget = planKey === "free" ? "Plus" : planKey === "plus" ? "Pro" : "Growth";
         const upgradeDesc = planKey === "free"
-          ? "Plus allows up to 15 shoppable posts"
+          ? `Plus allows up to ${PLAN_LIMITS.plus.shoppableArticles} shoppable posts`
           : planKey === "plus"
             ? "Pro allows up to 100 shoppable posts"
             : "Growth allows unlimited shoppable posts";
