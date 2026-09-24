@@ -607,7 +607,7 @@ export default function Settings() {
             <InlineGrid columns={{ xs: 1, lg: 'minmax(380px, 1fr) minmax(420px, 1fr)' }} gap="400">
               <BlockStack gap="400">
                 {contentNavigationLocked && (
-                  <Banner tone="info" title="Content navigation is locked on the Free plan">
+                  <Banner tone="info" title="Content navigation requires Pro or Growth">
                     <BlockStack gap="200">
                       <Text as="p" variant="bodyMd">
                         Breadcrumbs and table of contents settings are available on Pro and Growth plans.

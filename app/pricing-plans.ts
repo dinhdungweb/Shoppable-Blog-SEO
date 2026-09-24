@@ -1,11 +1,13 @@
+export const PLUS_PLAN = "Plus";
 export const PRO_PLAN = "Pro";
 export const GROWTH_PLAN = "Growth";
+export const LEGACY_PLUS_PLAN = "Shoppable Blog Plus";
 export const LEGACY_PRO_PLAN = "Shoppable Blog Pro";
 export const LEGACY_GROWTH_PLAN = "Shoppable Blog Growth";
-export const PAID_PLANS = [PRO_PLAN, GROWTH_PLAN] as const;
-export const FREE_AI_REQUESTS_PER_MONTH = 10;
+export const PAID_PLANS = [PLUS_PLAN, PRO_PLAN, GROWTH_PLAN] as const;
+export const FREE_AI_REQUESTS_PER_MONTH = 3;
 
-export type PlanKey = "free" | "pro" | "growth";
+export type PlanKey = "free" | "plus" | "pro" | "growth";
 
 /**
  * Usage limits per plan.
@@ -18,12 +20,34 @@ export type PlanKey = "free" | "pro" | "growth";
  * - canCustomCss: access to Custom CSS field in widget settings (Growth only).
  * - canContentDecay: access to Content Decay Monitor (Growth only).
  * - aiRequestsPerMonth: reviewable AI generations allowed in one UTC calendar month.
+ * - seoBlogPosts: maximum number of recent blog posts included in portfolio SEO scans.
+ * - canCatalogSeo: access to Product and Collection SEO workspaces (Plus+).
+ * - canSearchConsole: access to Google Search Console insights (Pro+).
+ * - canAutoSeoScan: access to scheduled SEO scans (Pro+).
  */
 export const PLAN_LIMITS = {
   free: {
-    shoppableArticles: 3,
+    shoppableArticles: 1,
     analyticsWindowDays: 7,
     aiRequestsPerMonth: FREE_AI_REQUESTS_PER_MONTH,
+    seoBlogPosts: 3,
+    canCatalogSeo: false,
+    canSearchConsole: false,
+    canAutoSeoScan: false,
+    canContentNavigation: false,
+    canInternalLinking: false,
+    canBulkReview: false,
+    canCustomCss: false,
+    canContentDecay: false,
+  },
+  plus: {
+    shoppableArticles: 15,
+    analyticsWindowDays: 30,
+    aiRequestsPerMonth: 25,
+    seoBlogPosts: 15,
+    canCatalogSeo: true,
+    canSearchConsole: false,
+    canAutoSeoScan: false,
     canContentNavigation: false,
     canInternalLinking: false,
     canBulkReview: false,
@@ -32,8 +56,12 @@ export const PLAN_LIMITS = {
   },
   pro: {
     shoppableArticles: 100,
-    analyticsWindowDays: 30,
-    aiRequestsPerMonth: Infinity,
+    analyticsWindowDays: 180,
+    aiRequestsPerMonth: 100,
+    seoBlogPosts: 100,
+    canCatalogSeo: true,
+    canSearchConsole: true,
+    canAutoSeoScan: true,
     canContentNavigation: true,
     canInternalLinking: true,
     canBulkReview: false,
@@ -42,8 +70,12 @@ export const PLAN_LIMITS = {
   },
   growth: {
     shoppableArticles: Infinity,
-    analyticsWindowDays: 90,
-    aiRequestsPerMonth: Infinity,
+    analyticsWindowDays: 365,
+    aiRequestsPerMonth: 300,
+    seoBlogPosts: Infinity,
+    canCatalogSeo: true,
+    canSearchConsole: true,
+    canAutoSeoScan: true,
     canContentNavigation: true,
     canInternalLinking: true,
     canBulkReview: true,
@@ -54,6 +86,10 @@ export const PLAN_LIMITS = {
   shoppableArticles: number;
   analyticsWindowDays: number;
   aiRequestsPerMonth: number;
+  seoBlogPosts: number;
+  canCatalogSeo: boolean;
+  canSearchConsole: boolean;
+  canAutoSeoScan: boolean;
   canContentNavigation: boolean;
   canInternalLinking: boolean;
   canBulkReview: boolean;
@@ -68,6 +104,7 @@ export type PlanLimits = typeof PLAN_LIMITS[PlanKey];
  * Returns "free" for any unrecognised / absent plan name.
  */
 export function getPlanKey(activePlanName: string): PlanKey {
+  if (activePlanName === PLUS_PLAN || activePlanName === LEGACY_PLUS_PLAN) return "plus";
   if (activePlanName === PRO_PLAN || activePlanName === LEGACY_PRO_PLAN) return "pro";
   if (activePlanName === GROWTH_PLAN || activePlanName === LEGACY_GROWTH_PLAN) return "growth";
   return "free";

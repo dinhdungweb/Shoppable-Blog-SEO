@@ -7,7 +7,7 @@ import {
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { GROWTH_PLAN, PAID_PLANS, PRO_PLAN, getPlanKey, getLimitsForPlan, isFullAccessShop } from "./pricing-plans";
+import { GROWTH_PLAN, PAID_PLANS, PLUS_PLAN, PRO_PLAN, getPlanKey, getLimitsForPlan, isFullAccessShop } from "./pricing-plans";
 import type { PlanKey, PlanLimits } from "./pricing-plans";
 
 export function isBillingTestMode() {
@@ -44,8 +44,18 @@ const shopify = shopifyApp({
      * Free plan được enforce hoàn toàn trong app code (không dùng Billing API cho $0).
      * Ref: https://shopify.dev/docs/apps/build/billing
      */
+    [PLUS_PLAN]: {
+      trialDays: 7,
+      lineItems: [
+        {
+          amount: 9,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
+    },
     [PRO_PLAN]: {
-      trialDays: 3,
+      trialDays: 7,
       lineItems: [
         {
           amount: 19,
@@ -55,7 +65,7 @@ const shopify = shopifyApp({
       ],
     },
     [GROWTH_PLAN]: {
-      trialDays: 3,
+      trialDays: 7,
       lineItems: [
         {
           amount: 49,

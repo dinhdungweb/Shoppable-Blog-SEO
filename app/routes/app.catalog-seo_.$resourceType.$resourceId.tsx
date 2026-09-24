@@ -9,7 +9,6 @@ import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { auditCatalogResource, type CatalogResourceInput, type CatalogResourceType, type CatalogSeoIssue } from "../catalog-seo";
 import { suggestInternalLinksForDraft, insertApprovedLink, type LinkSuggestion } from "../internal-linking";
-import { PLAN_LIMITS } from "../pricing-plans";
 import { isNineRouterConfigured } from "../ai-seo.server";
 import { generateAiCatalogDraft, isAiCatalogMode, type AiCatalogDraft, type AiCatalogMode } from "../ai-catalog.server";
 import { getAiUsageStatus, isAiQuotaExceededError, runWithAiUsage } from "../ai-usage.server";
@@ -21,6 +20,8 @@ export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 export async function loader({ request, params }: LoaderFunctionArgs) {
   try {
   const { admin, session, billing } = await authenticate.admin(request);
+  const planAccess = await getActivePlanAndLimits(billing, session.shop);
+  if (!planAccess.limits.canCatalogSeo) return redirect("/app/pricing?reason=catalog_seo");
   const type = resourceType(params.resourceType);
   const gid = shopifyGid(type, params.resourceId);
   const payload = await queryShopify(admin, type === "product" ? PRODUCT_QUERY : COLLECTION_QUERY, { id: gid });
@@ -43,13 +44,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       update: seoRecord(session.shop, liveAudit),
     });
   }
-  let planAccess: Awaited<ReturnType<typeof getActivePlanAndLimits>>;
-  try {
-    planAccess = await getActivePlanAndLimits(billing, session.shop);
-  } catch (error) {
-    console.error("Catalog SEO editor billing lookup failed; using safe free-plan access", error);
-    planAccess = { limits: PLAN_LIMITS.free, planKey: "free", planName: "" };
-  }
   const { limits, planKey } = planAccess;
   const aiUsage = await getAiUsageStatus(session.shop, limits.aiRequestsPerMonth);
   const linkTargets = limits.canInternalLinking ? await prisma.articleSEO.findMany({ where: { shop: session.shop }, select: { articleId: true, articleTitle: true, articleHandle: true, blogHandle: true }, orderBy: { sourceUpdatedAt: "desc" }, take: 250 }) : [];
@@ -67,6 +61,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { admin, session, billing } = await authenticate.admin(request);
+  const planAccess = await getActivePlanAndLimits(billing, session.shop);
+  if (!planAccess.limits.canCatalogSeo) {
+    return json({ error: "Product and Collection SEO are available on Plus, Pro and Growth plans.", upgradeUrl: "/app/pricing?reason=catalog_seo" }, { status: 403 });
+  }
   const type = resourceType(params.resourceType);
   const gid = shopifyGid(type, params.resourceId);
   const form = await request.formData();
@@ -87,7 +85,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     const modeValue = field(form, "mode", 20);
     if (!isAiCatalogMode(modeValue)) return json({ success: false, error: "Unknown AI writing mode." }, { status: 400 });
     try {
-      const { limits } = await getActivePlanAndLimits(billing, session.shop);
+      const { limits } = planAccess;
       const { result, aiUsage } = await runWithAiUsage(
         { shop: session.shop, limit: limits.aiRequestsPerMonth },
         () => generateAiCatalogDraft({
@@ -112,7 +110,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({
           success: false,
           intent,
-          error: `${error.message} Upgrade to Pro for unlimited AI.`,
+          error: `${error.message} Upgrade for a higher monthly AI allowance.`,
           aiUsage: error.status,
           upgradeUrl: "/app/pricing?reason=ai_limit",
         }, { status: 429 });

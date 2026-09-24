@@ -35,8 +35,8 @@ import {
   ShieldCheckMarkIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
-import { getLimitsForPlan } from "../pricing-plans";
+import { authenticate, getActivePlanAndLimits, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
+import { getLimitsForPlan, type PlanLimits } from "../pricing-plans";
 import prisma from "../db.server";
 import { analyzeImageSeo, auditContentQuality, auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
@@ -227,11 +227,14 @@ function serializeScanJob(job: {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
+  const { planKey, limits } = await getActivePlanAndLimits(billing, shop);
   const [seoRows, searchConnection, scanJob, shopConfig] = await Promise.all([
     prisma.articleSEO.findMany({
       where: { shop },
+      orderBy: { sourceUpdatedAt: "desc" },
+      ...(Number.isFinite(limits.seoBlogPosts) ? { take: limits.seoBlogPosts } : {}),
       select: {
         articleId: true,
         articleTitle: true,
@@ -250,14 +253,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         imageAlt: true,
       },
     }),
-    prisma.searchConsoleConnection.findUnique({ where: { shop } }).catch((error) => {
+    limits.canSearchConsole ? prisma.searchConsoleConnection.findUnique({ where: { shop } }).catch((error) => {
       console.error("Search Console connection table unavailable:", error);
       return null;
-    }),
+    }) : Promise.resolve(null),
     prisma.seoScanJob.findFirst({ where: { shop }, orderBy: { requestedAt: "desc" } }),
-    prisma.shopConfig.findUnique({ where: { shop }, select: { seoAutoScanEnabled: true } }),
+    limits.canAutoSeoScan
+      ? prisma.shopConfig.findUnique({ where: { shop }, select: { seoAutoScanEnabled: true } })
+      : Promise.resolve(null),
   ]);
-  const searchData = await loadSearchConsoleMetrics(shop, searchConnection?.selectedSiteUrl || "");
+  const searchData = limits.canSearchConsole
+    ? await loadSearchConsoleMetrics(shop, searchConnection?.selectedSiteUrl || "")
+    : { metrics: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 }, lastSyncedAt: null };
   const searchMetrics = searchData.metrics;
   const auditedPosts: AuditedPost[] = seoRows.map((row) => ({
     id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "", publishedAt: null,
@@ -285,6 +292,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     shopifyError: "",
+    planKey,
+    seoBlogPostLimit: limits.seoBlogPosts,
+    canSearchConsole: limits.canSearchConsole,
+    canAutoSeoScan: limits.canAutoSeoScan,
     averageScore,
     averageOnPageScore,
     issueGroups,
@@ -319,8 +330,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       unauthenticated.admin(job.shop),
       getUnauthenticatedActivePlanName(job.shop),
     ]);
+    const limits = getLimitsForPlan(planName);
+    if (job.trigger === "schedule" && !limits.canAutoSeoScan) {
+      await prisma.shopConfig.updateMany({ where: { shop: job.shop }, data: { seoAutoScanEnabled: false } });
+      return json({ scannedCount: 0, analyzedCount: 0, averageScore: 0, skipped: true });
+    }
     const result = await runSeoScan({
-      admin, shop: job.shop, limits: getLimitsForPlan(planName),
+      admin, shop: job.shop, limits,
       onProgress: async (update) => {
         const updated = await prisma.seoScanJob.updateMany({ where: { id: job.id, status: "running" }, data: { ...update, heartbeatAt: new Date() } });
         if (!updated.count) throw new Error("SEO_SCAN_CANCELLED");
@@ -328,10 +344,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     return json(result);
   }
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const formData = await request.formData();
   const intent = formData.get("intent");
+  const getPlanAccess = () => getActivePlanAndLimits(billing, shop);
 
   if (intent === "scan_status") {
     const latestJob = await prisma.seoScanJob.findFirst({ where: { shop }, orderBy: { requestedAt: "desc" } });
@@ -339,6 +356,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (intent === "google_connect") {
+    const { limits } = await getPlanAccess();
+    if (!limits.canSearchConsole) return json({ error: "Google Search Console is available on Pro and Growth plans." }, { status: 403 });
     try {
       return json({ success: true, googleAction: "connect", authorizationUrl: await createAuthorizationUrl(shop) });
     } catch (error) {
@@ -346,18 +365,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
   if (intent === "google_select") {
+    const { limits } = await getPlanAccess();
+    if (!limits.canSearchConsole) return json({ error: "Google Search Console is available on Pro and Growth plans." }, { status: 403 });
     try { await selectSearchConsoleSite(shop, String(formData.get("siteUrl") || "")); return json({ success: true, googleAction: "selected" }); }
     catch (error) { return json({ error: error instanceof Error ? error.message : "Could not select property." }, { status: 400 }); }
   }
   if (intent === "google_sync") {
+    const { limits } = await getPlanAccess();
+    if (!limits.canSearchConsole) return json({ error: "Google Search Console is available on Pro and Growth plans." }, { status: 403 });
     try { const syncedCount = await syncSearchConsole(shop); return json({ success: true, googleAction: "synced", syncedCount }); }
     catch (error) { return json({ error: error instanceof Error ? error.message : "Search Console sync failed." }, { status: 400 }); }
   }
   if (intent === "google_disconnect") {
+    const { limits } = await getPlanAccess();
+    if (!limits.canSearchConsole) return json({ error: "Google Search Console is available on Pro and Growth plans." }, { status: 403 });
     await disconnectSearchConsole(shop);
     return json({ success: true, googleAction: "disconnected" });
   }
   if (intent === "set_auto_scan") {
+    const { limits } = await getPlanAccess();
+    if (!limits.canAutoSeoScan) return json({ error: "Scheduled SEO scans are available on Pro and Growth plans." }, { status: 403 });
     const enabled = formData.get("enabled") === "true";
     await prisma.shopConfig.upsert({ where: { shop }, update: { seoAutoScanEnabled: enabled }, create: { shop, seoAutoScanEnabled: enabled } });
     return json({ success: true, autoScanEnabled: enabled });
@@ -395,7 +422,7 @@ async function runSeoScan({
 }: {
   admin: any;
   shop: string;
-  limits: { canContentNavigation: boolean };
+  limits: PlanLimits;
   onProgress?: (update: { phase: string; progress: number; totalPosts?: number; processedPosts?: number; analyzedPosts?: number }) => Promise<void>;
 }) {
   const report = async (update: { phase: string; progress: number; totalPosts?: number; processedPosts?: number; analyzedPosts?: number }) => {
@@ -405,13 +432,15 @@ async function runSeoScan({
   const scanStartedAt = Date.now();
   await report({ phase: "Loading Shopify articles", progress: 5 });
   const [articles, catalogResources, linkedProducts, config, seoRows, resourceSeoRows, shopDomains] = await Promise.all([
-    fetchShopifyArticles(admin, async (loadedPosts) => {
+    fetchShopifyArticles(admin, limits.seoBlogPosts, async (loadedPosts) => {
       const progress = Math.min(25, 5 + Math.ceil(loadedPosts / 100) * 3);
       await report({ phase: `Loading Shopify articles (${loadedPosts})`, progress, totalPosts: loadedPosts });
     }),
-    fetchShopifyCatalogResources(admin, async (type, loaded) => {
-      await report({ phase: `Loading Shopify ${type}s (${loaded})`, progress: Math.min(25, 8 + Math.ceil(loaded / 100) * 2) });
-    }),
+    limits.canCatalogSeo
+      ? fetchShopifyCatalogResources(admin, async (type, loaded) => {
+          await report({ phase: `Loading Shopify ${type}s (${loaded})`, progress: Math.min(25, 8 + Math.ceil(loaded / 100) * 2) });
+        })
+      : Promise.resolve([]),
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
       select: { articleId: true },
@@ -508,13 +537,16 @@ async function runSeoScan({
 
   const articleIds = articles.map((a) => a.id);
 
-  // Clean up obsolete records for deleted articles
-  await prisma.articleSEO.deleteMany({
-    where: { shop, articleId: { notIn: articleIds } },
-  });
-  await prisma.articleProduct.deleteMany({
-    where: { shop, articleId: { notIn: articleIds } },
-  });
+  // Only a full, unlimited scan can safely identify obsolete records. Limited
+  // plans intentionally leave out-of-scope records untouched.
+  if (!Number.isFinite(limits.seoBlogPosts)) {
+    await prisma.articleSEO.deleteMany({
+      where: { shop, articleId: { notIn: articleIds } },
+    });
+    await prisma.articleProduct.deleteMany({
+      where: { shop, articleId: { notIn: articleIds } },
+    });
+  }
 
   const saveAudit = (audit: AuditedPost) => {
       const article = audit;
@@ -590,8 +622,10 @@ async function runSeoScan({
     const batch = catalogAudits.slice(index, index + batchSize);
     await Promise.all(batch.map((audit) => saveCatalogAudit(shop, audit)));
   }
-  for (const resourceType of ["product", "collection"] as const) {
-    await prisma.resourceSEO.deleteMany({ where: { shop, resourceType, resourceId: { notIn: catalogAudits.filter((audit) => audit.type === resourceType).map((audit) => audit.id) } } });
+  if (limits.canCatalogSeo) {
+    for (const resourceType of ["product", "collection"] as const) {
+      await prisma.resourceSEO.deleteMany({ where: { shop, resourceType, resourceId: { notIn: catalogAudits.filter((audit) => audit.type === resourceType).map((audit) => audit.id) } } });
+    }
   }
   await report({ phase: "Saving catalog SEO results", progress: 99, totalPosts: articles.length + catalogAudits.length, processedPosts: articles.length + catalogAudits.length, analyzedPosts: analyzedCount });
 
@@ -622,6 +656,10 @@ function saveCatalogAudit(shop: string, audit: CatalogSeoAudit) {
 export default function SEOOptimizer() {
   const {
     shopifyError,
+    planKey,
+    seoBlogPostLimit,
+    canSearchConsole,
+    canAutoSeoScan,
     averageScore,
     averageOnPageScore,
     issueGroups,
@@ -781,12 +819,16 @@ export default function SEOOptimizer() {
               Run SEO scan
             </Button>
             {isScanning && <Button tone="critical" onClick={() => scanFetcher.submit({ intent: "cancel_scan" }, { method: "post" })}>Cancel scan</Button>}
-            <Button
-              pressed={autoScanEnabled}
-              onClick={() => scanFetcher.submit({ intent: "set_auto_scan", enabled: String(!autoScanEnabled) }, { method: "post" })}
-            >
-              {autoScanEnabled ? "Weekly scan on" : "Enable weekly scan"}
-            </Button>
+            {canAutoSeoScan ? (
+              <Button
+                pressed={autoScanEnabled}
+                onClick={() => scanFetcher.submit({ intent: "set_auto_scan", enabled: String(!autoScanEnabled) }, { method: "post" })}
+              >
+                {autoScanEnabled ? "Weekly scan on" : "Enable weekly scan"}
+              </Button>
+            ) : (
+              <Button url="/app/pricing?reason=auto_seo_scan">Unlock weekly scans</Button>
+            )}
             <Button variant="primary" onClick={() => navigate("/app/blogs")}>
               Review posts
             </Button>
@@ -796,6 +838,12 @@ export default function SEOOptimizer() {
         <div className="bp-seo-scope-tabs">
           <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="blogs" />
         </div>
+
+        {Number.isFinite(seoBlogPostLimit) && (
+          <Banner tone="info" title={`${planKey === "free" ? "Free" : planKey === "plus" ? "Plus" : "Pro"} plan scans the ${seoBlogPostLimit} most recently updated blog posts`}>
+            <p>Upgrade to increase the scan scope. Existing SEO records outside this limit are preserved.</p>
+          </Banner>
+        )}
 
         {shopifyError && (
           <Card padding="400">
@@ -999,7 +1047,13 @@ export default function SEOOptimizer() {
 
           <Layout.Section variant="oneThird">
             <BlockStack gap="400">
-              <SearchConsoleCard data={searchConsole} busy={isGoogleBusy} submit={(values) => scanFetcher.submit(values, { method: "post" })} />
+              {canSearchConsole ? (
+                <SearchConsoleCard data={searchConsole} busy={isGoogleBusy} submit={(values) => scanFetcher.submit(values, { method: "post" })} />
+              ) : (
+                <Banner tone="info" title="Google Search Console is a Pro feature" action={{ content: "Upgrade to Pro", url: "/app/pricing?reason=search_console" }}>
+                  <p>Unlock search queries, impressions, clicks and opportunity insights.</p>
+                </Banner>
+              )}
 
               <Card padding="400">
                 <BlockStack gap="400">
@@ -1266,14 +1320,15 @@ function MetricCard({
   );
 }
 
-async function fetchShopifyArticles(admin: any, onPage?: (loadedPosts: number) => Promise<void>): Promise<ArticleInput[]> {
+async function fetchShopifyArticles(admin: any, limit: number, onPage?: (loadedPosts: number) => Promise<void>): Promise<ArticleInput[]> {
   const articles: ArticleInput[] = [];
   let cursor: string | null = null;
-  let hasNextPage = true;
+  let hasNextPage = limit > 0;
   while (hasNextPage) {
+    const pageSize = Number.isFinite(limit) ? Math.min(100, Math.max(1, limit - articles.length)) : 100;
     const response = await admin.graphql(`#graphql
-      query SeoArticles($after: String) {
-        articles(first: 100, after: $after, sortKey: UPDATED_AT) {
+      query SeoArticles($after: String, $first: Int!) {
+        articles(first: $first, after: $after, sortKey: UPDATED_AT, reverse: true) {
           nodes { id title handle updatedAt publishedAt author { name } body summary image { url altText width height }
             seoTitle: metafield(namespace: "global", key: "title_tag") { value }
             seoDescription: metafield(namespace: "global", key: "description_tag") { value }
@@ -1281,7 +1336,7 @@ async function fetchShopifyArticles(admin: any, onPage?: (loadedPosts: number) =
           }
           pageInfo { hasNextPage endCursor }
         }
-      }`, { variables: { after: cursor } });
+      }`, { variables: { after: cursor, first: pageSize } });
     const result: any = await response.json();
     if (result.errors?.length) throw new Error(result.errors.map((error: any) => error.message).join("; ") || "Could not load Shopify blog posts.");
     const connection = result.data?.articles;
@@ -1306,7 +1361,7 @@ async function fetchShopifyArticles(admin: any, onPage?: (loadedPosts: number) =
       authorName: article.author?.name || "",
       });
     }
-    hasNextPage = Boolean(connection?.pageInfo?.hasNextPage);
+    hasNextPage = Boolean(connection?.pageInfo?.hasNextPage) && (!Number.isFinite(limit) || articles.length < limit);
     cursor = connection?.pageInfo?.endCursor || null;
     if (onPage) await onPage(articles.length);
     if (hasNextPage && !cursor) throw new Error("Shopify article pagination did not return a cursor.");

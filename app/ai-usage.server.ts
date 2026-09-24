@@ -13,7 +13,7 @@ export class AiQuotaExceededError extends Error {
   readonly status: AiUsageStatus;
 
   constructor(status: AiUsageStatus) {
-    super(`The Free plan AI limit of ${status.limit} generations per month has been reached.`);
+    super(`The plan limit of ${status.limit} AI generations per month has been reached.`);
     this.name = "AiQuotaExceededError";
     this.status = status;
   }

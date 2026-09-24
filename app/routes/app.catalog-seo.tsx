@@ -7,7 +7,7 @@ import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, IndexTable
 import { AlertTriangleIcon, CheckCircleIcon, CollectionIcon, ProductIcon } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
+import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import type { CatalogResourceType, CatalogSeoIssue } from "../catalog-seo";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
 import {
@@ -20,7 +20,9 @@ export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 const PAGE_SIZE = 20;
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
+  const { limits } = await getActivePlanAndLimits(billing, session.shop);
+  if (!limits.canCatalogSeo) return redirect("/app/pricing?reason=catalog_seo");
   const url = new URL(request.url);
   const resourceType: CatalogResourceType = url.searchParams.get("type") === "collection" ? "collection" : "product";
   const view = url.searchParams.get("view") === "manager" ? "manager" : "issues";

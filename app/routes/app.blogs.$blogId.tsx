@@ -9,6 +9,7 @@ import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import {
   Badge,
+  Banner,
   BlockStack,
   Box,
   Button,
@@ -443,6 +444,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       fileImagesError: "",
       internalLinkCandidates,
       canInternalLinking: limits.canInternalLinking,
+      canEditSeo: planKey !== "free",
       planKey,
       aiEnabled: isNineRouterConfigured(),
       aiUsage,
@@ -598,6 +600,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     fileImagesError: "",
     internalLinkCandidates,
     canInternalLinking: limits.canInternalLinking,
+    canEditSeo: planKey !== "free",
     planKey,
     aiEnabled: isNineRouterConfigured(),
     aiUsage,
@@ -630,7 +633,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         {
           success: false,
           action: "ai_quota_reached",
-          error: `${error.message} Upgrade to Pro for unlimited AI.`,
+          error: `${error.message} Upgrade for a higher monthly AI allowance.`,
           aiUsage: error.status,
           upgradeUrl: "/app/pricing?reason=ai_limit",
         },
@@ -654,6 +657,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const articleId = isNewPost ? "" : getArticleId(rawArticleParam);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
+
+  if (["analyze_seo", "apply_seo_suggestions", "generate_ai_seo_fix"].includes(intent)) {
+    const { planKey } = await getActivePlan();
+    if (planKey === "free") {
+      return json(
+        {
+          success: false,
+          error: "SEO editing tools are available on Plus, Pro and Growth plans.",
+          upgradeUrl: "/app/pricing?reason=blog_seo_tools",
+        },
+        { status: 403 },
+      );
+    }
+  }
 
   if (
     isNewPost &&
@@ -1357,10 +1374,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       const alreadyShoppable = articlesWithProducts.some((a) => a.articleId === articleId);
       if (!alreadyShoppable && articlesWithProducts.length >= limits.shoppableArticles) {
-        const upgradeTarget = planKey === "free" ? "Pro" : "Growth";
+        const upgradeTarget = planKey === "free" ? "Plus" : planKey === "plus" ? "Pro" : "Growth";
         const upgradeDesc = planKey === "free"
-          ? "Pro allows up to 100 shoppable posts"
-          : "Growth allows unlimited shoppable posts";
+          ? "Plus allows up to 15 shoppable posts"
+          : planKey === "plus"
+            ? "Pro allows up to 100 shoppable posts"
+            : "Growth allows unlimited shoppable posts";
         return json(
           {
             success: false,
@@ -1368,7 +1387,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             limitType: "shoppableArticles",
             limitValue: limits.shoppableArticles,
             planKey,
-            error: `Your ${planKey === "free" ? "Free" : "Pro"} plan allows up to ${formatLimit(limits.shoppableArticles)} shoppable posts. Upgrade to ${upgradeTarget} — ${upgradeDesc}.`,
+            error: `Your ${planKey === "free" ? "Free" : planKey === "plus" ? "Plus" : "Pro"} plan allows up to ${formatLimit(limits.shoppableArticles)} shoppable posts. Upgrade to ${upgradeTarget} — ${upgradeDesc}.`,
           },
           { status: 403 },
         );
@@ -1667,7 +1686,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ArticleDetail() {
-  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, planKey, aiEnabled, aiUsage, contentRefresh, contentRefreshRequested, briefPrefill } =
+  const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, canEditSeo, planKey, aiEnabled, aiUsage, contentRefresh, contentRefreshRequested, briefPrefill } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const aiFetcher = useFetcher<typeof action>();
@@ -3220,28 +3239,34 @@ export default function ArticleDetail() {
                   </Card>
                 )}
 
-                <SeoSidebar
-                  seoScore={seoScore}
-                  issues={seoIssues}
-                  focusKeyword={focusKeyword}
-                  onChangeFocusKeyword={(val) => {
-                    setFocusKeyword(val);
-                    markDirty();
-                  }}
-                  keywordScores={keywordScores}
-                  onApplyAll={handleApplySeoSuggestions}
-                  onManageProducts={() => setSelectedTab(1)}
-                  onReviewInternalLinks={() => {
-                    document.getElementById("internal-link-assistant")?.scrollIntoView({ behavior: "smooth", block: "center" });
-                  }}
-                  aiEnabled={aiEnabled}
-                  aiLoading={isSeoFixGenerating}
-                  aiLoadingTarget={seoFixLoadingTarget}
-                  undoAvailable={Boolean(seoFixUndo)}
-                  onUndo={handleUndoSeoFix}
-                  onFixIssue={(issue) => handleGenerateSeoFix([issue], issue.type)}
-                  onFixAll={() => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all")}
-                />
+                {canEditSeo ? (
+                  <SeoSidebar
+                    seoScore={seoScore}
+                    issues={seoIssues}
+                    focusKeyword={focusKeyword}
+                    onChangeFocusKeyword={(val) => {
+                      setFocusKeyword(val);
+                      markDirty();
+                    }}
+                    keywordScores={keywordScores}
+                    onApplyAll={handleApplySeoSuggestions}
+                    onManageProducts={() => setSelectedTab(1)}
+                    onReviewInternalLinks={() => {
+                      document.getElementById("internal-link-assistant")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }}
+                    aiEnabled={aiEnabled}
+                    aiLoading={isSeoFixGenerating}
+                    aiLoadingTarget={seoFixLoadingTarget}
+                    undoAvailable={Boolean(seoFixUndo)}
+                    onUndo={handleUndoSeoFix}
+                    onFixIssue={(issue) => handleGenerateSeoFix([issue], issue.type)}
+                    onFixAll={() => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all")}
+                  />
+                ) : (
+                  <Banner tone="info" title="SEO editing tools are available on Plus" action={{ content: "Upgrade to Plus", url: "/app/pricing?reason=blog_seo_tools" }}>
+                    <p>Your Free plan can preview SEO scores for recent posts. Upgrade to review issues and apply improvements.</p>
+                  </Banner>
+                )}
               </BlockStack>
             )}
 

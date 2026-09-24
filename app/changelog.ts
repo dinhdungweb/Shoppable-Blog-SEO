@@ -10,6 +10,20 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.09.24",
+    date: "2026-09-24",
+    title: "Plus plan and clearer SEO limits",
+    summary: "A new $9 Plus plan gives small stores a practical paid entry point while each tier now has explicit usage and SEO entitlements.",
+    tags: ["New", "Improved", "Fixed"],
+    changes: [
+      { type: "New", text: "Plus includes up to 15 shoppable blog posts, Product and Collection SEO, 30-day analytics and 25 monthly AI generations." },
+      { type: "Improved", text: "Free now focuses on evaluation with one shoppable post, three recent Blog SEO score previews and three monthly AI generations." },
+      { type: "Improved", text: "Pro and Growth include longer analytics history and explicit monthly AI allowances instead of unlimited AI usage." },
+      { type: "Improved", text: "Google Search Console and scheduled SEO scans are reserved for Pro and Growth, while Product and Collection SEO starts on Plus." },
+      { type: "Fixed", text: "Limited SEO scans preserve existing out-of-scope SEO records and product links instead of deleting merchant data." },
+    ],
+  },
+  {
     version: "2026.07.23",
     date: "2026-07-23",
     title: "AI content planning and optimization copilots",

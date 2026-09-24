@@ -22,14 +22,14 @@ import {
   StarFilledIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { GROWTH_PLAN, PAID_PLANS, PRO_PLAN, PLAN_LIMITS, getPlanKey } from "../pricing-plans";
+import { GROWTH_PLAN, PAID_PLANS, PLUS_PLAN, PRO_PLAN, PLAN_LIMITS, getPlanKey } from "../pricing-plans";
 import { authenticate, isBillingTestMode } from "../shopify.server";
 import prisma from "../db.server";
 import type { PlanKey } from "../pricing-plans";
 
 type PricingPlan = {
-  key: "free" | "pro" | "growth";
-  billingPlan?: typeof PRO_PLAN | typeof GROWTH_PLAN;
+  key: PlanKey;
+  billingPlan?: (typeof PAID_PLANS)[number];
   name: string;
   price: string;
   interval: string;
@@ -59,11 +59,30 @@ const PRICING_PLANS: PricingPlan[] = [
     topLabel: "Start with essentials",
     icon: ProductIcon,
     features: [
-      "Blog manager and product linking",
+      `1 active shoppable blog post`,
       "Basic storefront product widget",
-      "Rule-based SEO scan",
+      `${PLAN_LIMITS.free.seoBlogPosts} recent blog SEO score previews`,
       `${PLAN_LIMITS.free.aiRequestsPerMonth} AI generations per month`,
-      "Basic analytics dashboard",
+      `${PLAN_LIMITS.free.analyticsWindowDays}-day click analytics`,
+    ],
+  },
+  {
+    key: "plus",
+    billingPlan: PLUS_PLAN,
+    name: "Plus",
+    price: "$9",
+    interval: "per month",
+    description: "For small stores running a focused shoppable blog.",
+    topLabel: "Best for small stores",
+    icon: ProductIcon,
+    features: [
+      `Up to ${PLAN_LIMITS.plus.shoppableArticles} shoppable blog posts`,
+      `${PLAN_LIMITS.plus.analyticsWindowDays}-day click and add-to-cart analytics`,
+      "Blog SEO editor and issue guidance",
+      "Product and collection SEO workspaces",
+      "Carousel and grid display customization",
+      `${PLAN_LIMITS.plus.aiRequestsPerMonth} AI generations per month`,
+      "7-day free trial",
     ],
   },
   {
@@ -85,9 +104,10 @@ const PRICING_PLANS: PricingPlan[] = [
       "SEO optimizer with post-level actions",
       "Internal Linking Assistant",
       "AI Content Brief & Keyword Cluster",
-      "Unlimited AI generations",
+      `${PLAN_LIMITS.pro.aiRequestsPerMonth} AI generations per month`,
       "Conversion tracking and attribution",
-      "3-day free trial",
+      "Google Search Console insights and scheduled SEO scans",
+      "7-day free trial",
     ],
   },
   {
@@ -112,7 +132,8 @@ const PRICING_PLANS: PricingPlan[] = [
       "Content Decay Monitor",
       "Custom widget CSS controls",
       "Priority support",
-      "3-day free trial",
+      `${PLAN_LIMITS.growth.aiRequestsPerMonth} AI generations per month`,
+      "7-day free trial",
     ],
   },
 ];
@@ -121,7 +142,8 @@ const PRICING_PLANS: PricingPlan[] = [
 const UPGRADE_REASON_MESSAGES: Record<string, string> = {
   bulk_edit:
     "Bulk Review is a Growth plan feature. Upgrade to review and edit multiple posts at once.",
-  shoppable_articles_free: `Your Free plan allows up to ${PLAN_LIMITS.free.shoppableArticles} shoppable posts. Upgrade to Pro (up to 100 posts) or Growth (unlimited).`,
+  shoppable_articles_free: `Your Free plan allows ${PLAN_LIMITS.free.shoppableArticles} shoppable post. Upgrade to Plus for up to ${PLAN_LIMITS.plus.shoppableArticles} posts.`,
+  shoppable_articles_plus: `Your Plus plan allows up to ${PLAN_LIMITS.plus.shoppableArticles} shoppable posts. Upgrade to Pro for up to ${PLAN_LIMITS.pro.shoppableArticles} posts.`,
   shoppable_articles_pro: `Your Pro plan allows up to ${PLAN_LIMITS.pro.shoppableArticles} shoppable posts. Upgrade to Growth for unlimited shoppable posts.`,
   content_navigation: "Table of contents and breadcrumbs are Pro plan features. Upgrade to enable TOC settings and storefront content navigation.",
   internal_linking: "Internal Linking Assistant is available on Pro and Growth plans. Upgrade to analyze, review and insert relevant links across Shopify articles.",
@@ -129,7 +151,11 @@ const UPGRADE_REASON_MESSAGES: Record<string, string> = {
   image_seo: "AI Image SEO is a Growth plan feature. Upgrade to review featured and inline image alt text across multiple Shopify articles with batch Apply and Undo.",
   custom_css: "Custom widget CSS is a Growth plan feature. Upgrade to control your widget styling.",
   content_decay: "Content Decay Monitor is a Growth plan feature. Upgrade to monitor declining traffic, stale content, unavailable products and broken links.",
-  ai_limit: `Your Free plan includes ${PLAN_LIMITS.free.aiRequestsPerMonth} AI generations per month. Upgrade to Pro for unlimited AI generations.`,
+  catalog_seo: "Product and Collection SEO are available on Plus, Pro and Growth plans.",
+  blog_seo_tools: "Free includes SEO score previews for 3 recent blog posts. Upgrade to Plus to edit and apply SEO improvements.",
+  search_console: "Google Search Console insights are available on Pro and Growth plans.",
+  auto_seo_scan: "Scheduled SEO scans are available on Pro and Growth plans.",
+  ai_limit: "Your plan has reached its monthly AI generation limit. Upgrade for a higher allowance.",
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -208,7 +234,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const url = new URL(request.url);
   return billing.request({
-    plan: selectedPlan as typeof PRO_PLAN | typeof GROWTH_PLAN,
+    plan: selectedPlan as (typeof PAID_PLANS)[number],
     isTest: isBillingTestMode(),
     returnUrl: getBillingReturnUrl(request, url, session.shop),
   });
@@ -269,7 +295,7 @@ export default function PricingPage() {
               Compare plans
             </Text>
             <Text as="p" variant="bodyMd" tone="subdued">
-              Every paid plan includes a 3-day free trial. Upgrade or downgrade from Shopify billing at any time.
+              Every paid plan includes a 7-day free trial. Upgrade or downgrade from Shopify billing at any time.
             </Text>
           </BlockStack>
         </InlineStack>
@@ -279,7 +305,7 @@ export default function PricingPage() {
           <Banner
             tone="warning"
             title="Upgrade required"
-            action={{ content: "View Growth plan", url: "#growth" }}
+            action={{ content: "Compare paid plans", url: "#plus" }}
           >
             <p>{upgradeMessage}</p>
           </Banner>
@@ -309,7 +335,7 @@ export default function PricingPage() {
           </Banner>
         )}
 
-        <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
+        <InlineGrid columns={{ xs: 1, sm: 2, lg: 4 }} gap="400">
           {PRICING_PLANS.map((plan) => (
             <PricingPlanCard
               key={plan.key}
@@ -327,13 +353,14 @@ export default function PricingPage() {
 
 async function applyPlanRestrictions(shop: string, planKey: PlanKey) {
   const data =
-    planKey === "free"
+    planKey === "free" || planKey === "plus"
       ? {
           customCss: null,
           contentNavCustomCss: null,
           breadcrumbsEnabled: false,
           tocEnabled: false,
           tocAutoInsertEnabled: false,
+          seoAutoScanEnabled: false,
         }
       : planKey === "pro"
         ? {

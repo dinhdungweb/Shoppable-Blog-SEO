@@ -1,6 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
+import { getLimitsForPlan } from "../pricing-plans";
 import { consumeOAuthState, exchangeAuthorizationCode } from "../search-console.server";
+import { getUnauthenticatedActivePlanName } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
@@ -9,6 +11,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const shop = await consumeOAuthState(state);
     if (error) return redirect(embeddedSeoUrl(shop, { google: "error", message: error }));
+    const planName = await getUnauthenticatedActivePlanName(shop);
+    if (!getLimitsForPlan(planName).canSearchConsole) {
+      return redirect(embeddedAppUrl(shop, "pricing", { reason: "search_console" }));
+    }
     const code = url.searchParams.get("code");
     if (!code) throw new Error("Google did not provide an authorization code.");
     await exchangeAuthorizationCode(shop, code);
@@ -20,9 +26,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 function embeddedSeoUrl(shop: string, params: Record<string, string>) {
+  return embeddedAppUrl(shop, "seo", params);
+}
+
+function embeddedAppUrl(shop: string, path: string, params: Record<string, string>) {
   const apiKey = process.env.SHOPIFY_API_KEY;
   if (!apiKey) {
-    const fallback = new URL("/app/seo", process.env.SHOPIFY_APP_URL);
+    const fallback = new URL(`/app/${path}`, process.env.SHOPIFY_APP_URL);
     fallback.searchParams.set("shop", shop);
     Object.entries(params).forEach(([key, value]) => fallback.searchParams.set(key, value));
     return fallback.toString();
@@ -30,7 +40,7 @@ function embeddedSeoUrl(shop: string, params: Record<string, string>) {
 
   const shopAdminSlug = shop.replace(/\.myshopify\.com$/i, "");
   const destination = new URL(
-    `https://admin.shopify.com/store/${encodeURIComponent(shopAdminSlug)}/apps/${encodeURIComponent(apiKey)}/app/seo`,
+    `https://admin.shopify.com/store/${encodeURIComponent(shopAdminSlug)}/apps/${encodeURIComponent(apiKey)}/app/${path}`,
   );
   Object.entries(params).forEach(([key, value]) => destination.searchParams.set(key, value));
   return destination.toString();
