@@ -3,15 +3,23 @@ import { authenticate } from "../shopify.server";
 import { purgeShopData } from "../shop-data.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  let shop: string;
   try {
-    const { shop, topic } = await authenticate.webhook(request);
-    console.log(`Received ${topic} webhook for ${shop}`);
-    await purgeShopData(shop);
+    const webhook = await authenticate.webhook(request);
+    shop = webhook.shop;
+    console.log(`Received ${webhook.topic} webhook for ${shop}`);
   } catch (error) {
-    console.error("[Webhook] Rejected or failed shop/redact webhook:", error);
+    console.error("[Webhook] Rejected shop/redact webhook:", error);
     return new Response(null, { status: 401 });
   }
 
-  // Shopify strictly requires privacy compliance webhooks to return 200 OK
+  try {
+    await purgeShopData(shop);
+  } catch (error) {
+    // Return 5xx so Shopify retries; the shop's data must eventually be erased.
+    console.error(`[Webhook] Failed to purge data for ${shop} on shop/redact:`, error);
+    return new Response(null, { status: 500 });
+  }
+
   return new Response(null, { status: 200 });
 };

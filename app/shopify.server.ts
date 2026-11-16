@@ -23,16 +23,19 @@ const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
   apiVersion: ApiVersion.April26,
-  scopes: process.env.SCOPES?.split(",") || [
+  // Keep the fallback identical to [access_scopes] in shopify.app.toml.
+  scopes: process.env.SCOPES?.split(",").map((scope) => scope.trim()).filter(Boolean) || [
     "read_content",
-    "write_content",
-    "read_products",
-    "read_inventory",
-    "read_themes",
     "read_files",
+    "read_inventory",
+    "read_products",
+    "read_themes",
+    "write_app_proxy",
+    "write_content",
     "write_files",
     "write_pixels",
-    "read_customer_events"
+    "write_products",
+    "read_customer_events",
   ],
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
