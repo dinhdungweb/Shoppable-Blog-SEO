@@ -23,20 +23,16 @@ import {
 } from "@shopify/polaris";
 import {
   AlertCircleIcon,
-  AlertTriangleIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   CashDollarIcon,
   ChartVerticalFilledIcon,
   CheckIcon,
-  ChevronRightIcon,
   EditIcon,
   ImageIcon,
   MagicIcon,
   NoteIcon,
-  PlusIcon,
-  SearchIcon,
-  TargetIcon,
+  LockIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import {
@@ -51,6 +47,8 @@ import {
 } from "recharts";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
+import { auditMetaTags } from "../meta-tag-audit";
+import { buildHomeTasks, computeStoreSeoScore, type HomeTask, type StoreSeoScore } from "../home-tasks";
 
 type DashboardArticle = {
   id: string;
@@ -93,17 +91,8 @@ type ChartPoint = PeriodMetrics & {
   date: string;
 };
 
-type RecommendedIconKey = "alert" | "plus" | "chart" | "target";
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
-const RECOMMENDED_ICON_MAP = {
-  alert: AlertCircleIcon,
-  plus: PlusIcon,
-  chart: ChartVerticalFilledIcon,
-  target: TargetIcon,
-};
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
   const { session, billing } = await authenticate.admin(request);
@@ -141,7 +130,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
     prisma.articleSEO.findMany({
       where: { shop },
-      select: { articleId: true, articleTitle: true, seoScore: true, metaDescription: true, metaTitle: true, articleHandle: true, imageUrl: true, imageAlt: true, blogTitle: true, blogHandle: true, sourceUpdatedAt: true, publishedAt: true },
+      select: { articleId: true, articleTitle: true, seoScore: true, metaDescription: true, metaTitle: true, articleHandle: true, imageUrl: true, imageAlt: true, blogTitle: true, blogHandle: true, sourceUpdatedAt: true, publishedAt: true, lastAnalyzedAt: true },
     }),
     prisma.$queryRaw<Array<{ articleId: string; productId: string; eventType: string; createdAt: Date; count: number }>>`
       SELECT "articleId", "productId", "eventType", date_trunc('day', "createdAt") AS "createdAt", COUNT(*)::int AS "count"
@@ -258,6 +247,60 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   ).length;
   const averageSeoScore = getAverageSeoScore(articles);
 
+  // ── Cross-workspace signals for the "What to do next" queue ──────────────
+  const [catalogAverages, catalogIssueCounts, speedScans, decayAnalysis, linkAnalysis, searchConnection] = await Promise.all([
+    prisma.resourceSEO.groupBy({ by: ["resourceType"], where: { shop, lastAnalyzedAt: { not: null } }, _avg: { seoScore: true }, _count: { _all: true } }),
+    prisma.resourceSEO.groupBy({ by: ["resourceType"], where: { shop, issueCount: { gt: 0 } }, _count: { _all: true } }),
+    prisma.storefrontPerformanceScan.findMany({ where: { shop, status: "completed", scannedAt: { not: null } }, select: { mobileScore: true } }),
+    prisma.contentDecayAnalysis.findUnique({ where: { shop }, select: { report: true } }),
+    prisma.internalLinkAnalysis.findUnique({ where: { shop }, select: { report: true } }),
+    prisma.searchConsoleConnection.findUnique({ where: { shop }, select: { selectedSiteUrl: true } }),
+  ]);
+
+  const scannedSeoRows = seoRows.filter((row) => row.lastAnalyzedAt);
+  const lastScanAt = scannedSeoRows.reduce<Date | null>((latest, row) => (!latest || row.lastAnalyzedAt! > latest ? row.lastAnalyzedAt : latest), null);
+  const metaProblems = seoRows.map((row) => auditMetaTags(row));
+  const catalogAverage = (type: string) => catalogAverages.find((row) => row.resourceType === type);
+  const catalogIssues = (type: string) => catalogIssueCounts.find((row) => row.resourceType === type)?._count._all || 0;
+  const decayIssues = readReportArray<{ articleId: string; severity: string }>(decayAnalysis?.report, "issues");
+  const linkReport = linkAnalysis?.report as { orphanArticles?: unknown[]; brokenLinks?: unknown[] } | null | undefined;
+
+  const storeScore = computeStoreSeoScore({
+    blog: {
+      average: scannedSeoRows.length ? scannedSeoRows.reduce((sum, row) => sum + row.seoScore, 0) / scannedSeoRows.length : null,
+      count: scannedSeoRows.length,
+    },
+    products: { average: catalogAverage("product")?._avg.seoScore ?? null, count: catalogAverage("product")?._count._all || 0 },
+    collections: { average: catalogAverage("collection")?._avg.seoScore ?? null, count: catalogAverage("collection")?._count._all || 0 },
+    speed: speedScans.length ? speedScans.reduce((sum, scan) => sum + scan.mobileScore, 0) / speedScans.length : null,
+  });
+
+  const homeTasks = buildHomeTasks({
+    now,
+    lastScanAt,
+    articlesScanned: scannedSeoRows.length,
+    lowScoreArticles: scannedSeoRows.filter((row) => row.seoScore < 50).length,
+    missingMetaDescriptions: metaProblems.filter((problems) => problems.includes("missing_description")).length,
+    metaLengthProblems: metaProblems.filter((problems) => problems.some((problem) => problem.endsWith("_too_long") || problem.endsWith("_too_short"))).length,
+    missingFeaturedAlt: metaProblems.filter((problems) => problems.includes("missing_featured_alt")).length,
+    productIssues: catalogIssues("product"),
+    collectionIssues: catalogIssues("collection"),
+    decay: decayAnalysis
+      ? {
+          high: new Set(decayIssues.filter((issue) => issue.severity === "high").map((issue) => issue.articleId)).size,
+          total: new Set(decayIssues.map((issue) => issue.articleId)).size,
+        }
+      : null,
+    internalLinks: linkReport
+      ? { orphans: linkReport.orphanArticles?.length || 0, broken: linkReport.brokenLinks?.length || 0 }
+      : null,
+    highTrafficNoProducts,
+    noLinkedProducts,
+    lowCtrPosts,
+    trackingEventsReceived: everEventCount > 0,
+    limits,
+  });
+
   type SetupItem = {
     label: string;
     done: boolean;
@@ -281,18 +324,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       actionLabel: webPixelError === "Checking…" ? "Checking…" : "Activate",
       actionError: webPixelError && webPixelError !== "Checking…" ? webPixelError : undefined,
     },
-    { label: "Products linked to posts", done: linkedProducts.length > 0 },
+    { label: "First SEO scan completed", done: Boolean(lastScanAt), actionUrl: "/app/seo", actionLabel: "Run scan" },
+    ...(limits.canSearchConsole
+      ? [{ label: "Google Search Console connected", done: Boolean(searchConnection?.selectedSiteUrl), actionUrl: "/app/settings?tab=integrations", actionLabel: "Connect" }]
+      : []),
+    { label: "Products linked to posts", done: linkedProducts.length > 0, actionUrl: "/app/blogs", actionLabel: "Link products" },
     { label: "Tracking events received", done: everEventCount > 0 },
     { label: "First shoppable post published", done: shoppablePublishedCount > 0 },
   ];
   const setupDone = setupItems.filter((item) => item.done).length;
-  const recommendedActions = buildRecommendedActions({
-    missingMetaDescriptions,
-    noLinkedProducts,
-    highTrafficNoProducts,
-    lowCtrPosts,
-    everEventCount,
-  });
   console.info("Dashboard loader timing", { shop, articles: articles.length, events: allEvents.length, durationMs: Date.now() - startedAt });
 
   return json({
@@ -325,9 +365,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       progress: Math.round((setupDone / setupItems.length) * 100),
     },
     recentPosts: articles.slice(0, 5),
-    recommendedActions,
+    homeTasks,
+    storeScore,
+    lastScanAt: lastScanAt?.toISOString() || null,
   });
 };
+
+function readReportArray<T>(report: unknown, key: string): T[] {
+  if (!report || typeof report !== "object") return [];
+  const value = (report as Record<string, unknown>)[key];
+  return Array.isArray(value) ? (value as T[]) : [];
+}
 
 export default function Dashboard() {
   const data = useLoaderData<any>();
@@ -396,27 +444,29 @@ export default function Dashboard() {
     counts,
     setup: initialSetup,
     recentPosts,
-    recommendedActions,
-  } = data;
+    homeTasks,
+    storeScore,
+    lastScanAt,
+  } = data as typeof data & { homeTasks: HomeTask[]; storeScore: StoreSeoScore; lastScanAt: string | null };
   const setup = mergeSetupStatus(initialSetup, setupFetcher.data, pixelFetcher.data?.error);
 
   const productCtr = getCtr(metrics.clicks, metrics.impressions);
 
   return (
     <Page fullWidth>
-      <TitleBar title="Overview" />
+      <TitleBar title="Home" />
       <BlockStack gap="600">
         <InlineStack align="space-between" blockAlign="end">
           <BlockStack gap="100">
             <Text as="h1" variant="headingLg" fontWeight="bold">
-              Overview
+              Home
             </Text>
             <Text as="p" variant="bodyMd" tone="subdued">
-              Monitor shoppable blog setup, SEO health, and product engagement from the last 30 days.
+              Your store&apos;s SEO health and the most valuable fixes to make next.
             </Text>
           </BlockStack>
           <InlineStack gap="200">
-            <Button onClick={() => navigate("/app/seo")}>Run SEO scan</Button>
+            <Button onClick={() => navigate("/app/seo")}>SEO Audit</Button>
             <Button variant="primary" onClick={() => navigate("/app/blogs/new")}>
               Create post
             </Button>
@@ -429,12 +479,15 @@ export default function Dashboard() {
           </Banner>
         )}
 
-        <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
+        <InlineGrid columns={{ xs: 1, md: "1fr 2fr" }} gap="400">
+          <BlockStack gap="400">
+          <StoreScoreCard storeScore={storeScore} lastScanAt={lastScanAt} onScan={() => navigate("/app/seo")} />
+          {setup.progress < 100 && (
           <Card padding="400">
             <BlockStack gap="400">
               <InlineStack align="space-between">
                 <Text as="h2" variant="headingMd" fontWeight="bold">
-                  Setup progress
+                  Setup checklist
                 </Text>
                 <Text as="span" variant="bodySm" tone="subdued">
                   {setup.done} of {setup.total} completed
@@ -454,47 +507,10 @@ export default function Dashboard() {
               </BlockStack>
             </BlockStack>
           </Card>
+          )}
+          </BlockStack>
 
-          <Card padding="400">
-            <BlockStack gap="400">
-              <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", width: "fit-content" }}>
-                <Icon source={AlertTriangleIcon} tone={recommendedActions.length ? "warning" : "success"} />
-                <Text as="h2" variant="headingMd" fontWeight="bold">
-                  Current priorities
-                </Text>
-              </div>
-              <BlockStack gap="300">
-                <PriorityItem number={String(counts.missingMetaDescriptions)} label="posts missing meta descriptions" tone={counts.missingMetaDescriptions ? "critical" : "subdued"} />
-                <Divider />
-                <PriorityItem number={String(counts.noLinkedProducts)} label="posts without linked products" tone={counts.noLinkedProducts ? "warning" : "subdued"} />
-                <Divider />
-                <PriorityItem number={String(counts.lowCtrPosts)} label="linked posts with low product CTR" tone={counts.lowCtrPosts ? "warning" : "subdued"} />
-              </BlockStack>
-              <InlineStack gap="200">
-                <Button variant="primary" onClick={() => navigate("/app/seo")}>
-                  Review SEO
-                </Button>
-                <Button onClick={() => navigate("/app/blogs")}>Review posts</Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-
-          <Card padding="400">
-            <BlockStack gap="400">
-              <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", width: "fit-content" }}>
-                <Icon source={MagicIcon} tone="info" />
-                <Text as="h2" variant="headingMd" fontWeight="bold">
-                  Quick actions
-                </Text>
-              </div>
-              <BlockStack gap="100">
-                <ActionItem icon={EditIcon} title="Create shoppable post" desc="Draft a post in the blog editor" onAction={() => navigate("/app/blogs/new")} />
-                <ActionItem icon={SearchIcon} title="Run SEO scan" desc="Find posts missing metadata or products" onAction={() => navigate("/app/seo")} />
-                <ActionItem icon={PlusIcon} title="Add products to posts" desc="Open Blog Manager and link products" onAction={() => navigate("/app/blogs")} />
-                <ActionItem icon={TargetIcon} title="Review app settings" desc="Check tracking and widget display rules" onAction={() => navigate("/app/settings")} />
-              </BlockStack>
-            </BlockStack>
-          </Card>
+          <HomeTaskList tasks={homeTasks} planKey={planKey} onNavigate={(url) => navigate(url)} />
         </InlineGrid>
 
         <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
@@ -528,40 +544,7 @@ export default function Dashboard() {
           />
         </InlineGrid>
 
-        <InlineGrid columns={{ xs: 1, lg: "1fr 2fr" }} gap="400">
-          <Card padding="400">
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd" fontWeight="bold">
-                Recommended next actions
-              </Text>
-              {recommendedActions.length ? (
-                <BlockStack gap="400">
-                  {recommendedActions.map((action: any, index: number) => (
-                    <RecommendedAction
-                      key={action.title}
-                      icon={RECOMMENDED_ICON_MAP[action.iconKey as RecommendedIconKey]}
-                      iconTone={action.iconTone}
-                      title={action.title}
-                      badge={action.badge}
-                      badgeTone={action.badgeTone}
-                      button={action.button}
-                      onAction={() => navigate(action.to)}
-                      showDivider={index < recommendedActions.length - 1}
-                    />
-                  ))}
-                </BlockStack>
-              ) : (
-                <InlineStack gap="300" blockAlign="center">
-                  <Icon source={CheckIcon} tone="success" />
-                  <Text as="p" variant="bodyMd">
-                    No urgent recommendations right now.
-                  </Text>
-                </InlineStack>
-              )}
-            </BlockStack>
-          </Card>
-
-          <Card padding="400">
+        <Card padding="400">
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd" fontWeight="bold">
@@ -627,7 +610,6 @@ export default function Dashboard() {
               </InlineGrid>
             </BlockStack>
           </Card>
-        </InlineGrid>
 
         <Card padding="0">
           <Box padding="400" paddingBlockEnd="200">
@@ -749,56 +731,91 @@ function ProgressItem({ label, done, actionUrl, actionLabel, actionError, onActi
   );
 }
 
-function PriorityItem({ number, label, tone }: { number: string; label: string; tone: "critical" | "warning" | "subdued" }) {
+function StoreScoreCard({ storeScore, lastScanAt, onScan }: { storeScore: StoreSeoScore; lastScanAt: string | null; onScan: () => void }) {
+  const tone = storeScore.score === null ? "subdued" : getScoreTone(storeScore.score);
   return (
-    <div className="bp-overview-row">
-      <InlineStack gap="300" blockAlign="center" wrap={false}>
-        <Text as="span" variant="headingLg" fontWeight="bold" tone={tone === "warning" ? "caution" : tone}>
-          {number}
-        </Text>
-        <Text as="span" variant="bodyMd">
-          {label}
-        </Text>
-      </InlineStack>
-      <span className="bp-overview-chevron">
-        <Icon source={ChevronRightIcon} tone="subdued" />
-      </span>
-    </div>
+    <Card padding="400">
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h2" variant="headingMd" fontWeight="bold">Store SEO health</Text>
+          <Text as="span" variant="bodySm" tone="subdued">{lastScanAt ? `Scanned ${formatDate(lastScanAt)}` : "Not scanned"}</Text>
+        </InlineStack>
+        {storeScore.score === null ? (
+          <BlockStack gap="300">
+            <Text as="p" tone="subdued">Run one scan to score your blog posts, products and collections.</Text>
+            <InlineStack><Button variant="primary" onClick={onScan}>Run SEO scan</Button></InlineStack>
+          </BlockStack>
+        ) : (
+          <>
+            <InlineStack gap="200" blockAlign="end">
+              <Text as="p" variant="heading3xl" fontWeight="bold" tone={tone}>{storeScore.score}</Text>
+              <Text as="span" variant="bodyMd" tone="subdued">/ 100</Text>
+            </InlineStack>
+            <ProgressBar progress={storeScore.score} size="small" tone={storeScore.score >= 80 ? "success" : storeScore.score >= 50 ? "highlight" : "critical"} />
+            <BlockStack gap="200">
+              {storeScore.parts.map((part) => (
+                <InlineStack key={part.label} align="space-between" blockAlign="center">
+                  <Text as="span" variant="bodySm">{part.label}</Text>
+                  {part.score === null ? (
+                    <Text as="span" variant="bodySm" tone="subdued">Not scanned</Text>
+                  ) : (
+                    <Text as="span" variant="bodySm" fontWeight="semibold" tone={getScoreTone(part.score)}>
+                      {part.score}{part.label === "Site speed" ? "" : ` · ${formatNumber(part.count)}`}
+                    </Text>
+                  )}
+                </InlineStack>
+              ))}
+            </BlockStack>
+          </>
+        )}
+      </BlockStack>
+    </Card>
   );
 }
 
-function ActionItem({
-  icon,
-  title,
-  desc,
-  onAction,
-}: {
-  icon: any;
-  title: string;
-  desc: string;
-  onAction: () => void;
-}) {
+const IMPACT_TONE = { High: "critical", Medium: "warning", Low: "info" } as const;
+
+function HomeTaskList({ tasks, planKey, onNavigate }: { tasks: HomeTask[]; planKey: string; onNavigate: (url: string) => void }) {
   return (
-    <button type="button" className="bp-overview-action" onClick={onAction}>
-      <div className="bp-overview-row">
-        <InlineStack gap="300" blockAlign="center" wrap={false}>
-          <Box padding="100" background="bg-surface-secondary" borderRadius="100">
-            <Icon source={icon} tone="subdued" />
-          </Box>
+    <Card padding="400">
+      <BlockStack gap="400">
+        <BlockStack gap="100">
+          <Text as="h2" variant="headingMd" fontWeight="bold">What to do next</Text>
+          <Text as="p" variant="bodySm" tone="subdued">Highest-impact fixes across SEO Audit, Bulk Optimize, Content and Catalog.</Text>
+        </BlockStack>
+        {tasks.length ? (
           <BlockStack gap="0">
-            <Text as="span" variant="bodyMd" fontWeight="semibold">
-              {title}
-            </Text>
-            <Text as="span" variant="bodySm" tone="subdued">
-              {desc}
-            </Text>
+            {tasks.map((task, index) => (
+              <div key={task.id}>
+                {index > 0 && <Divider />}
+                <div style={{ padding: "12px 0" }}>
+                  <InlineStack align="space-between" blockAlign="center" gap="300" wrap={false}>
+                    <BlockStack gap="100">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Badge tone={IMPACT_TONE[task.impact]}>{`${task.impact} impact`}</Badge>
+                        <Text as="span" variant="bodySm" tone="subdued">{task.area}</Text>
+                      </InlineStack>
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">{task.title}</Text>
+                      <Text as="span" variant="bodySm" tone="subdued">{task.detail}</Text>
+                    </BlockStack>
+                    {task.locked ? (
+                      <Button icon={LockIcon} onClick={() => onNavigate(`/app/pricing?reason=home_task&plan=${planKey}`)}>Upgrade</Button>
+                    ) : (
+                      <Button onClick={() => onNavigate(task.url)}>{task.actionLabel}</Button>
+                    )}
+                  </InlineStack>
+                </div>
+              </div>
+            ))}
           </BlockStack>
-        </InlineStack>
-        <span className="bp-overview-chevron">
-          <Icon source={ChevronRightIcon} tone="subdued" />
-        </span>
-      </div>
-    </button>
+        ) : (
+          <InlineStack gap="300" blockAlign="center">
+            <Icon source={CheckIcon} tone="success" />
+            <Text as="p" variant="bodyMd">Nothing urgent. Your store is in good shape.</Text>
+          </InlineStack>
+        )}
+      </BlockStack>
+    </Card>
   );
 }
 
@@ -836,44 +853,6 @@ function MetricCard({
         </Box>
       </InlineStack>
     </Card>
-  );
-}
-
-function RecommendedAction({
-  icon,
-  iconTone,
-  title,
-  badge,
-  badgeTone,
-  button,
-  onAction,
-  showDivider,
-}: {
-  icon: any;
-  iconTone: "critical" | "warning" | "info";
-  title: string;
-  badge: string;
-  badgeTone: "critical" | "warning" | "info";
-  button: string;
-  onAction: () => void;
-  showDivider: boolean;
-}) {
-  return (
-    <BlockStack gap="400">
-      <InlineStack align="space-between" blockAlign="center" wrap={false}>
-        <InlineStack gap="300" blockAlign="center" wrap={false}>
-          <Icon source={icon} tone={iconTone} />
-          <Text as="span" variant="bodyMd">
-            {title}
-          </Text>
-          <Badge tone={badgeTone}>{badge}</Badge>
-        </InlineStack>
-        <Button size="micro" onClick={onAction}>
-          {button}
-        </Button>
-      </InlineStack>
-      {showDivider && <Divider />}
-    </BlockStack>
   );
 }
 
@@ -1005,82 +984,6 @@ function CompactProductLeaderboard({
       </BlockStack>
     </Box>
   );
-}
-
-function buildRecommendedActions({
-  missingMetaDescriptions,
-  noLinkedProducts,
-  highTrafficNoProducts,
-  lowCtrPosts,
-  everEventCount,
-}: {
-  missingMetaDescriptions: number;
-  noLinkedProducts: number;
-  highTrafficNoProducts: number;
-  lowCtrPosts: number;
-  everEventCount: number;
-}) {
-  const actions = [];
-
-  if (missingMetaDescriptions > 0) {
-    actions.push({
-      iconKey: "alert" as const,
-      iconTone: "critical" as const,
-      title: `Fix ${missingMetaDescriptions} posts missing meta descriptions`,
-      badge: "High impact",
-      badgeTone: "critical" as const,
-      button: "Fix now",
-      to: "/app/seo",
-    });
-  }
-
-  if (highTrafficNoProducts > 0) {
-    actions.push({
-      iconKey: "plus" as const,
-      iconTone: "warning" as const,
-      title: `Add products to ${highTrafficNoProducts} posts with impressions`,
-      badge: "High impact",
-      badgeTone: "warning" as const,
-      button: "Review posts",
-      to: "/app/blogs",
-    });
-  } else if (noLinkedProducts > 0) {
-    actions.push({
-      iconKey: "plus" as const,
-      iconTone: "warning" as const,
-      title: `Link products to ${noLinkedProducts} posts`,
-      badge: "Medium impact",
-      badgeTone: "warning" as const,
-      button: "Review posts",
-      to: "/app/blogs",
-    });
-  }
-
-  if (lowCtrPosts > 0) {
-    actions.push({
-      iconKey: "chart" as const,
-      iconTone: "warning" as const,
-      title: `Improve ${lowCtrPosts} posts with low product CTR`,
-      badge: "Medium impact",
-      badgeTone: "warning" as const,
-      button: "View posts",
-      to: "/app/blogs",
-    });
-  }
-
-  if (everEventCount === 0) {
-    actions.push({
-      iconKey: "target" as const,
-      iconTone: "info" as const,
-      title: "Verify storefront tracking after enabling the widget",
-      badge: "Setup",
-      badgeTone: "info" as const,
-      button: "Settings",
-      to: "/app/settings",
-    });
-  }
-
-  return actions;
 }
 
 function mergeSetupStatus(setup: any, status: any, pixelActionError?: string) {

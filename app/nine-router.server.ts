@@ -1,4 +1,23 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { injectAiWritingRules, type AiWritingRules } from "./ai-writing-rules";
+
 const REASONING_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh"]);
+
+/**
+ * Per-request merchant writing rules. Every AI module calls fetchNineRouter, so
+ * setting the rules once per request applies them to all generations.
+ */
+const aiWritingRulesStorage = new AsyncLocalStorage<AiWritingRules>();
+
+/** Applies rules to the rest of the current request (call once after authentication). */
+export function enterAiWritingRules(rules: AiWritingRules) {
+  aiWritingRulesStorage.enterWith(rules);
+}
+
+/** Runs one callback with the given rules; used by tests and background work. */
+export function runWithAiWritingRules<T>(rules: AiWritingRules, callback: () => T): T {
+  return aiWritingRulesStorage.run(rules, callback);
+}
 
 class NineRouterUpstreamError extends Error {
   constructor(readonly publicMessage: string) {
@@ -18,7 +37,7 @@ export async function fetchNineRouter(url: string, init: RequestInit, timeoutMs:
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      fetch(url, init),
+      fetch(url, { ...init, body: injectAiWritingRules(init.body, aiWritingRulesStorage.getStore()) as RequestInit["body"] }),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => reject(new NineRouterTimeoutError()), timeoutMs);
       }),

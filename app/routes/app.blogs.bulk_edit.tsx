@@ -4,10 +4,14 @@ import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import { Banner, BlockStack, Button, Card, IndexTable, InlineStack, Layout, Modal, Page, Text, TextField } from "@shopify/polaris";
 import { useEffect, useMemo, useState } from "react";
+import { TitleBar } from "@shopify/app-bridge-react";
+import { OPTIMIZE_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { generateAiSeoSuggestion, isNineRouterConfigured } from "../ai-seo.server";
-import { getPublicNineRouterErrorMessage } from "../nine-router.server";
+import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
+import { loadShopAiWritingRules } from "../ai-writing-rules.server";
+import { DEFAULT_META_DESCRIPTION_TEMPLATE, DEFAULT_META_TITLE_TEMPLATE, renderMetaTemplate } from "../ai-writing-rules";
 
 type ArticleData = { id: string; title: string; metaTitle: string; metaDescription: string; imageUrl: string; imageAlt: string; suggestedMetaTitle: string; suggestedMetaDescription: string; suggestedImageAlt: string };
 type UpdateItem = { id: string; metaTitle: string; metaDescription: string; imageAlt: string };
@@ -17,21 +21,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canBulkReview) return redirect(`/app/pricing?reason=bulk_edit&plan=${planKey}`);
   const ids = parseIds(new URL(request.url).searchParams.get("ids") || "");
-  if (!ids.length) return redirect("/app/blogs");
+  if (!ids.length) return redirect("/app/optimize");
   const response = await admin.graphql(`#graphql
     query BulkSeoArticles($ids: [ID!]!) {
-      nodes(ids: $ids) { ... on Article { id title summary body image { url altText }
+      shop { name }
+      nodes(ids: $ids) { ... on Article { id title summary body image { url altText } blog { title }
         seoTitle: metafield(namespace: "global", key: "title_tag") { value }
         seoDescription: metafield(namespace: "global", key: "description_tag") { value }
       } }
     }`, { variables: { ids } });
   const result: any = await response.json();
   if (result.errors?.length) throw new Response(result.errors[0].message, { status: 502 });
+  // Default suggestions follow Settings → SEO & AI rules → meta templates.
+  const templates = await prisma.shopConfig.findUnique({ where: { shop: session.shop }, select: { metaTitleTemplate: true, metaDescriptionTemplate: true } });
+  const storeName = clean(result.data?.shop?.name);
   const articles: ArticleData[] = (result.data?.nodes || []).filter(Boolean).map((node: any) => {
+    const excerpt = clean(node.summary ? String(node.summary).replace(/<[^>]*>/g, " ") : "") || clean(String(node.body || "").replace(/<[^>]*>/g, " "));
+    const templateValues = { title: clean(node.title), blog: clean(node.blog?.title), store: storeName, excerpt };
+    // A template that renders past 60 characters would be truncated mid-brand; fall back to the title.
+    const templatedTitle = renderMetaTemplate(templates?.metaTitleTemplate || DEFAULT_META_TITLE_TEMPLATE, templateValues);
     const metaTitle = clean(node.seoTitle?.value);
     const metaDescription = clean(node.seoDescription?.value);
     return { id: node.id, title: clean(node.title), metaTitle, metaDescription, imageUrl: clean(node.image?.url), imageAlt: clean(node.image?.altText),
-      suggestedMetaTitle: suggestTitle(node.title), suggestedMetaDescription: suggestDescription(node.summary, node.body, node.title), suggestedImageAlt: suggestImageAlt(node.title) };
+      suggestedMetaTitle: suggestTitle(templatedTitle && templatedTitle.length <= 60 ? templatedTitle : node.title), suggestedMetaDescription: suggestDescription(renderMetaTemplate(templates?.metaDescriptionTemplate || DEFAULT_META_DESCRIPTION_TEMPLATE, templateValues), node.body, node.title), suggestedImageAlt: suggestImageAlt(node.title) };
   });
   const history = await prisma.seoBulkChange.findMany({ where: { shop: session.shop }, orderBy: { appliedAt: "desc" }, take: 10 });
   return json({ articles, aiEnabled: isNineRouterConfigured(), history: history.map((row) => ({ ...row, appliedAt: row.appliedAt.toISOString(), undoneAt: row.undoneAt?.toISOString() || null })) });
@@ -39,6 +51,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, billing, session } = await authenticate.admin(request);
+  // Apply Settings → SEO & AI rules to every AI generation in this request.
+  enterAiWritingRules(await loadShopAiWritingRules(session.shop));
   const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canBulkReview) return json({ error: "Bulk Review is a Growth plan feature.", planKey }, { status: 403 });
   const form = await request.formData();
@@ -140,8 +154,10 @@ export default function BulkSeoEdit() {
   const error = fetcher.data && "error" in fetcher.data ? fetcher.data.error : "";
   const aiError = aiFetcher.data && "error" in aiFetcher.data ? aiFetcher.data.error : "";
   const aiWarning = aiFetcher.data && "warning" in aiFetcher.data ? aiFetcher.data.warning : "";
-  return <Page backAction={{ content: "Blogs", onAction: () => navigate("/app/blogs") }} title="Bulk SEO Fix" subtitle={`${items.length} selected articles`} primaryAction={{ content: `Preview ${changed.length} changes`, onAction: () => setPreview(true), disabled: !changed.length }}>
+  return <Page backAction={{ content: "Meta tags", onAction: () => navigate("/app/optimize") }} title="Review meta tags" subtitle={`${items.length} selected posts · Step 2 of 2: generate, review and apply`} primaryAction={{ content: `Preview ${changed.length} changes`, onAction: () => setPreview(true), disabled: !changed.length }}>
+    <TitleBar title="Bulk Optimize" />
     <Layout><Layout.Section><BlockStack gap="400">
+      <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="meta" />
       {error && <Banner tone="critical"><p>{error}</p></Banner>}
       {aiError && <Banner tone="critical" title="AI suggestions unavailable"><p>{aiError}</p></Banner>}
       {aiWarning && <Banner tone="warning"><p>{aiWarning}</p></Banner>}
@@ -155,7 +171,7 @@ export default function BulkSeoEdit() {
           <IndexTable.Cell><div style={{ minWidth: 260 }}><TextField label="Featured image alt" labelHidden value={item.imageAlt} disabled={!item.imageUrl} maxLength={255} autoComplete="off" placeholder={item.imageUrl ? "Describe the image" : "No featured image"} onChange={(value) => update(item.id, "imageAlt", value)} /></div></IndexTable.Cell>
         </IndexTable.Row>)}
       </IndexTable></Card>
-      {history.length > 0 && <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">Recent changes</Text>{history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.articleTitle}</Text><Text as="span" tone="subdued" variant="bodySm">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied"} loading={fetcher.state !== "idle" && fetcher.formData?.get("changeId") === row.id} onClick={() => fetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo</Button></InlineStack>)}</BlockStack></Card>}
+      {history.length > 0 && <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Recent changes</Text><Button variant="plain" url="/app/optimize/history">View all history</Button></InlineStack>{history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.articleTitle}</Text><Text as="span" tone="subdued" variant="bodySm">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied"} loading={fetcher.state !== "idle" && fetcher.formData?.get("changeId") === row.id} onClick={() => fetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo</Button></InlineStack>)}</BlockStack></Card>}
     </BlockStack></Layout.Section></Layout>
     <Modal open={preview} onClose={() => setPreview(false)} title="Confirm SEO changes" primaryAction={{ content: `Apply to ${changed.length} articles`, onAction: apply, loading: fetcher.state !== "idle", disabled: !changed.length }} secondaryActions={[{ content: "Continue editing", onAction: () => setPreview(false) }]}>
       <Modal.Section><BlockStack gap="400">{changed.map((item) => { const before = articles.find((row) => row.id === item.id); return <BlockStack gap="150" key={item.id}><Text as="h3" fontWeight="semibold">{item.title}</Text>{before?.metaTitle !== item.metaTitle && <Text as="p" variant="bodySm" tone="subdued">Title: {before?.metaTitle || "(empty)"} → {item.metaTitle || "(empty)"}</Text>}{before?.metaDescription !== item.metaDescription && <Text as="p" variant="bodySm" tone="subdued">Description: {before?.metaDescription || "(empty)"} → {item.metaDescription || "(empty)"}</Text>}{before?.imageAlt !== item.imageAlt && <Text as="p" variant="bodySm" tone="subdued">Image alt: {before?.imageAlt || "(empty)"} → {item.imageAlt || "(empty)"}</Text>}</BlockStack>; })}</BlockStack></Modal.Section>

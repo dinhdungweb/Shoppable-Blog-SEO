@@ -12,6 +12,7 @@ import {
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { CHANGELOG_RELEASES, type ChangelogRelease } from "../changelog";
 
 const INITIAL_CHANGE_COUNT = 5;
@@ -46,8 +47,9 @@ export default function ChangelogPage() {
 
   return (
     <Page title="What's new" subtitle="A concise history of new features, improvements and fixes">
-      <TitleBar title="What's new" />
+      <TitleBar title="Settings" />
       <BlockStack gap="500">
+        <WorkspaceTabs tabs={SETTINGS_WORKSPACE_TABS} activeId="changelog" />
         <Card>
           <div className="bp-changelog-hero">
             <BlockStack gap="200">

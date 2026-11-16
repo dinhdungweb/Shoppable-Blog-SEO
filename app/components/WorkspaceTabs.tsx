@@ -7,23 +7,42 @@ export type WorkspaceTab = {
   url: string;
 };
 
+/**
+ * Navigation model (keep in sync with the NavMenu in routes/app.tsx):
+ *
+ *   Home · Content · SEO Audit · Catalog · Bulk Optimize · Insights · Settings
+ *
+ * Each top-level area owns one tab set. A page must only render the tab set of
+ * the area it belongs to, so merchants always know where they are.
+ */
+
+/** Content: writing and planning articles. */
 export const CONTENT_WORKSPACE_TABS: WorkspaceTab[] = [
   { id: "posts", content: "Posts", url: "/app/blogs" },
   { id: "briefs", content: "Content briefs", url: "/app/content-briefs" },
-  { id: "links", content: "Internal links", url: "/app/internal-links" },
-  { id: "decay", content: "Content decay", url: "/app/content-decay" },
 ];
 
+/** SEO Audit: finding problems across the whole store. */
 export const SEO_WORKSPACE_TABS: WorkspaceTab[] = [
-  { id: "blogs", content: "Blog SEO", url: "/app/seo" },
-  { id: "products", content: "Product SEO", url: "/app/catalog-seo?type=product" },
-  { id: "collections", content: "Collection SEO", url: "/app/catalog-seo?type=collection" },
-  { id: "images", content: "Image SEO", url: "/app/image-seo" },
+  { id: "issues", content: "Issues", url: "/app/seo" },
+  { id: "keywords", content: "Keywords & decay", url: "/app/content-decay" },
+  { id: "site-speed", content: "Site speed", url: "/app/performance" },
 ];
 
-export const INSIGHTS_WORKSPACE_TABS: WorkspaceTab[] = [
-  { id: "analytics", content: "Analytics", url: "/app/analytics" },
-  { id: "site-speed", content: "Site speed", url: "/app/performance" },
+/** Bulk Optimize: reviewable AI fixes applied to many resources at once. */
+export const OPTIMIZE_WORKSPACE_TABS: WorkspaceTab[] = [
+  { id: "meta", content: "Meta tags", url: "/app/optimize" },
+  { id: "images", content: "Image alt text", url: "/app/image-seo" },
+  { id: "links", content: "Internal links", url: "/app/internal-links" },
+  { id: "history", content: "Change history", url: "/app/optimize/history" },
+];
+
+/** Settings: configuration, theme install and billing. */
+export const SETTINGS_WORKSPACE_TABS: WorkspaceTab[] = [
+  { id: "settings", content: "Settings", url: "/app/settings" },
+  { id: "theme", content: "Theme setup", url: "/app/theme-setup" },
+  { id: "billing", content: "Plan & billing", url: "/app/pricing" },
+  { id: "changelog", content: "What's new", url: "/app/changelog" },
 ];
 
 export function WorkspaceTabs({

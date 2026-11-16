@@ -10,8 +10,10 @@ import type { ContentDecayReport, DecayArticle, DecayIssue, DecayProduct } from 
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
+import { loadSearchConsoleView } from "../search-console-view.server";
+import { SearchConsoleCard } from "../components/SearchConsoleCard";
 import {
-  CONTENT_WORKSPACE_TABS,
+  SEO_WORKSPACE_TABS,
   WorkspaceTabs,
 } from "../components/WorkspaceTabs";
 
@@ -22,10 +24,11 @@ const ISSUE_PAGE_SIZE = 20;
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
   const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
-  if (!limits.canContentDecay) return json({ report: null, analyzedAt: null, canContentDecay: false, planKey });
+  const searchConsole = await loadSearchConsoleView(session.shop, limits.canSearchConsole);
+  if (!limits.canContentDecay) return json({ report: null, analyzedAt: null, canContentDecay: false, planKey, searchConsole });
   const saved = await prisma.contentDecayAnalysis.findUnique({ where: { shop: session.shop } });
   const report = saved?.report as unknown as ContentDecayReport | undefined;
-  return json({ report: report?.version === 1 ? report : null, analyzedAt: saved?.analyzedAt.toISOString() || null, canContentDecay: true, planKey });
+  return json({ report: report?.version === 1 ? report : null, analyzedAt: saved?.analyzedAt.toISOString() || null, canContentDecay: true, planKey, searchConsole });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -99,16 +102,18 @@ export default function ContentDecayPage() {
 
   useEffect(() => { setPage(1); }, [filter, report]);
 
-  if (!initial.canContentDecay) return <Page><TitleBar title="Content Decay Monitor" /><BlockStack gap="500"><WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="decay" /><Card><EmptyState heading="Content Decay is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></Card></BlockStack></Page>;
+  if (!initial.canContentDecay) return <Page fullWidth><TitleBar title="SEO Audit" /><BlockStack gap="500"><WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="keywords" /><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Keywords & content decay</Text><Text as="p" tone="subdued">See which queries bring traffic, and which posts are losing it.</Text></BlockStack><SearchConsoleCard data={initial.searchConsole} mode="keywords" planKey={initial.planKey} /><Card><EmptyState heading="Content decay monitoring is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></Card></BlockStack></Page>;
 
   return <Page fullWidth>
-    <TitleBar title="Content Decay Monitor"><button variant="primary" disabled={analyzing} onClick={run}>{analyzing ? "Analyzing..." : "Analyze content"}</button></TitleBar>
+    <TitleBar title="SEO Audit"><button variant="primary" disabled={analyzing} onClick={run}>{analyzing ? "Analyzing..." : "Analyze content"}</button></TitleBar>
     <BlockStack gap="500">
-      <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="decay" />
+      <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="keywords" />
       <InlineStack align="space-between" blockAlign="end">
-        <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Content Decay Monitor</Text><Text as="p" tone="subdued">Find Shopify articles losing search performance or containing stale products, links and dates.</Text></BlockStack>
+        <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Keywords & content decay</Text><Text as="p" tone="subdued">See which queries bring traffic, and which posts are losing it or contain stale products, links and dates.</Text></BlockStack>
         <Button variant="primary" loading={analyzing} onClick={run}>{report ? "Refresh analysis" : "Analyze content"}</Button>
       </InlineStack>
+      <SearchConsoleCard data={initial.searchConsole} mode="keywords" planKey={initial.planKey} />
+      <Text as="h2" variant="headingLg">Content decay</Text>
       {response?.error && <Banner tone="critical"><p>{response.error}</p></Banner>}
       {!report ? <Card><EmptyState heading="Check your content health" action={{ content: "Analyze content", onAction: run, loading: analyzing }} image={EMPTY_IMAGE}><p>The analysis is read-only and saved per shop. It never changes an article automatically.</p></EmptyState></Card> : <>
         <InlineGrid columns={{ xs: 2, md: 4 }} gap="400">
@@ -117,7 +122,7 @@ export default function ContentDecayPage() {
           <SummaryCard label="Needs review" value={report.issues.length} tone={report.issues.length ? "warning" : "success"} />
           <SummaryCard label="Links checked" value={report.externalLinksChecked} tone="info" />
         </InlineGrid>
-        {!report.searchDataAvailable && <Banner tone="info" title="Search performance checks are waiting"><p>Connect and sync Google Search Console in SEO Optimizer to detect click and CTR decline.</p></Banner>}
+        {!report.searchDataAvailable && <Banner tone="info" title="Search performance checks are waiting"><p>Connect and sync Google Search Console in Settings → Integrations to detect click and CTR decline.</p></Banner>}
         {!report.schemaEnabled && <Banner tone="warning" title="Article schema is disabled"><p>Enable Blog schema in Settings before relying on structured data for Shopify articles. <Button size="micro" url="/app/settings">Open settings</Button></p></Banner>}
         {!report.inventoryDataAvailable && <Banner tone="info" title="Inventory-level checks are limited"><p>The current Shopify installation does not provide inventory quantities. Deleted and inactive products are still checked; out-of-stock checks will run only when inventory access is available.</p></Banner>}
         {report.externalLinksSkipped > 0 && <Banner tone="info"><p>{report.externalLinksSkipped} additional external links were skipped because each manual analysis checks at most {MAX_EXTERNAL_LINKS} unique article links.</p></Banner>}

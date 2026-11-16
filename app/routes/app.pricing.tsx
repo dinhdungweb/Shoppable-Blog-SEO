@@ -24,6 +24,7 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { GROWTH_PLAN, PAID_PLANS, PLUS_PLAN, PRO_PLAN, PLAN_LIMITS, getPlanKey } from "../pricing-plans";
 import { authenticate, isBillingTestMode } from "../shopify.server";
+import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import prisma from "../db.server";
 import type { PlanKey } from "../pricing-plans";
 
@@ -287,9 +288,10 @@ export default function PricingPage() {
 
   return (
     <Page fullWidth>
-      <TitleBar title="Pricing" />
+      <TitleBar title="Settings" />
       <div style={{ width: "100%", maxWidth: "1280px", margin: "0 auto" }}>
         <BlockStack gap="500">
+        <WorkspaceTabs tabs={SETTINGS_WORKSPACE_TABS} activeId="billing" />
         <InlineStack align="space-between" blockAlign="end" gap="400">
           <BlockStack gap="100">
             <Text as="h2" variant="headingLg" fontWeight="bold">

@@ -20,7 +20,6 @@ import {
   Modal,
   Page,
   ProgressBar,
-  Select,
   Tabs,
   Text,
   Thumbnail,
@@ -42,9 +41,7 @@ import { analyzeImageSeo, auditContentQuality, auditSeo as runSeoAudit, slugifyS
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
 import { auditSeoPortfolio } from "../seo-portfolio-audit";
-import { buildSearchOpportunities } from "../search-console-opportunities";
 import { getPublicSeoScanError } from "../seo-scan-error";
-import { SEARCH_CONSOLE_TOTAL_PAGE, createAuthorizationUrl, disconnectSearchConsole, isSearchConsoleConfigured, selectSearchConsoleSite, syncSearchConsole } from "../search-console.server";
 import { applyCatalogDuplicateIssues, auditCatalogResource, type CatalogSeoAudit } from "../catalog-seo";
 import { fetchShopifyCatalogResources } from "../catalog-seo.server";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
@@ -52,6 +49,7 @@ import {
   SEO_WORKSPACE_TABS,
   WorkspaceTabs,
 } from "../components/WorkspaceTabs";
+import { IssueScopeSwitcher } from "../components/IssueScopeSwitcher";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -155,37 +153,11 @@ const CATEGORY_TABS: Array<{ id: SeoCategory | "all"; content: string }> = [
   { id: "all", content: "All issues" },
   { id: "on_page", content: "On-page SEO" },
   { id: "product_linking", content: "Product linking" },
-  { id: "image", content: "Image SEO" },
+  { id: "image", content: "Images" },
   { id: "schema", content: "Schema" },
   { id: "content", content: "Content quality" },
 ];
 
-async function loadSearchConsoleMetrics(shop: string, siteUrl: string) {
-  const empty = { metrics: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 }, lastSyncedAt: null as Date | null };
-  if (!siteUrl) return empty;
-  try {
-    const where = { shop, siteUrl, windowDays: 28, period: "current" };
-    const [current, previous, total, aggregate, latest] = await Promise.all([
-      prisma.searchConsoleMetric.findMany({ where: { ...where, pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, orderBy: { impressions: "desc" }, take: 500,
-        select: { pageUrl: true, query: true, clicks: true, impressions: true, ctr: true, position: true, period: true } }),
-      prisma.searchConsoleMetric.findMany({ where: { shop, siteUrl, windowDays: 28, period: "previous", pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, orderBy: { clicks: "desc" }, take: 500,
-        select: { pageUrl: true, query: true, clicks: true, impressions: true, ctr: true, position: true, period: true } }),
-      prisma.searchConsoleMetric.findFirst({ where: { ...where, pageUrl: SEARCH_CONSOLE_TOTAL_PAGE }, select: { clicks: true, impressions: true, ctr: true, position: true } }),
-      prisma.searchConsoleMetric.aggregate({ where: { ...where, pageUrl: { not: SEARCH_CONSOLE_TOTAL_PAGE } }, _sum: { clicks: true, impressions: true }, _avg: { position: true } }),
-      prisma.searchConsoleMetric.findFirst({ where: { shop, siteUrl }, orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
-    ]);
-    const clicks = total?.clicks ?? aggregate._sum.clicks ?? 0;
-    const impressions = total?.impressions ?? aggregate._sum.impressions ?? 0;
-    return { metrics: [...current, ...previous], lastSyncedAt: latest?.syncedAt || null, summary: {
-      clicks: Math.round(clicks), impressions: Math.round(impressions),
-      ctr: total?.ctr ?? (impressions ? clicks / impressions : 0),
-      position: total?.position ?? aggregate._avg.position ?? 0,
-    } };
-  } catch (error) {
-    console.error("Search Console snapshot query failed:", error);
-    return empty;
-  }
-}
 
 function parseStoredIssues(value: string | null): SeoIssue[] {
   if (!value) return [];
@@ -253,7 +225,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         imageAlt: true,
       },
     }),
-    limits.canSearchConsole ? prisma.searchConsoleConnection.findUnique({ where: { shop } }).catch((error) => {
+    limits.canSearchConsole ? prisma.searchConsoleConnection.findUnique({ where: { shop }, select: { selectedSiteUrl: true, lastSyncedAt: true } }).catch((error) => {
       console.error("Search Console connection table unavailable:", error);
       return null;
     }) : Promise.resolve(null),
@@ -262,10 +234,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ? prisma.shopConfig.findUnique({ where: { shop }, select: { seoAutoScanEnabled: true } })
       : Promise.resolve(null),
   ]);
-  const searchData = limits.canSearchConsole
-    ? await loadSearchConsoleMetrics(shop, searchConnection?.selectedSiteUrl || "")
-    : { metrics: [], summary: { clicks: 0, impressions: 0, ctr: 0, position: 0 }, lastSyncedAt: null };
-  const searchMetrics = searchData.metrics;
   const auditedPosts: AuditedPost[] = seoRows.map((row) => ({
     id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "", publishedAt: null,
     imageUrl: row.imageUrl, imageAlt: row.imageAlt, imageWidth: 0, imageHeight: 0, updatedAt: "", seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
@@ -285,10 +253,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (!latest || row.lastAnalyzedAt > latest) return row.lastAnalyzedAt;
     return latest;
   }, null);
-  const availableSites = (searchConnection?.availableSites as Array<{ siteUrl: string; permissionLevel: string }> | null) || [];
-  const searchSummary = searchData.summary;
-  const searchOpportunities = buildSearchOpportunities(searchMetrics);
-  console.info("SEO loader snapshot timing", { shop, rows: seoRows.length, metrics: searchMetrics.length, durationMs: Date.now() - startedAt });
+  console.info("SEO loader snapshot timing", { shop, rows: seoRows.length, durationMs: Date.now() - startedAt });
 
   return json({
     shopifyError: "",
@@ -309,9 +274,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     scanJob: serializeScanJob(scanJob),
     postsNeedingAttention: auditedPosts.filter((post) => post.issues.length > 0).slice(0, 6).map((post) => ({ id: post.id, title: post.title, imageUrl: post.imageUrl, imageAlt: post.imageAlt, score: post.score, baseScore: post.baseScore })),
     searchConsole: {
-      configured: isSearchConsoleConfigured(), connected: Boolean(searchConnection), selectedSiteUrl: searchConnection?.selectedSiteUrl || "",
-      availableSites, lastSyncedAt: searchData.lastSyncedAt?.toISOString() || null, error: searchConnection?.lastSyncError || "",
-      summary: searchSummary, opportunities: searchOpportunities,
+      connected: Boolean(searchConnection?.selectedSiteUrl),
+      lastSyncedAt: searchConnection?.lastSyncedAt?.toISOString() || null,
     },
   });
 };
@@ -355,33 +319,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ job: serializeScanJob(latestJob) });
   }
 
-  if (intent === "google_connect") {
-    const { limits } = await getPlanAccess();
-    if (!limits.canSearchConsole) return json({ error: "Google Search Console is available on Pro and Growth plans." }, { status: 403 });
-    try {
-      return json({ success: true, googleAction: "connect", authorizationUrl: await createAuthorizationUrl(shop) });
-    } catch (error) {
-      return json({ error: error instanceof Error ? error.message : "Could not start Google connection." }, { status: 400 });
-    }
-  }
-  if (intent === "google_select") {
-    const { limits } = await getPlanAccess();
-    if (!limits.canSearchConsole) return json({ error: "Google Search Console is available on Pro and Growth plans." }, { status: 403 });
-    try { await selectSearchConsoleSite(shop, String(formData.get("siteUrl") || "")); return json({ success: true, googleAction: "selected" }); }
-    catch (error) { return json({ error: error instanceof Error ? error.message : "Could not select property." }, { status: 400 }); }
-  }
-  if (intent === "google_sync") {
-    const { limits } = await getPlanAccess();
-    if (!limits.canSearchConsole) return json({ error: "Google Search Console is available on Pro and Growth plans." }, { status: 403 });
-    try { const syncedCount = await syncSearchConsole(shop); return json({ success: true, googleAction: "synced", syncedCount }); }
-    catch (error) { return json({ error: error instanceof Error ? error.message : "Search Console sync failed." }, { status: 400 }); }
-  }
-  if (intent === "google_disconnect") {
-    const { limits } = await getPlanAccess();
-    if (!limits.canSearchConsole) return json({ error: "Google Search Console is available on Pro and Growth plans." }, { status: 403 });
-    await disconnectSearchConsole(shop);
-    return json({ success: true, googleAction: "disconnected" });
-  }
   if (intent === "set_auto_scan") {
     const { limits } = await getPlanAccess();
     if (!limits.canAutoSeoScan) return json({ error: "Scheduled SEO scans are available on Pro and Growth plans." }, { status: 403 });
@@ -701,16 +638,11 @@ export default function SEOOptimizer() {
       && (!statusData?.job || statusData.job.id !== scanActionData.jobId || ["queued", "running"].includes(statusData.job.status)),
   );
   const isScanning = scanIntentSubmitting || queuedJobStillActive || currentJob?.status === "queued" || currentJob?.status === "running";
-  const isGoogleBusy = scanFetcher.state !== "idle" && String(scanFetcher.formData?.get("intent") || "").startsWith("google_");
 
   useEffect(() => {
     const data = scanFetcher.data as { success?: boolean; queued?: boolean; cancelled?: boolean; error?: string; googleAction?: string; authorizationUrl?: string; syncedCount?: number; autoScanEnabled?: boolean } | undefined;
     if (!data || handledActionData.current === data) return;
     handledActionData.current = data;
-    if (data.googleAction === "connect" && data.authorizationUrl) {
-      window.open(data.authorizationUrl, "_top");
-      return;
-    }
     if (data.success) {
       if (data.cancelled) {
         shopify.toast.show("SEO scan cancelled");
@@ -718,7 +650,7 @@ export default function SEOOptimizer() {
         shopify.toast.show(data.autoScanEnabled ? "Weekly SEO scans enabled" : "Weekly SEO scans disabled");
         revalidator.revalidate();
       } else {
-        shopify.toast.show(data.googleAction ? (data.googleAction === "synced" ? `Search Console synced: ${data.syncedCount || 0} rows` : `Search Console ${data.googleAction}`) : "SEO scan queued. You can leave this page while it runs.");
+        shopify.toast.show("SEO scan queued. You can leave this page while it runs.");
       }
     } else if (data.error) {
       shopify.toast.show(data.error, { isError: true });
@@ -773,6 +705,12 @@ export default function SEOOptimizer() {
     : "var(--p-color-bg-surface-secondary)";
   const goToPost = (postId: string) => navigate(getPostTarget(postId));
   const handleIssueAction = (issue: IssueGroup) => {
+    const bulkRoute = getBulkFixRoute(issue);
+    if (bulkRoute) {
+      navigate(bulkRoute);
+      return;
+    }
+
     if (issue.category === "schema") {
       navigate("/app/settings");
       return;
@@ -793,7 +731,7 @@ export default function SEOOptimizer() {
 
   return (
     <Page fullWidth>
-      <TitleBar title="SEO Center">
+      <TitleBar title="SEO Audit">
         <button
           variant="primary"
           disabled={isScanning}
@@ -807,10 +745,10 @@ export default function SEOOptimizer() {
         <InlineStack align="space-between" blockAlign="end">
           <BlockStack gap="100">
             <Text as="h1" variant="headingXl" fontWeight="bold">
-              SEO Center
+              SEO Audit
             </Text>
             <Text as="p" variant="bodyMd" tone="subdued">
-              Identify and resolve SEO issues across Shopify blog posts, products and collections.
+              Find and fix SEO issues across your store. One scan covers blog posts, products and collections.
             </Text>
           </BlockStack>
           <InlineStack gap="200" blockAlign="center">
@@ -836,8 +774,10 @@ export default function SEOOptimizer() {
         </InlineStack>
 
         <div className="bp-seo-scope-tabs">
-          <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="blogs" />
+          <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="issues" />
         </div>
+
+        <IssueScopeSwitcher active="articles" />
 
         {Number.isFinite(seoBlogPostLimit) && (
           <Banner tone="info" title={`${planKey === "free" ? "Free" : planKey === "plus" ? "Plus" : "Pro"} plan scans the ${seoBlogPostLimit} most recently updated blog posts`}>
@@ -979,7 +919,7 @@ export default function SEOOptimizer() {
                           </IndexTable.Cell>
                           <IndexTable.Cell>
                             <Button size="micro" onClick={() => handleIssueAction(issue)}>
-                              {issue.actionLabel}
+                              {getBulkFixRoute(issue) ? "Fix in bulk" : issue.actionLabel}
                             </Button>
                           </IndexTable.Cell>
                         </IndexTable.Row>
@@ -1034,7 +974,7 @@ export default function SEOOptimizer() {
                   <InlineStack gap="200">
                     <Button onClick={() => navigate("/app/blogs")}>Review posts</Button>
                     <Button disabled={!selectedArticleIds.length} onClick={() => navigate(`/app/blogs/bulk_edit?ids=${encodeURIComponent(selectedArticleIds.join(","))}`)}>
-                      Bulk fix SEO
+                      Fix meta tags in bulk
                     </Button>
                     <Button variant="primary" loading={isScanning} onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}>
                       Apply scan
@@ -1047,13 +987,25 @@ export default function SEOOptimizer() {
 
           <Layout.Section variant="oneThird">
             <BlockStack gap="400">
-              {canSearchConsole ? (
-                <SearchConsoleCard data={searchConsole} busy={isGoogleBusy} submit={(values) => scanFetcher.submit(values, { method: "post" })} />
-              ) : (
-                <Banner tone="info" title="Google Search Console is a Pro feature" action={{ content: "Upgrade to Pro", url: "/app/pricing?reason=search_console" }}>
-                  <p>Unlock search queries, impressions, clicks and opportunity insights.</p>
-                </Banner>
-              )}
+              <Card padding="400">
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Keywords</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {!canSearchConsole
+                      ? "Search queries, clicks and keyword opportunities are available on Pro and Growth."
+                      : searchConsole.connected
+                        ? `Google Search Console is connected${searchConsole.lastSyncedAt ? ` · synced ${formatDate(searchConsole.lastSyncedAt)}` : ""}.`
+                        : "Connect Google Search Console to see which queries each post ranks for."}
+                  </Text>
+                  <InlineStack>
+                    {!canSearchConsole
+                      ? <Button url="/app/pricing?reason=search_console">Upgrade to Pro</Button>
+                      : searchConsole.connected
+                        ? <Button onClick={() => navigate("/app/content-decay")}>View keyword opportunities</Button>
+                        : <Button onClick={() => navigate("/app/settings?tab=integrations")}>Connect Google</Button>}
+                  </InlineStack>
+                </BlockStack>
+              </Card>
 
               <Card padding="400">
                 <BlockStack gap="400">
@@ -1176,105 +1128,6 @@ export default function SEOOptimizer() {
         </Modal.Section>
       </Modal>
     </Page>
-  );
-}
-
-type SearchConsoleData = {
-  configured: boolean;
-  connected: boolean;
-  selectedSiteUrl: string;
-  availableSites: Array<{ siteUrl: string; permissionLevel: string }>;
-  lastSyncedAt: string | null;
-  error: string;
-  summary: { clicks: number; impressions: number; ctr: number; position: number };
-  opportunities: Array<{ id: string; title: string; detail: string; pageUrl: string; query: string; type: string; previousValue: string; currentValue: string; changeValue: string }>;
-};
-
-function SearchConsoleCard({ data, busy, submit }: { data: SearchConsoleData; busy: boolean; submit: (values: Record<string, string>) => void }) {
-  const [showAllOpportunities, setShowAllOpportunities] = useState(false);
-
-  useEffect(() => {
-    setShowAllOpportunities(false);
-  }, [data.selectedSiteUrl]);
-
-  if (!data.configured) return (
-    <Banner title="Google Search Console is ready to configure" tone="info">
-      <p>Add GOOGLE_SEARCH_CONSOLE_CLIENT_ID, GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET and SHOPIFY_APP_URL to enable real search performance data.</p>
-    </Banner>
-  );
-  if (!data.connected) return (
-    <Card padding="400">
-      <BlockStack gap="300">
-        <BlockStack gap="100"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" tone="subdued">Connect search performance data and ranking opportunities.</Text></BlockStack>
-        <Button variant="primary" loading={busy} onClick={() => submit({ intent: "google_connect" })}>Connect Google</Button>
-      </BlockStack>
-    </Card>
-  );
-  const options = [{ label: "Select a property", value: "" }, ...data.availableSites.map((site) => ({ label: `${site.siteUrl} (${site.permissionLevel})`, value: site.siteUrl }))];
-  return (
-    <Card padding="400">
-      <BlockStack gap="400">
-        <InlineStack align="space-between" blockAlign="center" wrap={false} gap="200">
-          <InlineStack gap="200" blockAlign="center" wrap={false}>
-            <Icon source={ChartVerticalFilledIcon} tone="info" />
-            <BlockStack gap="050"><Text as="h2" variant="headingMd">Google Search Console</Text><Text as="p" variant="bodySm" tone="subdued">{data.lastSyncedAt ? `Synced ${formatDate(data.lastSyncedAt)}` : "Ready to sync"}</Text></BlockStack>
-          </InlineStack>
-          <InlineStack gap="100" blockAlign="center" wrap={false}><Button size="micro" loading={busy} disabled={!data.selectedSiteUrl} onClick={() => submit({ intent: "google_sync" })}>Sync</Button><Button size="micro" tone="critical" onClick={() => submit({ intent: "google_disconnect" })}>Disconnect</Button></InlineStack>
-        </InlineStack>
-        {data.error && <Banner tone="critical"><p>{data.error}</p></Banner>}
-        <Select label="Search Console property" options={options} value={data.selectedSiteUrl} onChange={(siteUrl) => siteUrl && submit({ intent: "google_select", siteUrl })} />
-        <InlineGrid columns={2} gap="300">
-          <CompactSearchMetric label="Clicks" value={String(data.summary.clicks)} />
-          <CompactSearchMetric label="Impressions" value={String(data.summary.impressions)} />
-          <CompactSearchMetric label="CTR" value={`${(data.summary.ctr * 100).toFixed(1)}%`} />
-          <CompactSearchMetric label="Position" value={data.summary.position ? data.summary.position.toFixed(1) : "—"} />
-        </InlineGrid>
-        {data.opportunities.length > 0 && <BlockStack gap="300">
-          <Divider />
-          <Text as="h3" variant="headingSm">Top opportunities</Text>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px", textAlign: "left" }}>
-              <thead>
-                <tr style={{ color: "var(--p-color-text-secondary)" }}>
-                  <th style={{ padding: "0 8px 8px 0", fontWeight: 600 }}>Opportunity</th>
-                  <th style={{ padding: "0 8px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>Previous</th>
-                  <th style={{ padding: "0 8px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>Current</th>
-                  <th style={{ padding: "0 8px 8px", fontWeight: 600 }}>Change</th>
-                  <th aria-label="Action" />
-                </tr>
-              </thead>
-              <tbody>
-                {data.opportunities.slice(0, showAllOpportunities ? data.opportunities.length : 3).map((item) => (
-                  <tr key={item.id} style={{ borderTop: "1px solid var(--p-color-border-secondary)" }}>
-                    <td style={{ padding: "10px 8px 10px 0", minWidth: "130px" }}><Text as="span" variant="bodySm" fontWeight="semibold">{item.query || "Page total"}</Text><br /><Text as="span" variant="bodySm" tone="subdued">{item.title}</Text></td>
-                    <td style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>{item.previousValue}</td>
-                    <td style={{ padding: "10px 8px", whiteSpace: "nowrap", fontWeight: 600 }}>{item.currentValue}</td>
-                    <td style={{ padding: "10px 8px", whiteSpace: "nowrap", color: item.type === "decay" ? "var(--p-color-text-critical)" : undefined }}>{item.changeValue}</td>
-                    <td style={{ padding: "10px 0 10px 8px" }}><Button size="micro" url={item.pageUrl} target="_blank">Open</Button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {data.opportunities.length > 3 && (
-            <Button variant="plain" onClick={() => setShowAllOpportunities((current) => !current)}>
-              {showAllOpportunities ? "Show less" : `View all opportunities (${data.opportunities.length})`}
-            </Button>
-          )}
-        </BlockStack>}
-      </BlockStack>
-    </Card>
-  );
-}
-
-function CompactSearchMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <Box background="bg-surface-secondary" padding="300" borderRadius="300">
-      <BlockStack gap="050">
-        <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
-        <Text as="span" variant="headingLg" fontWeight="bold">{value}</Text>
-      </BlockStack>
-    </Box>
   );
 }
 
@@ -2263,6 +2116,20 @@ function getIssueStats(issueGroups: IssueGroup[]) {
 function getAverageScore(posts: Array<{ score: number }>) {
   if (!posts.length) return 0;
   return Math.round(posts.reduce((sum, post) => sum + post.score, 0) / posts.length);
+}
+
+/** Issue types that a Bulk Optimize tool can fix across many posts at once. */
+const BULK_FIX_ROUTES: Record<string, string> = {
+  featured_image_alt: "/app/image-seo",
+  inline_images_missing_alt: "/app/image-seo",
+  image_alt_stuffing: "/app/image-seo",
+  decorative_image_alt: "/app/image-seo",
+  internal_links: "/app/internal-links",
+  orphan_article: "/app/internal-links",
+};
+
+function getBulkFixRoute(issue: Pick<IssueGroup, "id" | "affectedPosts">) {
+  return issue.affectedPosts.length > 1 ? BULK_FIX_ROUTES[issue.id] || "" : "";
 }
 
 function getActionLabel(category: SeoCategory) {

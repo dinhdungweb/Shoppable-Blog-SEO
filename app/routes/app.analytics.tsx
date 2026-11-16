@@ -43,10 +43,6 @@ import {
 } from "recharts";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
-import {
-  INSIGHTS_WORKSPACE_TABS,
-  WorkspaceTabs,
-} from "../components/WorkspaceTabs";
 
 type Metrics = {
   sessions: number;
@@ -275,13 +271,12 @@ export default function Analytics() {
 
   return (
     <Page fullWidth>
-      <TitleBar title="Analytics" />
+      <TitleBar title="Insights" />
       <BlockStack gap="500">
-        <WorkspaceTabs tabs={INSIGHTS_WORKSPACE_TABS} activeId="analytics" />
         <InlineStack align="space-between" blockAlign="end">
           <BlockStack gap="100">
             <Text as="h1" variant="headingXl" fontWeight="bold">
-              Analytics
+              Insights
             </Text>
             <Text as="p" variant="bodyMd" tone="subdued">
               Measure how shoppable blog widgets drive product discovery, clicks, add to carts, and estimated revenue.

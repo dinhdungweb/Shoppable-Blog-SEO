@@ -10,6 +10,23 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.11.16",
+    date: "2026-11-16",
+    title: "A simpler workflow: find, fix, measure",
+    summary: "The app is reorganized around one flow (audit your store, fix issues one by one or in bulk, then measure results) with fewer menu items and one place for every task.",
+    tags: ["New", "Improved", "Fixed"],
+    changes: [
+      { type: "Improved", text: "Navigation is now Home, Content, SEO Audit, Catalog, Bulk Optimize, Insights and Settings. Theme setup, plans and What's new moved under Settings." },
+      { type: "New", text: "Home shows a store-wide SEO health score and a single \"What to do next\" list ranked by impact across blog posts, products, collections, images, internal links and content decay." },
+      { type: "Improved", text: "SEO Audit combines blog, product and collection issues in one Issues tab, with Keywords & decay and Site speed alongside. Image and internal link issues affecting several posts open the matching bulk tool." },
+      { type: "New", text: "Bulk Optimize groups Meta tags, Image alt text and Internal links, with a Meta tags picker that finds posts with missing or badly sized titles and descriptions." },
+      { type: "New", text: "Change history lists every bulk change from all tools in one timeline with Undo." },
+      { type: "New", text: "Settings → SEO & AI rules sets the brand tone, banned words and article structure used by every AI generation, plus meta title and description templates with live previews." },
+      { type: "Improved", text: "Google Search Console connection moved to Settings → Integrations; keyword data and opportunities appear in SEO Audit → Keywords & decay, including on Pro." },
+      { type: "Fixed", text: "Searching, filtering or paging in Catalog no longer switches the view to the issue report." },
+    ],
+  },
+  {
     version: "2026.09.24",
     date: "2026-09-24",
     title: "Plus plan and clearer SEO limits",

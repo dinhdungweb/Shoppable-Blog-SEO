@@ -35,16 +35,15 @@ export default function App() {
     <AppProvider isEmbeddedApp apiKey={apiKey}>
       <CrispChatLoader shop={shop} />
       <NavMenu>
+        {/* Keep in sync with the tab sets in components/WorkspaceTabs.tsx. */}
         <Link to="/app" rel="home">
-          Overview
+          Home
         </Link>
-        <Link to="/app/blogs">Content Studio</Link>
-        <Link to="/app/seo">SEO Center</Link>
+        <Link to="/app/blogs">Content</Link>
+        <Link to="/app/seo">SEO Audit</Link>
         <Link to="/app/catalog-seo?view=manager&type=product">Catalog</Link>
+        <Link to="/app/optimize">Bulk Optimize</Link>
         <Link to="/app/analytics">Insights</Link>
-        <Link to="/app/theme-setup">Theme setup</Link>
-        <Link to="/app/pricing">Plans</Link>
-        <Link to="/app/changelog">What&apos;s new</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />

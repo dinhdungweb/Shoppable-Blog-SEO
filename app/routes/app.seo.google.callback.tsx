@@ -10,7 +10,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const state = url.searchParams.get("state") || "";
   try {
     const shop = await consumeOAuthState(state);
-    if (error) return redirect(embeddedSeoUrl(shop, { google: "error", message: error }));
+    if (error) return redirect(embeddedIntegrationsUrl(shop, { google: "error", message: error }));
     const planName = await getUnauthenticatedActivePlanName(shop);
     if (!getLimitsForPlan(planName).canSearchConsole) {
       return redirect(embeddedAppUrl(shop, "pricing", { reason: "search_console" }));
@@ -18,15 +18,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const code = url.searchParams.get("code");
     if (!code) throw new Error("Google did not provide an authorization code.");
     await exchangeAuthorizationCode(shop, code);
-    return redirect(embeddedSeoUrl(shop, { google: "connected" }));
+    return redirect(embeddedIntegrationsUrl(shop, { google: "connected" }));
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "Google connection failed.";
-    return redirect(`/app/seo?google=error&message=${encodeURIComponent(message)}`);
+    return redirect(`/app/settings?tab=integrations&google=error&message=${encodeURIComponent(message)}`);
   }
 };
 
-function embeddedSeoUrl(shop: string, params: Record<string, string>) {
-  return embeddedAppUrl(shop, "seo", params);
+// Connection is managed in Settings → Integrations; return there after OAuth.
+function embeddedIntegrationsUrl(shop: string, params: Record<string, string>) {
+  return embeddedAppUrl(shop, "settings", { tab: "integrations", ...params });
 }
 
 function embeddedAppUrl(shop: string, path: string, params: Record<string, string>) {

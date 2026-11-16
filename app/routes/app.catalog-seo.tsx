@@ -14,6 +14,7 @@ import {
   SEO_WORKSPACE_TABS,
   WorkspaceTabs,
 } from "../components/WorkspaceTabs";
+import { IssueScopeSwitcher } from "../components/IssueScopeSwitcher";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 
@@ -98,6 +99,7 @@ export default function CatalogSeoPage() {
   const switchManagerType = (index: number) => navigate(`/app/catalog-seo?view=manager&type=${index === 0 ? "product" : "collection"}`);
   const goToList = (next: { page?: number; query?: string; status?: string } = {}) => {
     const params = new URLSearchParams({ type: data.resourceType });
+    if (data.view === "manager") params.set("view", "manager");
     const nextQuery = next.query === undefined ? data.query : next.query;
     const nextStatus = next.status === undefined ? data.status : next.status;
     if (nextQuery) params.set("q", nextQuery);
@@ -107,14 +109,15 @@ export default function CatalogSeoPage() {
   };
 
   return <Page fullWidth>
-    <TitleBar title={data.view === "manager" ? "Catalog Manager" : `${typeLabel} SEO`}><button variant="primary" disabled={isScanning} onClick={runScan}>{isScanning ? "Scanning..." : "Run SEO scan"}</button></TitleBar>
+    <TitleBar title={data.view === "manager" ? "Catalog" : "SEO Audit"}><button variant="primary" disabled={isScanning} onClick={runScan}>{isScanning ? "Scanning..." : "Run SEO scan"}</button></TitleBar>
     <BlockStack gap="500">
-      <InlineStack align="space-between" blockAlign="end" gap="300"><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">{data.view === "manager" ? "Catalog Manager" : `${typeLabel} SEO issues`}</Text><Text as="p" tone="subdued">{data.view === "manager" ? "Manage and optimize Shopify products and collections in one place." : `Prioritize recurring SEO problems across all scanned ${typeLabel.toLowerCase()}.`}</Text></BlockStack><InlineStack gap="200">{data.view === "issues" && <Button url={`/app/catalog-seo?view=manager&type=${data.resourceType}`}>Manage catalog</Button>}<Button variant="primary" loading={isScanning} onClick={runScan}>Run SEO scan</Button></InlineStack></InlineStack>
+      <InlineStack align="space-between" blockAlign="end" gap="300"><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">{data.view === "manager" ? "Catalog" : "SEO Audit"}</Text><Text as="p" tone="subdued">{data.view === "manager" ? "Manage and optimize Shopify products and collections in one place." : `Find and fix SEO issues across your store. Showing recurring problems in scanned ${typeLabel.toLowerCase()}.`}</Text></BlockStack><InlineStack gap="200">{data.view === "issues" && <Button url={`/app/catalog-seo?view=manager&type=${data.resourceType}`}>Open in Catalog</Button>}<Button variant="primary" loading={isScanning} onClick={runScan}>Run SEO scan</Button></InlineStack></InlineStack>
       <div className="bp-seo-scope-tabs">
         {data.view === "manager"
           ? <Tabs tabs={[{ id: "products", content: "Products" }, { id: "collections", content: "Collections" }]} selected={data.resourceType === "product" ? 0 : 1} onSelect={switchManagerType} />
-          : <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId={data.resourceType === "product" ? "products" : "collections"} />}
+          : <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="issues" />}
       </div>
+      {data.view === "issues" && <IssueScopeSwitcher active={data.resourceType === "product" ? "products" : "collections"} />}
       {isScanning && <Banner tone="info" title={data.job?.phase || "SEO scan queued"}><p>Products and collections are scanned in the background. This page updates automatically.</p></Banner>}
       {data.job?.status === "failed" && <Banner tone="critical" title="SEO scan failed"><p>The background scan could not be completed. Check the SEO worker log and run the scan again.</p></Banner>}
       {!data.total && !isScanning && <Banner tone="info" title={`No saved ${typeLabel.toLowerCase()} report`}><p>Run an SEO scan to analyze Shopify {typeLabel.toLowerCase()}.</p></Banner>}

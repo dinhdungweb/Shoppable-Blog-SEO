@@ -17,6 +17,7 @@ import {
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import {
   THEME_BLOCK_HANDLES,
   buildAppEmbedDeepLink,
@@ -67,12 +68,12 @@ export default function ThemeSetupPage() {
     <Page
       title="Theme setup"
       subtitle="Install and preview Rankmath SEO blocks on your published theme."
-      backAction={{ content: "Overview", url: "/app" }}
     >
-      <TitleBar title="Theme setup" />
+      <TitleBar title="Settings" />
       <Layout>
         <Layout.Section>
           <BlockStack gap="500">
+            <WorkspaceTabs tabs={SETTINGS_WORKSPACE_TABS} activeId="theme" />
             <Banner title="Before you start" tone="info">
               <p>
                 The buttons below open the published theme for {shop}. App blocks require an
@@ -106,7 +107,7 @@ export default function ThemeSetupPage() {
               <BlockStack gap="300">
                 <Text as="p" variant="bodyMd">
                   Choose either a carousel or a grid for the Default blog post template. The block
-                  automatically shows products linked to each article in Content Studio.
+                  automatically shows products linked to each article in Content.
                 </Text>
                 <InstructionList
                   items={[
@@ -166,7 +167,7 @@ export default function ThemeSetupPage() {
             <SetupStep number="4" title="Verify the storefront" required>
               <InstructionList
                 items={[
-                  "In Content Studio, open a published blog post and link at least one available product.",
+                  "In Content, open a published blog post and link at least one available product.",
                   "Open that article on the live storefront and confirm the selected display block appears.",
                   "If it does not appear, confirm both theme changes were saved, the app embed is enabled, and the article has linked products.",
                   "Repeat the app-block steps on any custom blog post template that should use Rankmath SEO blocks.",

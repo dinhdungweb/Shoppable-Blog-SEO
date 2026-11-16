@@ -12,8 +12,9 @@ import { suggestInternalLinksForDraft, insertApprovedLink, type LinkSuggestion }
 import { isNineRouterConfigured } from "../ai-seo.server";
 import { generateAiCatalogDraft, isAiCatalogMode, type AiCatalogDraft, type AiCatalogMode } from "../ai-catalog.server";
 import { getAiUsageStatus, isAiQuotaExceededError, runWithAiUsage } from "../ai-usage.server";
-import { getPublicNineRouterErrorMessage } from "../nine-router.server";
+import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
+import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 
@@ -61,6 +62,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
 export async function action({ request, params }: ActionFunctionArgs) {
   const { admin, session, billing } = await authenticate.admin(request);
+  // Apply Settings → SEO & AI rules to every AI generation in this request.
+  enterAiWritingRules(await loadShopAiWritingRules(session.shop));
   const planAccess = await getActivePlanAndLimits(billing, session.shop);
   if (!planAccess.limits.canCatalogSeo) {
     return json({ error: "Product and Collection SEO are available on Plus, Pro and Growth plans.", upgradeUrl: "/app/pricing?reason=catalog_seo" }, { status: 403 });
@@ -331,7 +334,7 @@ export default function CatalogResourceEditor() {
   const groups = checklistGroups(currentAudit.issues, { ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword });
   const linkSuggestions = useMemo(() => canInternalLinking ? suggestInternalLinksForDraft({ id: resource.id, title, handle, blogHandle: resource.type === "product" ? "products" : "collections", body: descriptionHtml }, linkTargets.map((item) => ({ id: item.articleId, title: item.articleTitle, handle: item.articleHandle, blogHandle: item.blogHandle, body: "" })), 8) : [], [canInternalLinking, descriptionHtml, handle, linkTargets, resource.id, resource.type, title]);
   const aiQuotaExhausted = currentAiUsage.limited && currentAiUsage.remaining === 0;
-  return <Frame><Page fullWidth backAction={{ content: `${typeLabel} SEO`, url: `/app/catalog-seo?type=${resource.type}` }}>
+  return <Frame><Page fullWidth backAction={{ content: "Catalog", url: `/app/catalog-seo?view=manager&type=${resource.type}` }}>
     <TitleBar title={`Edit ${typeLabel.toLowerCase()}`}><button variant="primary" type="submit" form="catalog-resource-form" disabled={!dirty}>Save changes</button></TitleBar>
     <div className="bp-catalog-editor-shell"><Form method="post" id="catalog-resource-form"><BlockStack gap="500">
       <input type="hidden" name="descriptionHtml" value={descriptionHtml} />
@@ -983,7 +986,7 @@ function Detail({ label, value }: { label: string; value: string }) { return <In
 export function ErrorBoundary() {
   const error = useRouteError();
   const message = isRouteErrorResponse(error) ? String(error.data || error.statusText) : error instanceof Error ? error.message : "The resource could not be loaded.";
-  return <Page><BlockStack gap="400"><Banner tone="critical" title="Unable to open the SEO editor"><p>{message}</p></Banner><InlineStack gap="200"><Button url="/app/catalog-seo?type=product">Back to Product SEO</Button><Button url="/app/catalog-seo?type=collection">Back to Collection SEO</Button></InlineStack></BlockStack></Page>;
+  return <Page><BlockStack gap="400"><Banner tone="critical" title="Unable to open the SEO editor"><p>{message}</p></Banner><InlineStack gap="200"><Button url="/app/catalog-seo?view=manager&type=product">Back to products</Button><Button url="/app/catalog-seo?view=manager&type=collection">Back to collections</Button></InlineStack></BlockStack></Page>;
 }
 
 function resourceType(value?: string): CatalogResourceType { if (value === "product" || value === "collection") return value; throw new Response("Not found", { status: 404 }); }

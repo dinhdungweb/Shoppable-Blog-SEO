@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, getPublicNineRouterErrorMessage, isReasoningModel, readNineRouterJson } from "./nine-router.server";
+import { createNineRouterResponseError, fetchNineRouter, runWithAiWritingRules, enterAiWritingRules, getNineRouterGenerationOptions, getPublicNineRouterErrorMessage, isReasoningModel, readNineRouterJson } from "./nine-router.server";
 
 afterEach(() => {
   delete process.env.NINE_ROUTER_REASONING_EFFORT;
@@ -66,5 +66,42 @@ describe("9Router model options", () => {
     const error = await fetchNineRouter("http://127.0.0.1/test", {}, 5).catch((caught) => caught);
 
     expect(getPublicNineRouterErrorMessage(error, "Fallback")).toBe("AI took too long to respond. Please try again.");
+  });
+});
+
+describe("9Router merchant writing rules", () => {
+  const rules = { brandTone: "Luxury", forbiddenWords: ["cheap"], contentStructure: "Intro, Body" };
+  const body = JSON.stringify({ messages: [{ role: "system", content: "Return JSON." }, { role: "user", content: "Write" }] });
+
+  it("injects the active request's rules into the system prompt", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    await runWithAiWritingRules(rules, () => fetchNineRouter("https://router.test/v1/chat/completions", { method: "POST", body }, 1000));
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sent.messages[0].content).toContain("Brand tone: Luxury.");
+    expect(sent.messages[0].content).toContain('"cheap"');
+  });
+
+  it("sends the body unchanged outside a rules context", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchNineRouter("https://router.test/v1/chat/completions", { method: "POST", body }, 1000);
+    expect(fetchMock.mock.calls[0][1].body).toBe(body);
+  });
+});
+
+describe("9Router rules entered inside a route action", () => {
+  it("reach AI calls made after later awaits in the same action", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const body = JSON.stringify({ messages: [{ role: "system", content: "S" }] });
+    const loadRules = async () => ({ brandTone: "Casual", forbiddenWords: [], contentStructure: "A" });
+    const action = async () => {
+      enterAiWritingRules(await loadRules());
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      await Promise.all([1, 2].map(() => fetchNineRouter("https://router.test/v1/chat/completions", { method: "POST", body }, 1000)));
+    };
+    await action();
+    for (const call of fetchMock.mock.calls) expect(JSON.parse(call[1].body).messages[0].content).toContain("Brand tone: Casual.");
   });
 });

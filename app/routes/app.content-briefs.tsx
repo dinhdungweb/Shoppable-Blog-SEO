@@ -39,12 +39,13 @@ import {
   type ContentBriefProduct,
 } from "../content-brief-context";
 import prisma from "../db.server";
-import { getPublicNineRouterErrorMessage } from "../nine-router.server";
+import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import {
   CONTENT_WORKSPACE_TABS,
   WorkspaceTabs,
 } from "../components/WorkspaceTabs";
+import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 type SerializedBrief = {
@@ -108,6 +109,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
+  // Apply Settings → SEO & AI rules to every AI generation in this request.
+  enterAiWritingRules(await loadShopAiWritingRules(session.shop));
   const { limits } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canInternalLinking) {
     return json({ error: "AI Content Brief is available on Pro and Growth plans." }, { status: 403 });
@@ -297,7 +300,7 @@ export default function ContentBriefsPage() {
   const activeSection = String(fetcher.formData?.get("section") || "");
 
   if (!initial.canUse) {
-    return <Page><TitleBar title="AI Content Brief" /><BlockStack gap="500"><WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="briefs" /><Card><EmptyState heading="AI Content Brief is a Pro feature" action={{ content: "Upgrade plan", url: `/app/pricing?reason=content_brief&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Build keyword clusters, outlines, internal-link plans and product-placement ideas before drafting an article.</p></EmptyState></Card></BlockStack></Page>;
+    return <Page><TitleBar title="Content briefs" /><BlockStack gap="500"><WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="briefs" /><Card><EmptyState heading="AI Content Brief is a Pro feature" action={{ content: "Upgrade plan", url: `/app/pricing?reason=content_brief&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Build keyword clusters, outlines, internal-link plans and product-placement ideas before drafting an article.</p></EmptyState></Card></BlockStack></Page>;
   }
 
   const generate = () => fetcher.submit(
@@ -310,7 +313,7 @@ export default function ContentBriefsPage() {
   };
 
   return <Page fullWidth>
-    <TitleBar title="AI Content Brief & Keyword Cluster" />
+    <TitleBar title="Content briefs" />
     <BlockStack gap="500">
       <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="briefs" />
       <InlineStack align="space-between" blockAlign="end" gap="400">
@@ -322,7 +325,7 @@ export default function ContentBriefsPage() {
       </InlineStack>
 
       {!initial.aiEnabled && <Banner tone="critical" title="9Router is not configured"><p>Add the 9Router base URL, API key and model to the server environment before generating briefs.</p></Banner>}
-      {!initial.searchConsoleConnected && <Banner tone="info" title="Keyword evidence is limited"><p>Connect and sync Google Search Console in SEO Optimizer. Briefs still work, but will not include store-specific query metrics until data is available.</p></Banner>}
+      {!initial.searchConsoleConnected && <Banner tone="info" title="Keyword evidence is limited"><p>Connect and sync Google Search Console in Settings → Integrations. Briefs still work, but will not include store-specific query metrics until data is available.</p></Banner>}
       {response?.error && <Banner tone="critical"><p>{response.error}</p></Banner>}
 
       <InlineGrid columns={{ xs: 1, lg: "1fr 2fr" }} gap="500">

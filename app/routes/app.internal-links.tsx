@@ -10,14 +10,15 @@ import { analyzeInternalLinks, hasInternalLinkTarget, insertApprovedLink, previe
 import type { InternalLinkReport, LinkArticle, LinkSuggestion } from "../internal-linking";
 import { generateAiInternalLinkSuggestions } from "../ai-internal-linking.server";
 import { isNineRouterConfigured } from "../ai-seo.server";
-import { getPublicNineRouterErrorMessage } from "../nine-router.server";
+import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
 import {
-  CONTENT_WORKSPACE_TABS,
+  OPTIMIZE_WORKSPACE_TABS,
   WorkspaceTabs,
 } from "../components/WorkspaceTabs";
+import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 
@@ -54,6 +55,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
+  // Apply Settings → SEO & AI rules to every AI generation in this request.
+  enterAiWritingRules(await loadShopAiWritingRules(session.shop));
   const { limits } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canInternalLinking) {
     return json({ error: "Internal Linking Assistant is available on Pro and Growth plans." }, { status: 403 });
@@ -357,9 +360,9 @@ export default function InternalLinksPage() {
   if (!initialData.canInternalLinking) {
     return (
       <Page>
-        <TitleBar title="Internal Linking Assistant" />
+        <TitleBar title="Bulk Optimize" />
         <BlockStack gap="500">
-          <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="links" />
+          <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="links" />
           <Card>
             <EmptyState
               heading="Internal Linking Assistant is a Pro feature"
@@ -376,14 +379,14 @@ export default function InternalLinksPage() {
 
   return (
     <Page fullWidth>
-      <TitleBar title="AI Internal Link Copilot">
+      <TitleBar title="Bulk Optimize">
         <button variant="primary" disabled={analyzing || generatingAi} onClick={runAnalysis}>{analyzing ? "Analyzing..." : "Analyze links"}</button>
       </TitleBar>
       <BlockStack gap="500">
-        <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="links" />
+        <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="links" />
         <InlineStack align="space-between" blockAlign="end">
           <BlockStack gap="100">
-            <Text as="h1" variant="headingXl" fontWeight="bold">AI Internal Link Copilot</Text>
+            <Text as="h1" variant="headingXl" fontWeight="bold">Internal links</Text>
             <Text as="p" tone="subdued">Find related content, verify semantic relevance and exact anchors with AI, then review every change before applying it.</Text>
           </BlockStack>
           <InlineStack gap="200">
@@ -644,7 +647,7 @@ function ChangeHistory({
   if (!history.length) return null;
   return <Card>
     <BlockStack gap="300">
-      <Text as="h2" variant="headingMd">Recent AI internal link changes</Text>
+      <InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Recent internal link changes</Text><Button variant="plain" url="/app/optimize/history">View all history</Button></InlineStack>
       <Text as="p" variant="bodySm" tone="subdued">Undo is allowed only while the Shopify article still matches the version written by Copilot.</Text>
       {history.map((change) => {
         const undone = change.status !== "applied" || undoneChanges.includes(change.id);

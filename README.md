@@ -25,8 +25,8 @@ account, and a development store.
    `GOOGLE_SEARCH_CONSOLE_CLIENT_ID`, `GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET`,
    and a stable random `GOOGLE_TOKEN_ENCRYPTION_KEY`.
 5. Add the same four Google variables to the production hosting environment,
-   deploy the database migration with `npm run setup`, then open **SEO
-   Optimizer → Connect Google**.
+   deploy the database migration with `npm run setup`, then open **Settings →
+   Integrations → Connect Google**.
 
 The integration only requests the read-only
 `https://www.googleapis.com/auth/webmasters.readonly` scope. Do not rotate the

@@ -38,12 +38,13 @@ import {
   type ImageSeoCandidate,
   type ImageSeoIssue,
 } from "../image-seo";
-import { getPublicNineRouterErrorMessage } from "../nine-router.server";
+import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import {
-  SEO_WORKSPACE_TABS,
+  OPTIMIZE_WORKSPACE_TABS,
   WorkspaceTabs,
 } from "../components/WorkspaceTabs";
+import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const PAGE_SIZE = 20;
@@ -176,6 +177,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
+  // Apply Settings → SEO & AI rules to every AI generation in this request.
+  enterAiWritingRules(await loadShopAiWritingRules(session.shop));
   const { limits } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canBulkReview) return json({ error: "AI Image SEO is available on the Growth plan." }, { status: 403 });
   const form = await request.formData();
@@ -470,7 +473,7 @@ export default function ImageSeoPage() {
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   if (!initial.canUse) {
-    return <Page><TitleBar title="AI Image SEO" /><BlockStack gap="500"><WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="images" /><Card><EmptyState heading="AI Image SEO is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></BlockStack></Page>;
+    return <Page><TitleBar title="Bulk Optimize" /><BlockStack gap="500"><WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="images" /><Card><EmptyState heading="Bulk image alt text is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></BlockStack></Page>;
   }
 
   const toggle = (id: string, checked: boolean) => setSelectedIds((current) => checked ? [...new Set([...current, id])] : current.filter((value) => value !== id));
@@ -500,11 +503,11 @@ export default function ImageSeoPage() {
   };
 
   return <Page fullWidth>
-    <TitleBar title="AI Image SEO" />
+    <TitleBar title="Bulk Optimize" />
     <BlockStack gap="500">
-      <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="images" />
+      <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="images" />
       <InlineStack align="space-between" blockAlign="end" gap="400">
-        <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Bulk image alt review</Text><Text as="p" tone="subdued">Generate context-aware alt suggestions for featured and inline images. Image files, URLs, dimensions and all non-alt HTML remain unchanged.</Text></BlockStack>
+        <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Image alt text</Text><Text as="p" tone="subdued">Generate context-aware alt suggestions for featured and inline images. Image files, URLs, dimensions and all non-alt HTML remain unchanged.</Text></BlockStack>
         <InlineStack gap="200"><Button disabled={!selectedIds.length} onClick={() => setSelectedIds([])}>Clear selection</Button><Button variant="primary" loading={aiFetcher.state !== "idle"} disabled={!initial.aiEnabled || !selectedIds.length || aiFetcher.state !== "idle"} onClick={generate}>{`Generate AI for selected (${Math.min(selectedIds.length, 50)})`}</Button></InlineStack>
       </InlineStack>
 
@@ -562,7 +565,7 @@ export default function ImageSeoPage() {
 
       {reviewed.length > 0 && <Card><InlineStack align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="h2" variant="headingMd">{reviewed.length} reviewed change(s) ready</Text><Text as="p" variant="bodySm" tone="subdued">Preview the exact before/after alt values. Shopify is updated only after confirmation.</Text></BlockStack><Button variant="primary" onClick={() => setPreviewOpen(true)}>Preview selected changes</Button></InlineStack></Card>}
 
-      {initial.history.length > 0 && <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">Batch history</Text>{initial.history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.imageCount} image(s) across {row.articleCount} article(s)</Text><Text as="span" variant="bodySm" tone="subdued">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied" || changeFetcher.state !== "idle"} loading={changeFetcher.state !== "idle" && changeFetcher.formData?.get("changeId") === row.id} onClick={() => changeFetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo batch</Button></InlineStack>)}</BlockStack></Card>}
+      {initial.history.length > 0 && <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Recent changes</Text><Button variant="plain" url="/app/optimize/history">View all history</Button></InlineStack>{initial.history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.imageCount} image(s) across {row.articleCount} article(s)</Text><Text as="span" variant="bodySm" tone="subdued">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied" || changeFetcher.state !== "idle"} loading={changeFetcher.state !== "idle" && changeFetcher.formData?.get("changeId") === row.id} onClick={() => changeFetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo batch</Button></InlineStack>)}</BlockStack></Card>}
     </BlockStack>
 
     <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="Confirm image alt changes" primaryAction={{ content: `Apply ${reviewed.length} changes`, onAction: apply, loading: changeFetcher.state !== "idle", disabled: !reviewed.length }} secondaryActions={[{ content: "Continue reviewing", onAction: () => setPreviewOpen(false) }]}>

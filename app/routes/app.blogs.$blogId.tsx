@@ -120,13 +120,14 @@ import {
   upsertFaqSection,
 } from "../faq-content";
 import { isNineRouterConfigured } from "../ai-seo.server";
-import { getPublicNineRouterErrorMessage } from "../nine-router.server";
+import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import {
   getAiUsageStatus,
   isAiQuotaExceededError,
   runWithAiUsage,
   type AiUsageStatus,
 } from "../ai-usage.server";
+import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 
 type SeoIssue = SeoAuditIssue;
 
@@ -612,6 +613,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
+  // Apply Settings → SEO & AI rules to every AI generation in this request.
+  enterAiWritingRules(await loadShopAiWritingRules(session.shop));
   const shop = session.shop;
   const shopDomains = await fetchShopDomains(admin, shop);
   let activePlanPromise: ReturnType<typeof getActivePlanAndLimits> | null = null;

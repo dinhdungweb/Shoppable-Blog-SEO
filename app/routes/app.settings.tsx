@@ -28,6 +28,22 @@ import {
 } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
+import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
+import { SearchConsoleCard } from "../components/SearchConsoleCard";
+import { loadSearchConsoleView } from "../search-console-view.server";
+import { getAiUsageStatus } from "../ai-usage.server";
+import { isNineRouterConfigured } from "../ai-seo.server";
+import {
+  BRAND_TONES,
+  DEFAULT_CONTENT_STRUCTURE,
+  DEFAULT_META_DESCRIPTION_TEMPLATE,
+  DEFAULT_META_TITLE_TEMPLATE,
+  META_TEMPLATE_TOKENS,
+  parseForbiddenWords,
+  renderMetaTemplate,
+  type BrandTone,
+} from "../ai-writing-rules";
+
 import prisma from "../db.server";
 import {
   ShoppableDisplayPreview,
@@ -51,6 +67,13 @@ import {
   pickSettingChoice,
 } from "../settings-validation";
 
+const META_TEMPLATE_PREVIEW = {
+  title: "How to choose trail running shoes",
+  blog: "Guides",
+  store: "Peak Outfitters",
+  excerpt: "Fit, grip and cushioning explained so you can pick the right pair.",
+};
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
   const shop = session.shop;
@@ -67,8 +90,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
+  const [searchConsole, aiUsage] = await Promise.all([
+    loadSearchConsoleView(shop, limits.canSearchConsole),
+    getAiUsageStatus(shop, limits.aiRequestsPerMonth),
+  ]);
+
   return {
     config: { ...config, ...normalizeContentNavConfig(config) },
+    searchConsole,
+    aiStatus: { configured: isNineRouterConfigured(), usage: aiUsage },
     canContentNavigation: limits.canContentNavigation,
     canCustomCss: limits.canCustomCss,
     initialTab: getInitialSettingsTab(url.searchParams.get("tab")),
@@ -80,6 +110,8 @@ function getInitialSettingsTab(tab: string | null) {
   if (tab === "display") return 1;
   if (tab === "content-navigation" || tab === "toc") return 2;
   if (tab === "tracking") return 3;
+  if (tab === "rules") return 4;
+  if (tab === "integrations") return 5;
   return 0;
 }
 
@@ -117,6 +149,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ...(limits.canCustomCss ? { customCss: cleanSettingText(formData.get("customCss"), 20000, "") } : {}),
       utmRules: pickSettingChoice(formData, "utmRules", ["Auto-append to product links", "Do not append"], "Auto-append to product links"),
       enableConversionTracking: formData.get("enableConversionTracking") === "true",
+      brandTone: pickSettingChoice(formData, "brandTone", BRAND_TONES, "Professional"),
+      forbiddenWords: parseForbiddenWords(String(formData.get("forbiddenWords") || "")).join(", "),
+      defaultContentStructure: cleanSettingText(formData.get("defaultContentStructure"), 300, DEFAULT_CONTENT_STRUCTURE),
+      metaTitleTemplate: cleanSettingText(formData.get("metaTitleTemplate"), 200, DEFAULT_META_TITLE_TEMPLATE),
+      metaDescriptionTemplate: cleanSettingText(formData.get("metaDescriptionTemplate"), 300, DEFAULT_META_DESCRIPTION_TEMPLATE),
       ...(limits.canContentNavigation
         ? {
           breadcrumbsEnabled: formData.get("breadcrumbsEnabled") === "true",
@@ -203,7 +240,7 @@ const CustomToggle = ({
 );
 
 export default function Settings() {
-  const { config, canContentNavigation, canCustomCss, initialTab, planKey } = useLoaderData<typeof loader>();
+  const { config, searchConsole, aiStatus, canContentNavigation, canCustomCss, initialTab, planKey } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
 
@@ -279,6 +316,8 @@ export default function Settings() {
       { id: 'display', content: 'Shoppable display', panelID: 'display-panel' },
       { id: 'content-navigation', content: 'Content navigation', panelID: 'content-navigation-panel' },
       { id: 'tracking', content: 'Tracking', panelID: 'tracking-panel' },
+      { id: 'rules', content: 'SEO & AI rules', panelID: 'rules-panel' },
+      { id: 'integrations', content: 'Integrations', panelID: 'integrations-panel' },
     ],
     [],
   );
@@ -315,7 +354,7 @@ export default function Settings() {
         <InlineStack align="space-between" blockAlign="center">
           <BlockStack gap="100">
             <Text as="h1" variant="headingLg" fontWeight="bold">Settings</Text>
-            <Text as="p" variant="bodyMd" tone="subdued">Configure storefront display, content navigation, and first-party conversion tracking for this Shopify store.</Text>
+            <Text as="p" variant="bodyMd" tone="subdued">Configure storefront display, content navigation, tracking, AI writing rules and integrations.</Text>
           </BlockStack>
           <InlineStack gap="300" blockAlign="center">
             {!hasChanges && (
@@ -324,8 +363,6 @@ export default function Settings() {
                 <Text as="span" tone="success">All changes saved</Text>
               </InlineStack>
             )}
-            <Button url="/app/changelog">What&apos;s new</Button>
-            <Button url="/app/pricing">Plans</Button>
             <Button onClick={handleDiscard} disabled={!hasChanges}>Discard changes</Button>
           </InlineStack>
         </InlineStack>
@@ -365,6 +402,8 @@ export default function Settings() {
             }
           `}
         </style>
+        <WorkspaceTabs tabs={SETTINGS_WORKSPACE_TABS} activeId="settings" />
+
         <BlockStack gap="300">
           <div className="bp-settings-tabs">
             <Tabs tabs={settingsTabs} selected={selectedTab} onSelect={setSelectedTab} />
@@ -875,6 +914,94 @@ export default function Settings() {
                 </InlineStack>
               </BlockStack>
             </Card>
+          )}
+
+          {selectedTabId === 'rules' && (
+            <BlockStack gap="400">
+              <Card padding="400">
+                <BlockStack gap="400">
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingMd" fontWeight="bold">AI writing rules</Text>
+                    <Text as="p" variant="bodyMd" tone="subdued">Applied to every AI generation in the app: post drafts, rewrites, SEO fixes, FAQs, briefs, catalog copy, alt text and internal link anchors.</Text>
+                  </BlockStack>
+                  <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+                    <Select
+                      label="Brand tone"
+                      options={BRAND_TONES.map((tone) => ({ label: tone, value: tone }))}
+                      value={BRAND_TONES.includes(formState.brandTone as BrandTone) ? formState.brandTone : 'Professional'}
+                      onChange={(value) => handleChange('brandTone', value)}
+                    />
+                    <TextField
+                      label="Article structure"
+                      value={formState.defaultContentStructure || ''}
+                      onChange={(value) => handleChange('defaultContentStructure', value)}
+                      maxLength={300}
+                      autoComplete="off"
+                      helpText="Used when AI writes a full article draft."
+                    />
+                  </InlineGrid>
+                  <TextField
+                    label="Words and phrases AI must never use"
+                    value={formState.forbiddenWords || ''}
+                    onChange={(value) => handleChange('forbiddenWords', value)}
+                    multiline={3}
+                    maxLength={1000}
+                    autoComplete="off"
+                    helpText={`Separate with commas or new lines. ${parseForbiddenWords(formState.forbiddenWords).length} of 50 used.`}
+                  />
+                </BlockStack>
+              </Card>
+
+              <Card padding="400">
+                <BlockStack gap="400">
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingMd" fontWeight="bold">Meta tag templates</Text>
+                    <Text as="p" variant="bodyMd" tone="subdued">Starting suggestions in Bulk Optimize → Meta tags. Available tokens: {META_TEMPLATE_TOKENS.join(', ')}. Empty tokens are removed with their separator.</Text>
+                  </BlockStack>
+                  <TextField
+                    label="SEO title template"
+                    value={formState.metaTitleTemplate || ''}
+                    onChange={(value) => handleChange('metaTitleTemplate', value)}
+                    maxLength={200}
+                    autoComplete="off"
+                    helpText={`Preview: ${renderMetaTemplate(formState.metaTitleTemplate || DEFAULT_META_TITLE_TEMPLATE, META_TEMPLATE_PREVIEW) || '—'}`}
+                  />
+                  <TextField
+                    label="Meta description template"
+                    value={formState.metaDescriptionTemplate || ''}
+                    onChange={(value) => handleChange('metaDescriptionTemplate', value)}
+                    maxLength={300}
+                    autoComplete="off"
+                    helpText={`Preview: ${renderMetaTemplate(formState.metaDescriptionTemplate || DEFAULT_META_DESCRIPTION_TEMPLATE, META_TEMPLATE_PREVIEW) || '—'}`}
+                  />
+                </BlockStack>
+              </Card>
+            </BlockStack>
+          )}
+
+          {selectedTabId === 'integrations' && (
+            <BlockStack gap="400">
+              <SearchConsoleCard data={searchConsole} mode="connection" planKey={planKey} />
+              <Card padding="400">
+                <BlockStack gap="300">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd" fontWeight="bold">AI assistant</Text>
+                    <div style={{ backgroundColor: aiStatus.configured ? '#E8F5E9' : '#F1F2F3', color: aiStatus.configured ? '#29845A' : '#6D7175', padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold' }}>
+                      {aiStatus.configured ? 'Connected' : 'Not configured'}
+                    </div>
+                  </InlineStack>
+                  <Text as="p" variant="bodyMd" tone="subdued">
+                    {aiStatus.usage.limit === null
+                      ? `${aiStatus.usage.used} AI generations used this month.`
+                      : `${aiStatus.usage.used} of ${aiStatus.usage.limit} AI generations used this month · resets ${new Date(aiStatus.usage.resetsAt).toLocaleDateString()}.`}
+                  </Text>
+                  <InlineStack gap="200">
+                    <Button onClick={() => setSelectedTab(settingsTabs.findIndex((tab) => tab.id === 'rules'))}>Edit AI writing rules</Button>
+                    <Button variant="plain" url="/app/pricing">Get more AI generations</Button>
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+            </BlockStack>
           )}
 
           </div>
