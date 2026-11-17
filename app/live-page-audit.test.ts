@@ -79,3 +79,18 @@ describe("auditStorePageSnapshot", () => {
     expect(result.score).toBe(85);
   });
 });
+
+describe("auditLivePage: product pages", () => {
+  const productTypes = (schema: unknown[]) => auditLivePage(parseLivePage(page({ schema })), { pageUrl: url, expectArticleSchema: false, expectProductSchema: true }).map((issue) => issue.type);
+
+  it("accepts Product schema with a priced, available offer", () => {
+    expect(productTypes([{ "@type": "Product", name: "Ring", offers: { "@type": "Offer", price: "49.00", priceCurrency: "USD", availability: "https://schema.org/InStock" } }])).toEqual([]);
+    expect(productTypes([{ "@type": "ProductGroup", hasVariant: [{ "@type": "Product", offers: [{ price: 10, availability: "InStock" }] }] }])).toEqual([]);
+  });
+
+  it("flags missing, duplicate and incomplete Product schema", () => {
+    expect(productTypes([])).toContain("live_missing_product_schema");
+    expect(productTypes([{ "@type": "Product", offers: { price: "1", availability: "InStock" } }, { "@graph": [{ "@type": "Product" }] }])).toContain("live_duplicate_product_schema");
+    expect(productTypes([{ "@type": "Product", offers: { price: "49.00" } }])).toContain("live_incomplete_product_offer");
+  });
+});

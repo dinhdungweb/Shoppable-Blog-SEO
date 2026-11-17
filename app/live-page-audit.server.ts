@@ -7,7 +7,9 @@ const CONCURRENCY = 4;
 const TIMEOUT_MS = 10_000;
 const MAX_HTML_BYTES = 2_000_000;
 
-export type LiveCheckTarget = { key: string; url: string; expectArticleSchema: boolean };
+export type LiveCheckTarget = { key: string; url: string; expectArticleSchema: boolean; expectProductSchema?: boolean };
+/** Product pages checked per scan, rotating (oldest check first). */
+export const LIVE_PRODUCT_LIMIT = 10;
 export type LiveCheckResult = { issues: LivePageIssue[]; snapshot: LivePageSnapshot | null };
 
 export async function fetchPrimaryOrigin(admin: any): Promise<string> {
@@ -82,7 +84,7 @@ async function checkPage(target: LiveCheckTarget): Promise<LiveCheckResult | "pa
     const html = (await response.text()).slice(0, MAX_HTML_BYTES);
     const snapshot = parseLivePage(html);
     if (snapshot.isPasswordPage) return "password";
-    return { snapshot, issues: auditLivePage(snapshot, { pageUrl: target.url, expectArticleSchema: target.expectArticleSchema }) };
+    return { snapshot, issues: auditLivePage(snapshot, { pageUrl: target.url, expectArticleSchema: target.expectArticleSchema, expectProductSchema: target.expectProductSchema }) };
   } catch (error) {
     // Network failures are not page problems; keep the previous result.
     console.warn("Live page check failed", { url: target.url, error: error instanceof Error ? error.message : String(error) });

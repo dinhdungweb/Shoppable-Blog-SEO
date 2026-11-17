@@ -27,10 +27,11 @@ const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/empt
  * (intent=undo, changeId=<row id>). This page merges them into one timeline and
  * reuses those actions, so undo behaviour stays identical to the tool pages.
  */
-type ChangeKind = "meta" | "images" | "links";
+type ChangeKind = "meta" | "catalog" | "images" | "links";
 
 const TOOL_META: Record<ChangeKind, { label: string; action: string; url: string }> = {
   meta: { label: "Meta tags", action: "/app/blogs/bulk_edit", url: "/app/optimize" },
+  catalog: { label: "Products & collections", action: "/app/optimize/catalog/review", url: "/app/optimize/catalog" },
   images: { label: "Image alt text", action: "/app/image-seo", url: "/app/image-seo" },
   links: { label: "Internal links", action: "/app/internal-links", url: "/app/internal-links" },
 };
@@ -38,12 +39,18 @@ const TOOL_META: Record<ChangeKind, { label: string; action: string; url: string
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const [meta, images, links] = await Promise.all([
+  const [meta, catalog, images, links] = await Promise.all([
     prisma.seoBulkChange.findMany({
       where: { shop },
       orderBy: { appliedAt: "desc" },
       take: PER_TOOL,
       select: { id: true, articleTitle: true, status: true, appliedAt: true, undoneAt: true, beforeMetaTitle: true, afterMetaTitle: true, beforeMetaDescription: true, afterMetaDescription: true, beforeImageAlt: true, afterImageAlt: true },
+    }),
+    prisma.catalogBulkChange.findMany({
+      where: { shop },
+      orderBy: { appliedAt: "desc" },
+      take: PER_TOOL,
+      select: { id: true, title: true, resourceType: true, status: true, appliedAt: true, undoneAt: true, beforeSeoTitle: true, afterSeoTitle: true, beforeSeoDescription: true, afterSeoDescription: true, beforeImageAlt: true, afterImageAlt: true },
     }),
     prisma.imageSeoChange.findMany({
       where: { shop },
@@ -65,6 +72,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       kind: "meta" as ChangeKind,
       subject: row.articleTitle,
       summary: describeMetaChange(row),
+      status: row.status,
+      appliedAt: row.appliedAt.toISOString(),
+      undoneAt: row.undoneAt?.toISOString() || null,
+    })),
+    ...catalog.map((row) => ({
+      id: row.id,
+      kind: "catalog" as ChangeKind,
+      subject: `${row.title} (${row.resourceType})`,
+      summary: describeMetaChange({
+        beforeMetaTitle: row.beforeSeoTitle, afterMetaTitle: row.afterSeoTitle,
+        beforeMetaDescription: row.beforeSeoDescription, afterMetaDescription: row.afterSeoDescription,
+        beforeImageAlt: row.beforeImageAlt, afterImageAlt: row.afterImageAlt,
+      }, "image alt"),
       status: row.status,
       appliedAt: row.appliedAt.toISOString(),
       undoneAt: row.undoneAt?.toISOString() || null,
@@ -99,11 +119,11 @@ function describeMetaChange(row: {
   beforeMetaTitle: string; afterMetaTitle: string;
   beforeMetaDescription: string; afterMetaDescription: string;
   beforeImageAlt: string; afterImageAlt: string;
-}) {
+}, imageLabel = "featured image alt") {
   const fields = [
     row.beforeMetaTitle !== row.afterMetaTitle && "SEO title",
     row.beforeMetaDescription !== row.afterMetaDescription && "meta description",
-    row.beforeImageAlt !== row.afterImageAlt && "featured image alt",
+    row.beforeImageAlt !== row.afterImageAlt && imageLabel,
   ].filter(Boolean) as string[];
   if (!fields.length) return "No field changes";
   const text = fields.join(", ");
@@ -142,7 +162,7 @@ export default function ChangeHistory() {
         {!changes.length ? (
           <Card>
             <EmptyState heading="No bulk changes yet" action={{ content: "Optimize meta tags", url: "/app/optimize" }} image={EMPTY_IMAGE}>
-              <p>Changes applied with Meta tags, Image alt text and Internal links appear here, each with an Undo button.</p>
+              <p>Changes applied with Meta tags, Products &amp; collections, Image alt text and Internal links appear here, each with an Undo button.</p>
             </EmptyState>
           </Card>
         ) : (
@@ -151,7 +171,7 @@ export default function ChangeHistory() {
               resourceName={{ singular: "change", plural: "changes" }}
               itemCount={changes.length}
               selectable={false}
-              headings={[{ title: "Applied" }, { title: "Tool" }, { title: "Post" }, { title: "Change" }, { title: "Status" }, { title: "" }]}
+              headings={[{ title: "Applied" }, { title: "Tool" }, { title: "Item" }, { title: "Change" }, { title: "Status" }, { title: "" }]}
             >
               {changes.map((change, index) => (
                 <IndexTable.Row id={`${change.kind}-${change.id}`} key={`${change.kind}-${change.id}`} position={index}>

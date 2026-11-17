@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCatalogDuplicateIssues, auditCatalogResource, type CatalogResourceInput } from "./catalog-seo";
+import { applyCatalogDuplicateIssues, auditCatalogResource, galleryAltCounts, type CatalogResourceInput } from "./catalog-seo";
 
 const base: CatalogResourceInput = {
   id: "gid://shopify/Product/1", type: "product", title: "Silver ring", handle: "silver-ring",
@@ -50,5 +50,47 @@ describe("catalog SEO scope", () => {
   it("matches focus keywords as whole words", () => {
     const audit = auditCatalogResource({ ...base, focusKeyword: "ring", seoTitle: "Silver earrings for everyday wear", descriptionHtml: base.descriptionHtml.replace(/ring/gi, "earrings") });
     expect(audit.issues.map((entry) => entry.type)).toEqual(expect.arrayContaining(["keyword_missing_title", "keyword_missing_content"]));
+  });
+});
+
+describe("catalog SEO audit: images, thin collections and duplicates", () => {
+  it("flags gallery images without alt text", () => {
+    const audit = auditCatalogResource({ ...base, galleryImageCount: 4, galleryMissingAlt: 3 });
+    expect(audit.issues.find((entry) => entry.type === "gallery_images_missing_alt")?.label).toBe("3 more product images have no alt text");
+    expect(audit.score).toBe(96);
+  });
+
+  it("counts gallery alt text after the featured image", () => {
+    expect(galleryAltCounts([
+      { mediaContentType: "IMAGE", alt: "" },
+      { mediaContentType: "IMAGE", alt: "Side view" },
+      { mediaContentType: "VIDEO", alt: "" },
+      { mediaContentType: "IMAGE", alt: " " },
+    ])).toEqual({ galleryImageCount: 2, galleryMissingAlt: 1 });
+  });
+
+  it("flags collections with only a few products", () => {
+    const audit = auditCatalogResource({ ...base, id: "gid://shopify/Collection/2", type: "collection", itemCount: 2 });
+    expect(audit.issues.map((entry) => entry.type)).toContain("thin_collection");
+  });
+
+  it("does not penalize products without links, and only advises collections", () => {
+    const noLink = base.descriptionHtml.replace(/ <a [^>]*>Explore rings<\/a>/, "");
+    expect(auditCatalogResource({ ...base, descriptionHtml: noLink }).issues.map((entry) => entry.type)).not.toContain("missing_internal_link");
+    const collection = auditCatalogResource({ ...base, id: "gid://shopify/Collection/2", type: "collection", itemCount: 20, descriptionHtml: noLink });
+    expect(collection.issues.map((entry) => entry.type)).toContain("missing_internal_link");
+    expect(collection.score).toBe(100);
+  });
+
+  it("detects descriptions copied across products", () => {
+    const audits = [
+      auditCatalogResource(base),
+      auditCatalogResource({ ...base, id: "gid://shopify/Product/2", title: "Gold ring", seoTitle: "Gold ring for everyday wear", seoDescription: "Another unique description for the gold ring with sizing details, materials, care guidance and delivery." }),
+      auditCatalogResource({ ...base, id: "gid://shopify/Product/3", title: "Bracelet", seoTitle: "Silver bracelet", seoDescription: "Bracelet", descriptionHtml: "<p>Short and different.</p>" }),
+    ];
+    applyCatalogDuplicateIssues(audits);
+    expect(audits[0].issues.map((entry) => entry.type)).toContain("duplicate_description");
+    expect(audits[1].issues.map((entry) => entry.type)).toContain("duplicate_description");
+    expect(audits[2].issues.map((entry) => entry.type)).not.toContain("duplicate_description");
   });
 });

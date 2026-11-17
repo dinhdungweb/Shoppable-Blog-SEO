@@ -40,7 +40,7 @@ import prisma from "../db.server";
 import { auditSeo as runSeoAudit, toStoredSeoIssues } from "../seo-audit";
 import { articleSearchPath, buildImpressionsByPath, formatImpressions, issuePriority } from "../seo-priority";
 import { LIVE_ISSUE_PREFIX, auditStorePageSnapshot, livePenalty, type LivePageIssue } from "../live-page-audit";
-import { LIVE_PAGE_LIMIT, fetchPrimaryOrigin, runLiveChecks, type LiveCheckTarget } from "../live-page-audit.server";
+import { LIVE_PAGE_LIMIT, LIVE_PRODUCT_LIMIT, fetchPrimaryOrigin, runLiveChecks, type LiveCheckTarget } from "../live-page-audit.server";
 import { getCatalogContentHash } from "../catalog-seo";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
@@ -394,7 +394,7 @@ async function runSeoScan({
     limits.canCatalogSeo
       ? fetchShopifyCatalogResources(admin, async (type, loaded) => {
           await report({ phase: `Loading Shopify ${type}s (${loaded})`, progress: Math.min(25, 8 + Math.ceil(loaded / 100) * 2) });
-        })
+        }, limits.seoCatalogResources)
       : Promise.resolve([]),
     prisma.articleProduct.findMany({
       where: { shop, isActive: true },
@@ -423,7 +423,7 @@ async function runSeoScan({
         liveCheckedAt: true,
       },
     }),
-    prisma.resourceSEO.findMany({ where: { shop }, select: { resourceId: true, resourceType: true, contentHash: true, sourceUpdatedAt: true, focusKeyword: true } }),
+    prisma.resourceSEO.findMany({ where: { shop }, select: { resourceId: true, resourceType: true, contentHash: true, sourceUpdatedAt: true, focusKeyword: true, liveCheckedAt: true } }),
     fetchShopDomains(admin, shop),
   ]);
   await report({ phase: "Analyzing SEO", progress: 30, totalPosts: articles.length });
@@ -498,9 +498,18 @@ async function runSeoScan({
         .slice(0, LIVE_PAGE_LIMIT)
         .map((audit) => ({ key: audit.id, url: `${origin}/blogs/${audit.blogHandle}/${audit.handle}`, expectArticleSchema: true }))
     : [];
-  const liveTargetCount = storePageTargets.length + articleTargets.length;
+  // Product pages show what Google uses for product rich results (Product schema with offers).
+  const productLiveChecked = new Map(resourceSeoRows.filter((row) => row.resourceType === "product").map((row) => [row.resourceId, row.liveCheckedAt?.getTime() || 0]));
+  const productTargets: LiveCheckTarget[] = origin && limits.canCatalogSeo
+    ? catalogResources
+        .filter((resource) => resource.type === "product" && !resource.seoHidden && resource.handle)
+        .sort((a, b) => (productLiveChecked.get(a.id) || 0) - (productLiveChecked.get(b.id) || 0))
+        .slice(0, LIVE_PRODUCT_LIMIT)
+        .map((resource) => ({ key: resource.id, url: `${origin}/products/${resource.handle}`, expectArticleSchema: false, expectProductSchema: true }))
+    : [];
+  const liveTargetCount = storePageTargets.length + articleTargets.length + productTargets.length;
   await report({ phase: `Checking live storefront pages (0/${liveTargetCount})`, progress: 57, totalPosts: articles.length, analyzedPosts: analyzedCount });
-  const live = await runLiveChecks([...storePageTargets, ...articleTargets], origin, async (done) => {
+  const live = await runLiveChecks([...storePageTargets, ...articleTargets, ...productTargets], origin, async (done) => {
     if (done % 5 === 0 || done === liveTargetCount) await report({ phase: `Checking live storefront pages (${done}/${liveTargetCount})`, progress: 57 + Math.round((done / Math.max(1, liveTargetCount)) * 2), totalPosts: articles.length, analyzedPosts: analyzedCount });
   });
   for (const audit of audits) {
@@ -598,6 +607,23 @@ async function runSeoScan({
   }));
   applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "product"));
   applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "collection"));
+  // Live product findings: fresh for products checked this scan, carried over for the rest.
+  const checkedProducts = new Set(productTargets.map((target) => target.key).filter((key) => live.results.has(key)));
+  const previousLiveRows = limits.canCatalogSeo
+    ? await prisma.resourceSEO.findMany({
+        where: { shop, resourceType: "product", issues: { contains: `"type":"${LIVE_ISSUE_PREFIX}` }, resourceId: { notIn: [...checkedProducts] } },
+        select: { resourceId: true, issues: true },
+      })
+    : [];
+  const previousLive = new Map(previousLiveRows.map((row) => [row.resourceId, parseStoredIssues(row.issues).filter((issue) => issue.type.startsWith(LIVE_ISSUE_PREFIX))]));
+  for (const audit of catalogAudits) {
+    if (audit.type !== "product") continue;
+    const result = live.results.get(audit.id);
+    const liveIssues = result ? result.issues.map(toLiveSeoIssue) : previousLive.get(audit.id) || [];
+    if (!liveIssues.length) continue;
+    audit.issues.push(...liveIssues.map((issue) => ({ type: issue.type, label: issue.label, message: issue.message, impact: issue.impact || "Medium", effort: issue.effort === "Low" ? "Low" as const : "Medium" as const, fix: issue.fix || "", ...(issue.points ? { points: issue.points } : {}) })));
+    audit.score = Math.max(0, audit.score - livePenalty(liveIssues, 15));
+  }
   const storePageAudits: CatalogSeoAudit[] = storePageTargets.flatMap((target) => {
     const result = live.results.get(target.key);
     if (!result) return [];
@@ -617,10 +643,12 @@ async function runSeoScan({
   }).length;
   for (let index = 0; index < catalogAudits.length; index += batchSize) {
     const batch = catalogAudits.slice(index, index + batchSize);
-    await Promise.all(batch.map((audit) => saveCatalogAudit(shop, audit)));
+    await Promise.all(batch.map((audit) => saveCatalogAudit(shop, audit, checkedProducts.has(audit.id))));
   }
   if (limits.canCatalogSeo) {
     for (const resourceType of ["product", "collection", "page"] as const) {
+      // A plan-capped scan only covers the most recently updated resources; older records stay as they were.
+      if (Number.isFinite(limits.seoCatalogResources) && catalogResources.filter((resource) => resource.type === resourceType).length >= limits.seoCatalogResources) continue;
       // Store pages that could not be fetched this time keep their previous result.
       const keep = [...catalogAudits.filter((audit) => audit.type === resourceType).map((audit) => audit.id), ...(resourceType === "page" ? storePageTargets.map((target) => target.key) : [])];
       await prisma.resourceSEO.deleteMany({ where: { shop, resourceType, resourceId: { notIn: keep } } });
@@ -641,13 +669,14 @@ function toLiveSeoIssue(issue: LivePageIssue): SeoIssue {
   return { type: issue.type, category: issue.category, label: issue.label, message: issue.message, severity: issue.severity, impact: issue.impact, effort: issue.effort, fix: issue.fix, points: issue.points };
 }
 
-function saveCatalogAudit(shop: string, audit: CatalogSeoAudit) {
+function saveCatalogAudit(shop: string, audit: CatalogSeoAudit, liveChecked = false) {
   const data = {
     shop, resourceType: audit.type, title: audit.title, handle: audit.handle, status: audit.status, seoScore: audit.score,
     metaTitle: audit.effectiveSeoTitle, metaDescription: audit.effectiveSeoDescription,
     imageUrl: audit.imageUrl, imageAlt: audit.imageAlt, issues: JSON.stringify(audit.issues), contentHash: audit.contentHash,
     issueCount: audit.issues.length,
     sourceUpdatedAt: audit.updatedAt ? new Date(audit.updatedAt) : null, lastAnalyzedAt: new Date(),
+    ...(liveChecked ? { liveCheckedAt: new Date() } : {}),
   };
   return prisma.resourceSEO.upsert({
     where: { shop_resourceType_resourceId: { shop, resourceType: audit.type, resourceId: audit.id } },

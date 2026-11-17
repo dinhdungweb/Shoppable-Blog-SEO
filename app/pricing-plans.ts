@@ -23,6 +23,7 @@ export type PlanKey = "free" | "plus" | "pro" | "growth";
  * - aiRequestsPerMonth: reviewable AI generations allowed in one UTC calendar month.
  * - seoBlogPosts: maximum number of recent blog posts included in portfolio SEO scans.
  * - canCatalogSeo: access to Product and Collection SEO workspaces (Plus+).
+ * - seoCatalogResources: maximum products (and, separately, collections and pages) per SEO scan, most recently updated first.
  * - canSearchConsole: access to Google Search Console insights (Pro+).
  * - canAutoSeoScan: access to scheduled SEO scans (Pro+).
  */
@@ -33,6 +34,7 @@ export const PLAN_LIMITS = {
     aiRequestsPerMonth: FREE_AI_REQUESTS_PER_MONTH,
     seoBlogPosts: 3,
     canCatalogSeo: false,
+    seoCatalogResources: 0,
     canSearchConsole: false,
     canAutoSeoScan: false,
     canContentNavigation: false,
@@ -48,6 +50,7 @@ export const PLAN_LIMITS = {
     aiRequestsPerMonth: 25,
     seoBlogPosts: 15,
     canCatalogSeo: true,
+    seoCatalogResources: 500,
     canSearchConsole: false,
     canAutoSeoScan: false,
     canContentNavigation: false,
@@ -63,6 +66,7 @@ export const PLAN_LIMITS = {
     aiRequestsPerMonth: 100,
     seoBlogPosts: 100,
     canCatalogSeo: true,
+    seoCatalogResources: 5000,
     canSearchConsole: true,
     canAutoSeoScan: true,
     canContentNavigation: true,
@@ -78,6 +82,7 @@ export const PLAN_LIMITS = {
     aiRequestsPerMonth: 300,
     seoBlogPosts: Infinity,
     canCatalogSeo: true,
+    seoCatalogResources: Infinity,
     canSearchConsole: true,
     canAutoSeoScan: true,
     canContentNavigation: true,
@@ -93,6 +98,7 @@ export const PLAN_LIMITS = {
   aiRequestsPerMonth: number;
   seoBlogPosts: number;
   canCatalogSeo: boolean;
+  seoCatalogResources: number;
   canSearchConsole: boolean;
   canAutoSeoScan: boolean;
   canContentNavigation: boolean;

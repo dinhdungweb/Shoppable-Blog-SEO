@@ -10,6 +10,24 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.11.20",
+    date: "2026-11-20",
+    title: "Safer catalog editing and bulk product SEO",
+    summary: "Product and collection edits no longer overwrite other changes or break old links, search listings can be fixed for many products at once, and the catalog audit checks more of what Google sees.",
+    tags: ["New", "Improved", "Fixed"],
+    changes: [
+      { type: "Fixed", text: "Changing a product or collection URL handle now creates a redirect from the old URL by default, so existing links and rankings keep working." },
+      { type: "Fixed", text: "Saving in the catalog editor only sends the fields you changed, and asks before overwriting edits made in Shopify after you opened the page." },
+      { type: "Fixed", text: "SEO titles and meta descriptions equal to the title or description are saved as automatic, so search listings follow later changes." },
+      { type: "New", text: "Unsaved catalog edits are protected by Shopify's save bar, a leave warning and a local draft you can restore." },
+      { type: "New", text: "Bulk Optimize › Products & collections: select up to 50 items (or select rows in Catalog), generate SEO titles, meta descriptions and image alt text with AI, review, apply and undo from Change history." },
+      { type: "New", text: "The catalog audit checks alt text on every product image, finds descriptions copied across products, flags collections with only a few products, and checks product pages for Product structured data with price and availability." },
+      { type: "Improved", text: "AI writing for products uses the real price range, options and variants, and never invents other facts." },
+      { type: "Improved", text: "Missing links in product descriptions no longer lower the score; for collections and pages it is shown as optional advice." },
+      { type: "Improved", text: "Catalog scans cover the most recently updated products first (500 on Plus, 5,000 on Pro, unlimited on Growth), and the issue report loads quickly for large catalogs." },
+    ],
+  },
+  {
     version: "2026.11.19",
     date: "2026-11-19",
     title: "A safer, more reliable post editor",

@@ -3,7 +3,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, IndexTable, InlineGrid, InlineStack, Modal, Page, Pagination, Select, Tabs, Text, TextField, Thumbnail } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, IndexTable, InlineGrid, InlineStack, Modal, Page, Pagination, Select, Tabs, Text, TextField, Thumbnail, useIndexResourceState } from "@shopify/polaris";
 import { AlertTriangleIcon, CheckCircleIcon, CollectionIcon, NoteIcon, ProductIcon } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
@@ -38,13 +38,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ...(query ? { title: { contains: query, mode: "insensitive" } } : {}),
     ...(status === "attention" ? { issueCount: { gt: 0 } } : status === "good" ? { issueCount: 0 } : {}),
   };
-  const [rows, filteredTotal, total, aggregate, needsAttention, issueRows, job] = await Promise.all([
+  const [rows, filteredTotal, total, aggregate, needsAttention, issueGroups, job] = await Promise.all([
     prisma.resourceSEO.findMany({ where, orderBy: [{ seoScore: "asc" }, { title: "asc" }], skip: (page - 1) * PAGE_SIZE, take: PAGE_SIZE }),
     prisma.resourceSEO.count({ where }),
     prisma.resourceSEO.count({ where: baseWhere }),
     prisma.resourceSEO.aggregate({ where: baseWhere, _avg: { seoScore: true }, _sum: { issueCount: true } }),
     prisma.resourceSEO.count({ where: { ...baseWhere, issueCount: { gt: 0 } } }),
-    prisma.resourceSEO.findMany({ where: { ...baseWhere, issueCount: { gt: 0 } }, select: { resourceId: true, title: true, handle: true, issues: true }, orderBy: { issueCount: "desc" }, take: 5000 }),
+    // Issue groups are only needed for the issue report, and are counted in SQL so they stay exact for any catalog size.
+    view === "issues" ? loadIssueGroups(session.shop, resourceType) : Promise.resolve([]),
     prisma.seoScanJob.findFirst({ where: { shop: session.shop }, orderBy: { requestedAt: "desc" } }),
   ]);
   const totalPages = Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE));
@@ -53,21 +54,57 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     queryParams.set("page", String(totalPages));
     return redirect(`/app/catalog-seo?${queryParams}`);
   }
-  const grouped = issueRows.flatMap((row) => parseIssues(row.issues).map((issue) => ({ issue, row }))).reduce((groups, entry) => {
-    const { issue, row } = entry;
-    const current = groups.get(issue.type);
-    groups.set(issue.type, { type: issue.type, label: issue.label, count: (current?.count || 0) + 1, impact: issue.impact, effort: issue.effort, fix: issue.fix, affected: [...(current?.affected || []), { id: row.resourceId, title: row.title, handle: row.handle }].slice(0, 8) });
-    return groups;
-  }, new Map<string, { type: string; label: string; count: number; impact: CatalogSeoIssue["impact"]; effort: CatalogSeoIssue["effort"]; fix: string; affected: Array<{ id: string; title: string; handle: string }> }>());
-  const issueGroups = [...grouped.values()].sort((a, b) => impactRank(a.impact) - impactRank(b.impact) || b.count - a.count);
   const data = rows.map((row) => ({
     id: row.resourceId, title: row.title || `Untitled ${resourceType}`, handle: row.handle, status: row.status,
     score: row.seoScore, imageUrl: row.imageUrl, imageAlt: row.imageAlt, issues: parseIssues(row.issues),
     lastAnalyzedAt: row.lastAnalyzedAt?.toISOString() || null,
     editorUrl: resourceEditUrl(resourceType, row.resourceId),
   }));
-  return json({ view, resourceType, page, total, filteredTotal, totalPages, query, status, averageScore: Math.round(aggregate._avg.seoScore || 0), needsAttention, totalIssues: aggregate._sum.issueCount || 0, issueGroups, rows: data, job: job ? { status: job.status, phase: job.phase } : null });
+  return json({ canBulk: limits.canBulkReview, view, resourceType, page, total, filteredTotal, totalPages, query, status, averageScore: Math.round(aggregate._avg.seoScore || 0), needsAttention, totalIssues: aggregate._sum.issueCount || 0, issueGroups, rows: data, job: job ? { status: job.status, phase: job.phase } : null });
 };
+
+type IssueGroup = { type: string; label: string; count: number; impact: CatalogSeoIssue["impact"]; effort: CatalogSeoIssue["effort"]; fix: string; affected: Array<{ id: string; title: string; handle: string }> };
+
+/** Issue counts and up to 8 example resources per issue type, aggregated in PostgreSQL. */
+async function loadIssueGroups(shop: string, resourceType: string): Promise<IssueGroup[]> {
+  try {
+    const [counts, samples] = await Promise.all([
+      prisma.$queryRaw<Array<{ type: string; label: string; impact: string; effort: string; fix: string; count: number }>>`
+        SELECT elem->>'type' AS "type", MIN(elem->>'label') AS "label", MIN(elem->>'impact') AS "impact",
+               MIN(elem->>'effort') AS "effort", MIN(elem->>'fix') AS "fix", COUNT(*)::int AS "count"
+        FROM "ResourceSEO" r, jsonb_array_elements(r."issues"::jsonb) elem
+        WHERE r."shop" = ${shop} AND r."resourceType" = ${resourceType} AND r."issueCount" > 0 AND r."issues" IS NOT NULL AND r."issues" <> '' AND r."issues" <> '[]'
+        GROUP BY 1`,
+      prisma.$queryRaw<Array<{ type: string; resourceId: string; title: string; handle: string }>>`
+        SELECT "type", "resourceId", "title", "handle" FROM (
+          SELECT elem->>'type' AS "type", r."resourceId", r."title", r."handle",
+                 ROW_NUMBER() OVER (PARTITION BY elem->>'type' ORDER BY r."issueCount" DESC, r."title") AS rn
+          FROM "ResourceSEO" r, jsonb_array_elements(r."issues"::jsonb) elem
+          WHERE r."shop" = ${shop} AND r."resourceType" = ${resourceType} AND r."issueCount" > 0 AND r."issues" IS NOT NULL AND r."issues" <> '' AND r."issues" <> '[]'
+        ) ranked WHERE rn <= 8`,
+    ]);
+    const affected = new Map<string, IssueGroup["affected"]>();
+    for (const row of samples) {
+      const list = affected.get(row.type) || [];
+      list.push({ id: row.resourceId, title: row.title, handle: row.handle });
+      affected.set(row.type, list);
+    }
+    return counts
+      .map((row) => ({
+        type: row.type,
+        label: row.label,
+        count: row.count,
+        impact: (["High", "Medium", "Low"].includes(row.impact) ? row.impact : "Low") as CatalogSeoIssue["impact"],
+        effort: (row.effort === "Medium" ? "Medium" : "Low") as CatalogSeoIssue["effort"],
+        fix: row.fix || "",
+        affected: affected.get(row.type) || [],
+      }))
+      .sort((a, b) => impactRank(a.impact) - impactRank(b.impact) || b.count - a.count);
+  } catch (error) {
+    console.error("Catalog issue aggregation failed", error);
+    return [];
+  }
+}
 
 export default function CatalogSeoPage() {
   const data = useLoaderData<typeof loader>();
@@ -81,6 +118,15 @@ export default function CatalogSeoPage() {
   const [reviewIssue, setReviewIssue] = useState<(typeof data.issueGroups)[number] | null>(null);
   const isScanning = fetcher.state !== "idle" || data.job?.status === "queued" || data.job?.status === "running";
   const typeLabel = data.resourceType === "product" ? "Products" : data.resourceType === "page" ? "Pages" : "Collections";
+  // Products and collections can be sent to Bulk Optimize; pages are edited one at a time.
+  const bulkSelectable = data.resourceType !== "page";
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(data.rows);
+  const selectedIds = allResourcesSelected ? data.rows.map((row) => row.id) : selectedResources;
+  useEffect(() => { clearSelection(); }, [data.resourceType, data.page, data.query, data.status, clearSelection]);
+  const bulkActions = bulkSelectable ? [{
+    content: data.canBulk ? "Optimize search listings" : "Optimize search listings (Growth plan)",
+    onAction: () => navigate(data.canBulk ? `/app/optimize/catalog/review?ids=${encodeURIComponent(selectedIds.join(","))}` : "/app/pricing?reason=bulk_edit"),
+  }] : undefined;
 
   useEffect(() => { setSearch(data.query); }, [data.query]);
   useEffect(() => {
@@ -131,8 +177,8 @@ export default function CatalogSeoPage() {
       {data.view === "issues" && <Card padding="0"><Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO issue report</Text><Text as="p" variant="bodySm" tone="subdued">Issues are grouped so you can fix the highest-impact patterns first.</Text></BlockStack></Box><IndexTable resourceName={{ singular: "issue", plural: "issues" }} itemCount={data.issueGroups.length} selectable={false} headings={[{ title: "Issue" }, { title: "Affected" }, { title: "Impact" }, { title: "Effort" }, { title: "Suggested fix" }, { title: "Action" }]}>{data.issueGroups.map((issue, index) => <IndexTable.Row id={issue.type} key={issue.type} position={index}><IndexTable.Cell><Text as="span" fontWeight="semibold">{issue.label}</Text></IndexTable.Cell><IndexTable.Cell>{issue.count}</IndexTable.Cell><IndexTable.Cell><Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>{issue.impact}</Badge></IndexTable.Cell><IndexTable.Cell><Badge>{issue.effort}</Badge></IndexTable.Cell><IndexTable.Cell><div className="bp-catalog-fix-copy"><Text as="span" variant="bodySm">{issue.fix}</Text></div></IndexTable.Cell><IndexTable.Cell><Button size="micro" onClick={() => setReviewIssue(issue)}>Review</Button></IndexTable.Cell></IndexTable.Row>)}</IndexTable>{!data.issueGroups.length && <Box padding="500"><Banner tone="success" title="No SEO issues found"><p>Run a scan after Shopify content changes to refresh this report.</p></Banner></Box>}</Card>}
       {data.view === "manager" && <Card padding="0">
         <Box padding="400"><BlockStack gap="300"><InlineStack align="space-between"><BlockStack gap="050"><Text as="h2" variant="headingMd">{typeLabel}</Text><Text as="p" variant="bodySm" tone="subdued">Lowest scores are shown first · {data.filteredTotal} matching resources.</Text></BlockStack><Badge>{`${data.total} total`}</Badge></InlineStack><div className="bp-catalog-filters"><TextField label={`Search ${typeLabel.toLowerCase()}`} labelHidden value={search} onChange={setSearch} placeholder={`Search ${typeLabel.toLowerCase()}`} autoComplete="off" connectedRight={<Button onClick={() => goToList({ query: search.trim(), page: 1 })}>Search</Button>} /><Select label="Issue status" labelHidden value={data.status} options={[{ label: "All resources", value: "all" }, { label: "Needs attention", value: "attention" }, { label: "All good", value: "good" }]} onChange={(value) => goToList({ status: value, page: 1 })} /></div></BlockStack></Box>
-        <IndexTable resourceName={{ singular: data.resourceType, plural: typeLabel.toLowerCase() }} itemCount={data.rows.length} selectable={false} headings={[{ title: typeLabel.slice(0, -1) }, { title: "SEO score" }, { title: "Issues" }, { title: "Status" }, { title: "Action" }]}>
-          {data.rows.map((row, index) => <IndexTable.Row id={row.id} key={row.id} position={index}>
+        <IndexTable resourceName={{ singular: data.resourceType, plural: typeLabel.toLowerCase() }} itemCount={data.rows.length} selectable={bulkSelectable} selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length} onSelectionChange={handleSelectionChange} promotedBulkActions={bulkActions} headings={[{ title: typeLabel.slice(0, -1) }, { title: "SEO score" }, { title: "Issues" }, { title: "Status" }, { title: "Action" }]}>
+          {data.rows.map((row, index) => <IndexTable.Row id={row.id} key={row.id} position={index} selected={selectedResources.includes(row.id)}>
             <IndexTable.Cell><InlineStack gap="300" blockAlign="center" wrap={false}><Thumbnail source={row.imageUrl || PLACEHOLDER_IMAGE} alt={row.imageAlt || row.title} size="small" /><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.title}</Text><Text as="span" variant="bodySm" tone="subdued">{resourcePath(data.resourceType, row.handle)}</Text></BlockStack></InlineStack></IndexTable.Cell>
             <IndexTable.Cell><Badge tone={scoreTone(row.score)}>{`${row.score}/100`}</Badge></IndexTable.Cell>
             <IndexTable.Cell>{row.issues.length ? <BlockStack gap="050"><Text as="span" variant="bodySm" fontWeight="semibold">{row.issues[0].label}</Text><Text as="span" variant="bodySm" tone="subdued">{row.issues.length === 1 ? "1 issue" : `${row.issues.length} issues`}</Text></BlockStack> : <Badge tone="success">All good</Badge>}</IndexTable.Cell>

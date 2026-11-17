@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateAiCatalogDraft } from "./ai-catalog.server";
+import { generateAiCatalogDraft, productFacts } from "./ai-catalog.server";
 
 const originalFetch = global.fetch;
 
@@ -160,3 +160,21 @@ function jsonResponse(content: Record<string, unknown>) {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+describe("productFacts", () => {
+  it("summarizes price, real options and variant count", () => {
+    expect(productFacts({
+      priceRangeV2: { minVariantPrice: { amount: "19.0", currencyCode: "USD" }, maxVariantPrice: { amount: "29.0", currencyCode: "USD" } },
+      options: [{ name: "Size", optionValues: [{ name: "S" }, { name: "M" }] }],
+      variantsCount: { count: 2 },
+    })).toEqual(["Price: 19.0–29.0 USD", "Size: S, M", "Variants: 2"]);
+  });
+
+  it("skips Shopify's default single-variant option", () => {
+    expect(productFacts({
+      priceRangeV2: { minVariantPrice: { amount: "5.0", currencyCode: "EUR" }, maxVariantPrice: { amount: "5.0", currencyCode: "EUR" } },
+      options: [{ name: "Title", optionValues: [{ name: "Default Title" }] }],
+      variantsCount: { count: 1 },
+    })).toEqual(["Price: 5.0 EUR"]);
+  });
+});

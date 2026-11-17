@@ -32,6 +32,7 @@ export const SEO_WORKSPACE_TABS: WorkspaceTab[] = [
 /** Bulk Optimize: reviewable AI fixes applied to many resources at once. */
 export const OPTIMIZE_WORKSPACE_TABS: WorkspaceTab[] = [
   { id: "meta", content: "Meta tags", url: "/app/optimize" },
+  { id: "catalog", content: "Products & collections", url: "/app/optimize/catalog" },
   { id: "images", content: "Image alt text", url: "/app/image-seo" },
   { id: "links", content: "Internal links", url: "/app/internal-links" },
   { id: "history", content: "Change history", url: "/app/optimize/history" },

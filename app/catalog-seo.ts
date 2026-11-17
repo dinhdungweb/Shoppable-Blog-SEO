@@ -21,7 +21,19 @@ export type CatalogResourceInput = {
   mediaId?: string;
   /** Shopify `seo.hidden` metafield: excluded from search engines and sitemaps. */
   seoHidden?: boolean;
+  /** Product images other than the featured one (first 10 media checked). */
+  galleryImageCount?: number;
+  galleryMissingAlt?: number;
 };
+
+/** Counts gallery images (all product images except the featured first one) without alt text. */
+export function galleryAltCounts(mediaNodes: unknown): { galleryImageCount: number; galleryMissingAlt: number } {
+  const images = (Array.isArray(mediaNodes) ? mediaNodes : []).filter((node: any) => node && node.mediaContentType === "IMAGE").slice(1);
+  return {
+    galleryImageCount: images.length,
+    galleryMissingAlt: images.filter((node: any) => !String(node.alt || "").trim()).length,
+  };
+}
 
 export type CatalogSeoIssue = {
   type: string;
@@ -83,6 +95,10 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
     if ((resource.imageWidth > 0 && resource.imageWidth < 600) || (resource.imageHeight > 0 && resource.imageHeight < 600)) {
       add(3, issue("small_image", "Image may be too small", "Low", "Medium", "Use a higher-resolution Shopify image where appropriate."));
     }
+    const galleryMissing = resource.galleryMissingAlt || 0;
+    if (resource.type === "product" && galleryMissing > 0) {
+      add(Math.min(5, 1 + galleryMissing), issue("gallery_images_missing_alt", `${galleryMissing} more product image${galleryMissing === 1 ? " has" : "s have"} no alt text`, "Medium", "Low", "Add short alt text to every product image in Shopify (Products › media), describing what each image shows."));
+    }
     const filename = imageFilename(resource.imageUrl);
     if (!filename || /^(image|img|photo|dsc|untitled|default)[-_\d]*$/i.test(filename)) add(1, issue("generic_image_filename", "Image filename is not descriptive", "Low", "Medium", "Use a descriptive filename when replacing this Shopify image."));
   }
@@ -91,12 +107,15 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
     const deeperMinimum = resource.type === "product" ? 80 : resource.type === "page" ? 150 : 60;
     if (wordCount >= minimumWords && wordCount < deeperMinimum) add(3, issue("limited_content_depth", "Description could be more comprehensive", "Low", "Medium", `Add useful ${resource.type === "product" ? "benefits, materials, use and care details" : resource.type === "page" ? "answers to the questions visitors arrive with" : "context about the products and shopper intent"}.`));
     if (!/<h[2-4]\b/i.test(resource.descriptionHtml)) add(2, issue("missing_subheadings", "Description has no subheadings", "Low", "Low", "Use H2 or H3 headings to organize longer content."));
-    if (!/<a\b[^>]*href=["'](?:\/[^"']*|https?:\/\/[^"']+)["']/i.test(resource.descriptionHtml)) add(3, issue("missing_internal_link", "Description has no contextual link", "Low", "Low", "Add a useful link to a related Shopify page or article."));
+    // Links rarely belong in product descriptions; for collections and pages this is advice only and does not lower the score.
+    if (resource.type !== "product" && !/<a\b[^>]*href=["'](?:\/[^"']*|https?:\/\/[^"']+)["']/i.test(resource.descriptionHtml)) add(0, issue("missing_internal_link", "Description has no contextual link", "Low", "Low", "Optional: link to a related collection, guide or article when it genuinely helps shoppers."));
     if (hasLongParagraph(resource.descriptionHtml)) add(2, issue("long_paragraph", "A paragraph is difficult to scan", "Low", "Low", "Break long paragraphs into shorter sections for mobile shoppers."));
   }
 
   if (resource.type === "collection" && resource.itemCount === 0) {
     add(12, issue("empty_collection", "Collection has no products", "High", "Medium", "Add relevant products or remove the empty collection from storefront navigation."));
+  } else if (resource.type === "collection" && resource.itemCount > 0 && resource.itemCount <= 3) {
+    add(4, issue("thin_collection", `Collection has only ${resource.itemCount} product${resource.itemCount === 1 ? "" : "s"}`, "Medium", "Medium", "Add more relevant products, merge it with a related collection, or remove it from navigation; very small collections rarely rank."));
   }
 
   if (!focusKeyword) {
@@ -147,6 +166,30 @@ export function applyCatalogDuplicateIssues(audits: CatalogSeoAudit[]) {
       }
     }
   }
+
+  // Copied manufacturer or template descriptions compete with each other (and with other stores).
+  const descriptions = new Map<string, CatalogSeoAudit[]>();
+  for (const audit of audits) {
+    const key = descriptionFingerprint(audit.descriptionHtml);
+    if (!key) continue;
+    const group = descriptions.get(key) || [];
+    group.push(audit);
+    descriptions.set(key, group);
+  }
+  for (const group of descriptions.values()) {
+    if (group.length < 2) continue;
+    for (const audit of group) {
+      if (audit.issues.some((entry) => entry.type === "duplicate_description")) continue;
+      audit.issues.push(issue("duplicate_description", `Description is shared with ${group.length - 1} other ${audit.type}${group.length === 2 ? "" : "s"}`, "Medium", "Medium", `Write an original description for this ${audit.type}; copied manufacturer or template text competes with similar pages.`));
+      audit.score = Math.max(0, audit.score - 6);
+    }
+  }
+}
+
+/** Normalized description text; short descriptions are ignored because they are flagged as thin instead. */
+export function descriptionFingerprint(html: string) {
+  const text = stripHtml(html || "").toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return text.split(" ").length >= 25 ? text.slice(0, 2000) : "";
 }
 
 export function getCatalogContentHash(resource: CatalogResourceInput) {
@@ -156,6 +199,7 @@ export function getCatalogContentHash(resource: CatalogResourceInput) {
     imageUrl: resource.imageUrl, imageAlt: resource.imageAlt, imageWidth: resource.imageWidth,
     imageHeight: resource.imageHeight, itemCount: resource.itemCount,
     focusKeyword: resource.focusKeyword || "", seoHidden: Boolean(resource.seoHidden),
+    galleryMissingAlt: resource.galleryMissingAlt || 0,
   });
   // A fast deterministic fingerprint is sufficient here; this value only detects changed content.
   let hash = 2166136261;

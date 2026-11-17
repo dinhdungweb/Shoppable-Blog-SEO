@@ -436,6 +436,30 @@ model SeoBulkChange {
   @@index([shop, batchId])
 }
 
+/// Bulk SEO title / meta description / image alt changes for products and collections.
+model CatalogBulkChange {
+  id                   String    @id @default(cuid())
+  batchId              String
+  shop                 String
+  resourceType         String
+  resourceId           String
+  title                String    @default("")
+  beforeSeoTitle       String    @default("")
+  beforeSeoDescription String    @default("")
+  afterSeoTitle        String    @default("")
+  afterSeoDescription  String    @default("")
+  mediaId              String    @default("")
+  imageUrl             String    @default("")
+  beforeImageAlt       String    @default("")
+  afterImageAlt        String    @default("")
+  status               String    @default("applied")
+  appliedAt            DateTime  @default(now())
+  undoneAt             DateTime?
+
+  @@index([shop, appliedAt])
+  @@index([shop, batchId])
+}
+
 model ImageSeoChange {
   id           String    @id @default(cuid())
   batchId      String    @unique

@@ -15,6 +15,10 @@ export type LivePageSnapshot = {
   invalidJsonLdBlocks: number;
   hasOgImage: boolean;
   isPasswordPage: boolean;
+  /** Product / ProductGroup JSON-LD entities on the page. */
+  productSchemaCount?: number;
+  /** At least one Product entity has an offer with a price and availability. */
+  productOffersComplete?: boolean;
 };
 
 export type LivePageIssue = {
@@ -52,10 +56,13 @@ export function parseLivePage(html: string): LivePageSnapshot {
   }
 
   const jsonLdTypes: string[] = [];
+  const products: Array<Record<string, unknown>> = [];
   let invalidJsonLdBlocks = 0;
   for (const match of html.matchAll(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
     try {
-      collectTypes(JSON.parse(match[1].trim()), jsonLdTypes);
+      const parsed = JSON.parse(match[1].trim());
+      collectTypes(parsed, jsonLdTypes);
+      collectProducts(parsed, products);
     } catch {
       invalidJsonLdBlocks += 1;
     }
@@ -72,12 +79,14 @@ export function parseLivePage(html: string): LivePageSnapshot {
     invalidJsonLdBlocks,
     hasOgImage: Boolean(metaContent("property", "og:image")),
     isPasswordPage: /<form\b[^>]*action\s*=\s*["'][^"']*\/password["']/i.test(html) || /\btemplate-password\b/i.test(html),
+    productSchemaCount: products.length,
+    productOffersComplete: products.some(hasCompleteOffer),
   };
 }
 
 export function auditLivePage(
   snapshot: LivePageSnapshot,
-  options: { pageUrl: string; expectArticleSchema: boolean },
+  options: { pageUrl: string; expectArticleSchema: boolean; expectProductSchema?: boolean },
 ): LivePageIssue[] {
   const issues: LivePageIssue[] = [];
   const add = (issue: Omit<LivePageIssue, "type"> & { type: string }) => issues.push({ ...issue, type: `${LIVE_ISSUE_PREFIX}${issue.type}` });
@@ -114,6 +123,19 @@ export function auditLivePage(
       add({ type: "duplicate_article_schema", label: "Duplicate Article structured data", message: `The live page declares ${articleSchemas} Article/BlogPosting entities, usually from both the theme and an app.`, severity: "warning", impact: "Medium", effort: "Low", fix: "Keep one source of Article schema: remove the app block or disable the theme's built-in article schema.", points: 3, category: "schema" });
     }
   }
+  if (options.expectProductSchema) {
+    const productSchemas = snapshot.productSchemaCount || 0;
+    if (productSchemas === 0) {
+      add({ type: "missing_product_schema", label: "No Product structured data", message: "The live product page has no Product JSON-LD, so it cannot show price, availability or ratings in search results.", severity: "warning", impact: "High", effort: "Low", fix: "Use a theme that outputs Product structured data, or add the app's “SEO Schema (JSON-LD)” block to the product template.", points: 5, category: "schema" });
+    } else {
+      if (productSchemas > 1) {
+        add({ type: "duplicate_product_schema", label: "Duplicate Product structured data", message: `The live page declares ${productSchemas} Product entities, usually from both the theme and an app.`, severity: "warning", impact: "Medium", effort: "Low", fix: "Keep one source of Product schema: remove the extra app block or disable the theme's built-in product schema.", points: 2, category: "schema" });
+      }
+      if (!snapshot.productOffersComplete) {
+        add({ type: "incomplete_product_offer", label: "Product structured data has no price or availability", message: "The Product JSON-LD has no offer with both price and availability, so Google cannot show product rich results.", severity: "warning", impact: "Medium", effort: "Medium", fix: "Make the product schema include offers with price, priceCurrency and availability (most current Shopify themes do this).", points: 3, category: "schema" });
+      }
+    }
+  }
   if (!snapshot.hasOgImage) {
     add({ type: "missing_og_image", label: "No social sharing image", message: "The live page has no og:image, so shared links may show no preview image.", severity: "warning", impact: "Low", effort: "Low", fix: "Add a featured image, or make the theme output og:image for this template.", points: 1, category: "on_page" });
   }
@@ -135,6 +157,34 @@ function collectTypes(node: unknown, types: string[]) {
   if (typeof type === "string") types.push(type);
   else if (Array.isArray(type)) type.forEach((item) => typeof item === "string" && types.push(item));
   if (record["@graph"]) collectTypes(record["@graph"], types);
+}
+
+const PRODUCT_TYPES = new Set(["product", "productgroup"]);
+
+function nodeTypes(record: Record<string, unknown>) {
+  const type = record["@type"];
+  return (Array.isArray(type) ? type : [type]).filter((item): item is string => typeof item === "string").map((item) => item.toLowerCase());
+}
+
+function collectProducts(node: unknown, products: Array<Record<string, unknown>>) {
+  if (Array.isArray(node)) {
+    node.forEach((item) => collectProducts(item, products));
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+  const record = node as Record<string, unknown>;
+  if (nodeTypes(record).some((type) => PRODUCT_TYPES.has(type))) products.push(record);
+  if (record["@graph"]) collectProducts(record["@graph"], products);
+}
+
+function hasCompleteOffer(product: Record<string, unknown>): boolean {
+  const offers = [product.offers, ...(Array.isArray(product.hasVariant) ? product.hasVariant.map((variant: any) => variant?.offers) : [])]
+    .flatMap((entry) => (Array.isArray(entry) ? entry : [entry]))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object");
+  return offers.some((offer) => {
+    const price = offer.price ?? offer.lowPrice ?? (offer.priceSpecification as any)?.price;
+    return price !== undefined && price !== null && String(price).trim() !== "" && Boolean(offer.availability);
+  });
 }
 
 function attr(tag: string, name: string) {

@@ -7,7 +7,7 @@ import {
 } from "./nine-router.server";
 import type { CatalogResourceType } from "./catalog-seo";
 
-export type AiCatalogMode = "write" | "improve" | "seo";
+export type AiCatalogMode = "write" | "improve" | "seo" | "listing";
 
 export type AiCatalogInput = {
   type: CatalogResourceType;
@@ -23,7 +23,39 @@ export type AiCatalogInput = {
   vendor?: string;
   productType?: string;
   tags?: string[];
+  /** Verified store data (price range, options, variant count) the AI may state. */
+  facts?: string[];
 };
+
+/** GraphQL selection for productFacts(). */
+export const PRODUCT_FACTS_FIELDS = `
+  priceRangeV2 { minVariantPrice { amount currencyCode } maxVariantPrice { amount currencyCode } }
+  options(first: 5) { name optionValues { name } }
+  variantsCount { count }
+`;
+
+/** Turns Shopify product data into short facts the AI may use verbatim. */
+export function productFacts(node: any): string[] {
+  const facts: string[] = [];
+  const min = node?.priceRangeV2?.minVariantPrice;
+  const max = node?.priceRangeV2?.maxVariantPrice;
+  if (min?.amount && Number(min.amount) > 0) {
+    const currency = String(min.currencyCode || "");
+    facts.push(max?.amount && Number(max.amount) !== Number(min.amount)
+      ? `Price: ${min.amount}–${max.amount} ${currency}`.trim()
+      : `Price: ${min.amount} ${currency}`.trim());
+  }
+  for (const option of Array.isArray(node?.options) ? node.options : []) {
+    const name = cleanLine(option?.name);
+    const values = (Array.isArray(option?.optionValues) ? option.optionValues : []).map((value: any) => cleanLine(value?.name)).filter(Boolean);
+    // Shopify's placeholder option for single-variant products carries no information.
+    if (!name || (name === "Title" && values.length === 1 && values[0] === "Default Title")) continue;
+    facts.push(`${name}: ${values.slice(0, 15).join(", ")}`);
+  }
+  const variants = Number(node?.variantsCount?.count || 0);
+  if (variants > 1) facts.push(`Variants: ${variants}`);
+  return facts.slice(0, 8).map((fact) => fact.slice(0, 300));
+}
 
 export type AiCatalogDraft = {
   title: string;
@@ -50,10 +82,11 @@ const MODE_INSTRUCTIONS: Record<AiCatalogMode, string> = {
   write: "Write or complete useful storefront content and optimize the search listing. You may suggest a clearer title.",
   improve: "Improve the existing storefront content for clarity, usefulness, scannability, and natural SEO while preserving its factual meaning.",
   seo: "Optimize only seoTitle and seoDescription. Return title and descriptionHtml unchanged.",
+  listing: "Optimize seoTitle, seoDescription and imageAlt for the search listing. Return title and descriptionHtml unchanged.",
 };
 
 export function isAiCatalogMode(value: string): value is AiCatalogMode {
-  return value === "write" || value === "improve" || value === "seo";
+  return value === "write" || value === "improve" || value === "seo" || value === "listing";
 }
 
 export async function generateAiCatalogDraft(input: AiCatalogInput): Promise<AiCatalogDraft> {
@@ -75,7 +108,7 @@ export async function generateAiCatalogDraft(input: AiCatalogInput): Promise<AiC
     "Use only facts present in RESOURCE. Never invent prices, discounts, materials, dimensions, ingredients, compatibility, availability, guarantees, testimonials, product benefits, collection contents, or other claims.",
     input.type === "collection"
       ? "Describe the collection purpose without claiming that it contains specific products unless they are explicitly supplied."
-      : "Vendor, product type, and tags are context only; do not turn them into unsupported claims.",
+      : "Vendor, product type, and tags are context only; do not turn them into unsupported claims. RESOURCE.facts is verified store data (price, options, variants): you may mention it accurately, but nothing beyond it.",
     "descriptionHtml must be a clean HTML fragment. Use p, h2, h3, h4, ul, ol, li, strong, em, and blockquote for new content.",
     "Preserve every existing href and every existing table, image, iframe, and video fragment exactly. Do not add new links or media.",
     "Do not return scripts, styles, event handlers, inline CSS, Markdown, an h1, or a full HTML document.",
@@ -98,6 +131,7 @@ export async function generateAiCatalogDraft(input: AiCatalogInput): Promise<AiC
       vendor: input.type === "product" ? cleanLine(input.vendor).slice(0, 255) : "",
       productType: input.type === "product" ? cleanLine(input.productType).slice(0, 255) : "",
       tags: input.type === "product" ? (input.tags || []).slice(0, 30).map((tag) => cleanLine(tag).slice(0, 100)) : [],
+      facts: input.type === "product" ? (input.facts || []).slice(0, 8) : [],
     },
     merchantInstruction: input.instruction.slice(0, MAX_INSTRUCTION_CHARS),
   });

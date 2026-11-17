@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, isRouteErrorResponse, useActionData, useFetcher, useLoaderData, useNavigate, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
+import { Form, isRouteErrorResponse, useActionData, useBlocker, useFetcher, useLoaderData, useNavigate, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
 import { ActionList, Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Popover, Select, Text, TextField, Toast } from "@shopify/polaris";
 import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, MagicIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { SaveBar, TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import { auditCatalogResource, type CatalogResourceInput, type CatalogResourceType, type CatalogSeoIssue } from "../catalog-seo";
+import { auditCatalogResource, galleryAltCounts, type CatalogResourceInput, type CatalogResourceType, type CatalogSeoIssue } from "../catalog-seo";
 import { suggestInternalLinksForDraft, insertApprovedLink, type LinkSuggestion } from "../internal-linking";
 import { isNineRouterConfigured } from "../ai-seo.server";
-import { generateAiCatalogDraft, isAiCatalogMode, type AiCatalogDraft, type AiCatalogMode } from "../ai-catalog.server";
+import { PRODUCT_FACTS_FIELDS, generateAiCatalogDraft, isAiCatalogMode, productFacts, type AiCatalogDraft, type AiCatalogMode } from "../ai-catalog.server";
 import { getAiUsageStatus, isAiQuotaExceededError, runWithAiUsage } from "../ai-usage.server";
 import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
+import { buildCatalogUpdate, hasNewerVersion, type CatalogSnapshot } from "../catalog-save";
+import { sanitizeArticleHtml } from "../editor-html";
+import { clearDraft, draftDiffers, draftKey, readDraft, writeDraft, type EditorDraft } from "../editor-draft";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 
@@ -51,7 +54,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const details = type === "product"
     ? { status: String(node.status || ""), vendor: String(node.vendor || ""), productType: String(node.productType || ""), tags: Array.isArray(node.tags) ? node.tags : [], collectionKind: "", itemCount: 0 }
     : { status: "", vendor: "", productType: "", tags: [], collectionKind: node.ruleSet ? "Automated" : "Manual", itemCount: Number(node.productsCount?.count || 0) };
-  return json({ resource, details, audit: liveAudit, savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}`, canInternalLinking: limits.canInternalLinking, planKey, linkTargets, aiEnabled: isNineRouterConfigured(), aiUsage });
+  return json({ shop: session.shop, resource, details, audit: liveAudit, savedAt: saved?.lastAnalyzedAt?.toISOString() || null, adminUrl: `https://${session.shop}/admin/${type === "product" ? "products" : "collections"}/${params.resourceId}`, canInternalLinking: limits.canInternalLinking, planKey, linkTargets, aiEnabled: isNineRouterConfigured(), aiUsage });
   } catch (error: any) {
     if (error instanceof Response) throw error;
     const message = readableServerError(error);
@@ -76,7 +79,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const descriptionHtml = field(form, "descriptionHtml", 100_000);
   const seoTitle = field(form, "seoTitle", 255);
   const seoDescription = field(form, "seoDescription", 500);
-  const status = ["ACTIVE", "DRAFT", "ARCHIVED"].includes(field(form, "status", 20)) ? field(form, "status", 20) : "ACTIVE";
+  // Validated in buildCatalogUpdate: an unknown value is ignored, never coerced to ACTIVE.
+  const status = field(form, "status", 20);
   const vendor = field(form, "vendor", 255);
   const productType = field(form, "productType", 255);
   const tags = field(form, "tags", 5_000).split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 250);
@@ -89,6 +93,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (!isAiCatalogMode(modeValue)) return json({ success: false, error: "Unknown AI writing mode." }, { status: 400 });
     try {
       const { limits } = planAccess;
+      // Price, options and variants come from Shopify, never from the form, so the AI only states real facts.
+      const facts = type === "product"
+        ? productFacts((await queryShopify(admin, PRODUCT_FACTS_QUERY, { id: gid }).catch(() => null))?.data?.product)
+        : [];
       const { result, aiUsage } = await runWithAiUsage(
         { shop: session.shop, limit: limits.aiRequestsPerMonth },
         () => generateAiCatalogDraft({
@@ -105,6 +113,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
           vendor,
           productType,
           tags,
+          facts,
         }),
       );
       return json({ success: true, intent, suggestion: result, aiUsage });
@@ -126,15 +135,43 @@ export async function action({ request, params }: ActionFunctionArgs) {
     }
   }
   const variableKey = type === "product" ? "product" : "input";
-  const input = { id: gid, title, handle, descriptionHtml, seo: { title: seoTitle || null, description: seoDescription || null }, ...(type === "product" ? { status, vendor, productType, tags } : { ...(imageAlt !== field(form, "originalImageAlt", 500) ? { image: { src: field(form, "imageUrl", 2_000), altText: imageAlt } } : {}) }) };
+  const original = parseSnapshot(field(form, "original", 200_000));
+  if (!original) return json({ error: "The editor state is missing. Reload the page and try again." }, { status: 400 });
+
+  // Refuse to overwrite a version saved elsewhere after this editor opened.
+  if (form.get("forceOverwrite") !== "true") {
+    const current = await queryShopify(admin, VERSION_QUERY, { id: gid });
+    const currentUpdatedAt = String((type === "product" ? current.data?.product : current.data?.collection)?.updatedAt || "");
+    if (hasNewerVersion(original.updatedAt, currentUpdatedAt)) {
+      return json({ conflict: true, currentUpdatedAt, error: `This ${type} was changed in Shopify after you opened it.` }, { status: 409 });
+    }
+  }
+
+  const update = buildCatalogUpdate(type === "product" ? "product" : "collection", original, {
+    title, handle, descriptionHtml, seoTitle, seoDescription, status, vendor, productType,
+    tags: tags.join(", "),
+    seoTitleAutomatic: form.get("seoTitleAutomatic") === "true",
+    seoDescriptionAutomatic: form.get("seoDescriptionAutomatic") === "true",
+    createRedirect: form.get("createRedirect") !== "false",
+  });
+  const collectionImageChange = type === "collection" && imageAlt !== field(form, "originalImageAlt", 500)
+    ? { image: { src: field(form, "imageUrl", 2_000), altText: imageAlt } }
+    : {};
+  const input = { id: gid, ...update.input, ...collectionImageChange };
   let payload: any;
-  try {
-    const response = await admin.graphql(type === "product" ? PRODUCT_UPDATE : COLLECTION_UPDATE, { variables: { [variableKey]: input } });
-    payload = await response.json();
-  } catch (error: any) {
-    const message = readableServerError(error);
-    console.error("Catalog SEO editor save failed", { type, message, graphQLErrors: expandGraphQLErrors(error) });
-    return json({ error: message }, { status: 502 });
+  if (Object.keys(input).length > 1) {
+    try {
+      const response = await admin.graphql(type === "product" ? PRODUCT_UPDATE : COLLECTION_UPDATE, { variables: { [variableKey]: input } });
+      payload = await response.json();
+    } catch (error: any) {
+      const message = readableServerError(error);
+      console.error("Catalog SEO editor save failed", { type, message, graphQLErrors: expandGraphQLErrors(error) });
+      return json({ error: message }, { status: 502 });
+    }
+  } else {
+    // Nothing to change in Shopify (for example only the focus keyword): reload the current state.
+    payload = await queryShopify(admin, type === "product" ? PRODUCT_QUERY : COLLECTION_QUERY, { id: gid });
+    payload = { data: type === "product" ? { productUpdate: { product: payload.data?.product, userErrors: [] } } : { collectionUpdate: { collection: payload.data?.collection, userErrors: [] } } };
   }
   const result = type === "product" ? payload.data?.productUpdate : payload.data?.collectionUpdate;
   const errors = [...(payload.errors || []), ...(result?.userErrors || [])].map((item: any) => item.message).filter(Boolean);
@@ -171,8 +208,14 @@ const AI_CATALOG_FIELD_LABELS: Record<AiCatalogField, string> = {
   imageAlt: "Image alt text",
 };
 
-export default function CatalogResourceEditor() {
-  const { resource, details, savedAt, adminUrl, canInternalLinking, planKey, linkTargets, aiEnabled, aiUsage } = useLoaderData<typeof loader>();
+export default function CatalogResourceEditorRoute() {
+  const data = useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+  return <CatalogResourceEditor key={`${data.resource.id}:${data.resource.updatedAt}:${searchParams.get("v") || ""}`} />;
+}
+
+function CatalogResourceEditor() {
+  const { shop, resource, details, savedAt, adminUrl, canInternalLinking, planKey, linkTargets, aiEnabled, aiUsage } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const aiFetcher = useFetcher<any>();
   const navigate = useNavigate();
@@ -215,6 +258,12 @@ export default function CatalogResourceEditor() {
   const [aiToastError, setAiToastError] = useState("");
   const [aiReviewError, setAiReviewError] = useState("");
   const [currentAiUsage, setCurrentAiUsage] = useState(aiUsage);
+  const formRef = useRef<HTMLFormElement>(null);
+  const submittingRef = useRef(false);
+  const [forceOverwrite, setForceOverwrite] = useState(false);
+  const [createRedirect, setCreateRedirect] = useState(true);
+  const [pendingDraft, setPendingDraft] = useState<EditorDraft<Record<string, string>> | null>(null);
+  const draftStorageKey = draftKey(shop, resource.id);
   useEffect(() => {
     if (searchParams.get("saved") !== "1" || savedToastShown.current) return;
     savedToastShown.current = true;
@@ -251,6 +300,64 @@ export default function CatalogResourceEditor() {
   const aiIssueFields = aiFieldsForCatalogIssues(currentAudit.issues, Boolean(resource.imageUrl));
   const typeLabel = resource.type === "product" ? "Product" : "Collection";
   const dirty = title !== resource.title || descriptionHtml !== resource.descriptionHtml || seoTitle !== initialSeoTitle || seoDescription !== initialSeoDescription || handle !== resource.handle || imageAlt !== resource.imageAlt || focusKeyword !== (resource.focusKeyword || "") || (resource.type === "product" && (status !== details.status || vendor !== details.vendor || productType !== details.productType || tags !== details.tags.join(", ")));
+  const draftFields = useMemo(() => ({ title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword, tags, vendor, productType }), [title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword, tags, vendor, productType]);
+  useEffect(() => {
+    const draft = readDraft<Record<string, string>>(window.localStorage, draftStorageKey, Date.now(), Object.keys(draftFields));
+    if (draft && draftDiffers(draft, draftFields)) setPendingDraft(draft);
+    else if (draft) clearDraft(window.localStorage, draftStorageKey);
+    // Only when this resource version opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftStorageKey]);
+  useEffect(() => {
+    if (!dirty || pendingDraft) return;
+    const timer = window.setTimeout(() => writeDraft(window.localStorage, draftStorageKey, draftFields, resource.updatedAt), 800);
+    return () => window.clearTimeout(timer);
+  }, [dirty, draftFields, draftStorageKey, pendingDraft, resource.updatedAt]);
+  useEffect(() => {
+    if (searchParams.get("saved") === "1") clearDraft(window.localStorage, draftStorageKey);
+  }, [draftStorageKey, searchParams]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  useEffect(() => { if (navigation.state === "idle") submittingRef.current = false; }, [navigation.state]);
+  const navigationBlocker = useBlocker(({ currentLocation, nextLocation }) =>
+    dirty && !submittingRef.current && (currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search));
+  const restoreDraft = () => {
+    if (!pendingDraft) return;
+    setTitleState(pendingDraft.title);
+    setDescriptionHtml(pendingDraft.descriptionHtml);
+    seoTitleAutomatic.current = false;
+    seoDescriptionAutomatic.current = false;
+    setSeoTitle(pendingDraft.seoTitle);
+    setSeoDescription(pendingDraft.seoDescription);
+    setHandle(pendingDraft.handle);
+    setImageAlt(pendingDraft.imageAlt);
+    setFocusKeyword(pendingDraft.focusKeyword);
+    setTags(pendingDraft.tags);
+    setVendor(pendingDraft.vendor);
+    setProductType(pendingDraft.productType);
+    setPendingDraft(null);
+  };
+  const discardDraft = () => { clearDraft(window.localStorage, draftStorageKey); setPendingDraft(null); };
+  const conflict = actionData && "conflict" in actionData && actionData.conflict ? actionData : null;
+  const [conflictOpen, setConflictOpen] = useState(false);
+  useEffect(() => { if (conflict) setConflictOpen(true); }, [conflict]);
+  const submitForm = (force = false) => {
+    setForceOverwrite(force);
+    submittingRef.current = true;
+    // Let React render the hidden force flag before submitting.
+    window.setTimeout(() => formRef.current?.requestSubmit(), 0);
+  };
+  const reloadLatest = () => {
+    writeDraft(window.localStorage, draftStorageKey, draftFields, resource.updatedAt);
+    submittingRef.current = true;
+    setConflictOpen(false);
+    navigate(`?v=${Date.now()}`, { replace: true });
+  };
+  const handleChanged = handle.trim() !== resource.handle;
   const wordCount = stripHtml(descriptionHtml).split(/\s+/).filter(Boolean).length;
   const displaySeoTitle = seoTitle.trim() || title.trim() || `Untitled ${typeLabel.toLowerCase()}`;
   const displaySeoDescription = seoDescription.trim() || stripHtml(descriptionHtml).slice(0, 165) || `Add a description for this ${typeLabel.toLowerCase()}.`;
@@ -336,7 +443,42 @@ export default function CatalogResourceEditor() {
   const aiQuotaExhausted = currentAiUsage.limited && currentAiUsage.remaining === 0;
   return <Frame><Page fullWidth backAction={{ content: "Catalog", url: `/app/catalog-seo?view=manager&type=${resource.type}` }}>
     <TitleBar title={`Edit ${typeLabel.toLowerCase()}`}><button variant="primary" type="submit" form="catalog-resource-form" disabled={!dirty}>Save changes</button></TitleBar>
-    <div className="bp-catalog-editor-shell"><Form method="post" id="catalog-resource-form"><BlockStack gap="500">
+    {/* App Bridge save bar: Shopify admin asks for confirmation before leaving while it is open. */}
+    <SaveBar id="catalog-save-bar" open={dirty}>
+      <button variant="primary" onClick={() => submitForm(false)} loading={navigation.state === "submitting" ? "" : undefined}>Save</button>
+      <button onClick={reset}>Discard</button>
+    </SaveBar>
+    <Modal
+      open={conflictOpen}
+      onClose={() => setConflictOpen(false)}
+      title={`This ${typeLabel.toLowerCase()} changed in Shopify`}
+      primaryAction={{ content: "Overwrite with my version", destructive: true, onAction: () => { setConflictOpen(false); submitForm(true); } }}
+      secondaryActions={[{ content: "Load latest version", onAction: reloadLatest }, { content: "Cancel", onAction: () => setConflictOpen(false) }]}
+    >
+      <Modal.Section>
+        <p>Someone saved this {typeLabel.toLowerCase()}{conflict && "currentUpdatedAt" in conflict && conflict.currentUpdatedAt ? ` at ${new Date(String(conflict.currentUpdatedAt)).toLocaleString()}` : ""} after you opened it. Only the fields you changed will be saved, but overwriting can still replace their edits to the same fields. Loading the latest version keeps your edits as a recoverable draft.</p>
+      </Modal.Section>
+    </Modal>
+    <Modal
+      open={navigationBlocker.state === "blocked"}
+      onClose={() => navigationBlocker.reset?.()}
+      title="Leave without saving?"
+      primaryAction={{ content: "Leave page", destructive: true, onAction: () => navigationBlocker.proceed?.() }}
+      secondaryActions={[{ content: "Stay", onAction: () => navigationBlocker.reset?.() }]}
+    >
+      <Modal.Section><p>Your changes have not been saved to Shopify. A local draft is kept in this browser and can be restored when you return.</p></Modal.Section>
+    </Modal>
+    <div className="bp-catalog-editor-shell"><Form method="post" id="catalog-resource-form" ref={formRef} onSubmit={() => { submittingRef.current = true; }}><BlockStack gap="500">
+      <input type="hidden" name="original" value={JSON.stringify({ title: resource.title, handle: resource.handle, descriptionHtml: resource.descriptionHtml, seoTitle: resource.seoTitle, seoDescription: resource.seoDescription, status: details.status, vendor: details.vendor, productType: details.productType, tags: details.tags.join(", "), updatedAt: resource.updatedAt })} />
+      <input type="hidden" name="seoTitleAutomatic" value={String(seoTitleAutomatic.current)} />
+      <input type="hidden" name="seoDescriptionAutomatic" value={String(seoDescriptionAutomatic.current)} />
+      <input type="hidden" name="createRedirect" value={String(createRedirect)} />
+      {forceOverwrite && <input type="hidden" name="forceOverwrite" value="true" />}
+      {pendingDraft && (
+        <Banner tone="warning" title="Unsaved changes were recovered" action={{ content: "Restore draft", onAction: restoreDraft }} secondaryAction={{ content: "Discard", onAction: discardDraft }}>
+          <p>Changes from {new Date(pendingDraft.savedAt).toLocaleString()} were not saved to Shopify.{pendingDraft.baseUpdatedAt && pendingDraft.baseUpdatedAt !== resource.updatedAt ? ` This ${typeLabel.toLowerCase()} has changed in Shopify since then.` : ""}</p>
+        </Banner>
+      )}
       <input type="hidden" name="descriptionHtml" value={descriptionHtml} />
       <input type="hidden" name="focusKeyword" value={focusKeyword} /><input type="hidden" name="originalImageAlt" value={resource.imageAlt} /><input type="hidden" name="imageUrl" value={resource.imageUrl} /><input type="hidden" name="mediaId" value={(resource as any).mediaId || ""} />
       <InlineStack align="space-between" blockAlign="center" gap="300">
@@ -425,7 +567,7 @@ export default function CatalogResourceEditor() {
           <Button variant="primary" submit loading={navigation.state === "submitting"} disabled={!dirty}>Save changes</Button>
         </InlineStack>
       </InlineStack>
-      {actionData && "error" in actionData && actionData.error && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
+      {actionData && "error" in actionData && actionData.error && !conflict && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
       <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="300">
         <EditorMetric label="SEO score" value={`${currentAudit.score}/100`} icon={CheckCircleIcon} tone={scoreTone(currentAudit.score)} />
         <EditorMetric label="Open issues" value={String(currentAudit.issues.length)} icon={AlertTriangleIcon} tone={currentAudit.issues.length ? "warning" : "success"} />
@@ -522,6 +664,12 @@ export default function CatalogResourceEditor() {
               />}
             />
             <TextField name="handle" label="URL handle" value={handle} onChange={setHandle} autoComplete="off" prefix={resource.type === "product" ? "/products/" : "/collections/"} />
+            {handleChanged && (
+              <BlockStack gap="100">
+                <Checkbox label={`Create a URL redirect from /${resource.type === "product" ? "products" : "collections"}/${resource.handle}`} checked={createRedirect} onChange={setCreateRedirect} helpText="Keeps search rankings and existing links working. Without it, the old URL returns a 404 page." />
+                {!createRedirect && <Banner tone="warning"><p>Links and search results pointing to the old URL will break.</p></Banner>}
+              </BlockStack>
+            )}
           </BlockStack>
         </Card>
         <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
@@ -801,7 +949,8 @@ function RichTextEditor({
   const [videoOpen, setVideoOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState("");
   useEffect(() => {
-    if (editor.current && document.activeElement !== editor.current && editor.current.innerHTML !== value) editor.current.innerHTML = value;
+    // Never render unsanitized description HTML inside the app (stored XSS).
+    if (editor.current && document.activeElement !== editor.current && editor.current.innerHTML !== value) editor.current.innerHTML = sanitizeArticleHtml(value);
   }, [value]);
   useEffect(() => {
     const syncBlockFromSelection = () => {
@@ -1006,8 +1155,28 @@ function videoEmbed(value: string) {
 function shopifyGid(type: CatalogResourceType, id?: string) { if (!id || !/^\d+$/.test(id)) throw new Response("Not found", { status: 404 }); return `gid://shopify/${type === "product" ? "Product" : "Collection"}/${id}`; }
 function field(form: FormData, key: string, max: number) { return String(form.get(key) || "").trim().slice(0, max); }
 function scoreTone(score: number): "success" | "warning" | "critical" { return score >= 80 ? "success" : score >= 60 ? "warning" : "critical"; }
-function normalizeResource(node: any, type: CatalogResourceType): CatalogResourceInput { const image = type === "product" ? node.featuredMedia?.preview?.image || {} : node.image || {}; return { id: String(node.id), type, title: String(node.title || ""), handle: String(node.handle || ""), descriptionHtml: String(node.descriptionHtml || ""), updatedAt: String(node.updatedAt || ""), status: String(node.status || ""), seoTitle: String(node.seo?.title || ""), seoDescription: String(node.seo?.description || ""), imageUrl: String(image.url || ""), imageAlt: String(image.altText || ""), imageWidth: Number(image.width || 0), imageHeight: Number(image.height || 0), itemCount: type === "collection" ? Number(node.products?.nodes?.length || 0) : 0, mediaId: type === "product" ? String(node.featuredMedia?.id || "") : "" }; }
+function normalizeResource(node: any, type: CatalogResourceType): CatalogResourceInput { const image = type === "product" ? node.featuredMedia?.preview?.image || {} : node.image || {}; return { id: String(node.id), type, title: String(node.title || ""), handle: String(node.handle || ""), descriptionHtml: String(node.descriptionHtml || ""), updatedAt: String(node.updatedAt || ""), status: String(node.status || ""), seoTitle: String(node.seo?.title || ""), seoDescription: String(node.seo?.description || ""), imageUrl: String(image.url || ""), imageAlt: String(image.altText || ""), imageWidth: Number(image.width || 0), imageHeight: Number(image.height || 0), itemCount: type === "collection" ? Number(node.products?.nodes?.length || 0) : 0, mediaId: type === "product" ? String(node.featuredMedia?.id || "") : "", ...(type === "product" ? galleryAltCounts(node.media?.nodes) : {}) }; }
 function seoRecord(shop: string, audit: ReturnType<typeof auditCatalogResource>) { return { shop, resourceType: audit.type, resourceId: audit.id, title: audit.title, handle: audit.handle, status: audit.status, seoScore: audit.score, metaTitle: audit.seoTitle, metaDescription: audit.seoDescription, focusKeyword: audit.focusKeyword || "", imageUrl: audit.imageUrl, imageAlt: audit.imageAlt, issues: JSON.stringify(audit.issues), issueCount: audit.issues.length, contentHash: audit.contentHash, sourceUpdatedAt: new Date(), lastAnalyzedAt: new Date() }; }
+function parseSnapshot(value: string): CatalogSnapshot | null {
+  try {
+    const parsed = JSON.parse(value);
+    const keys = ["title", "handle", "descriptionHtml", "seoTitle", "seoDescription", "status", "vendor", "productType", "tags", "updatedAt"] as const;
+    if (!parsed || typeof parsed !== "object") return null;
+    const snapshot = {} as CatalogSnapshot;
+    for (const key of keys) snapshot[key] = typeof parsed[key] === "string" ? parsed[key] : "";
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+const VERSION_QUERY = `#graphql
+  query CatalogResourceVersion($id: ID!) {
+    product: node(id: $id) { ... on Product { updatedAt } }
+    collection: node(id: $id) { ... on Collection { updatedAt } }
+  }
+`;
+
 function readableServerError(error: any) {
   if (error?.code === "P2022") return "The catalog SEO database update is missing. Run `npx prisma migrate deploy`, rebuild, and restart the app.";
   const graphErrors = error?.graphQLErrors || error?.errors?.graphQLErrors;
@@ -1039,7 +1208,13 @@ const PRODUCT_QUERY = `#graphql
       id title handle descriptionHtml updatedAt status vendor productType tags
       seo { title description }
       featuredMedia { id preview { image { url altText width height } } }
+      media(first: 10) { nodes { mediaContentType alt } }
     }
+  }
+`;
+const PRODUCT_FACTS_QUERY = `#graphql
+  query CatalogSeoProductFacts($id: ID!) {
+    product(id: $id) { ${PRODUCT_FACTS_FIELDS} }
   }
 `;
 const COLLECTION_QUERY = `#graphql
@@ -1066,6 +1241,7 @@ const PRODUCT_UPDATE = `#graphql
         id title handle descriptionHtml updatedAt status
         seo { title description }
         featuredMedia { preview { image { url altText width height } } }
+        media(first: 10) { nodes { mediaContentType alt } }
       }
       userErrors { field message }
     }
