@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, useRevalidator } from "@remix-run/react";
 import {
   Badge,
   Banner,
@@ -17,6 +17,7 @@ import {
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import { checkThemeSetup } from "../setup-status.server";
 import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import {
   THEME_BLOCK_HANDLES,
@@ -25,12 +26,16 @@ import {
 } from "../theme-editor-links";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const apiKey = process.env.SHOPIFY_API_KEY || "";
+  const status = await checkThemeSetup(admin);
 
   return json({
     shop: session.shop,
+    themeName: "themeName" in status ? status.themeName : "",
+    blocks: "blocks" in status ? status.blocks : null,
     appEmbedUrl: buildAppEmbedDeepLink(session.shop, apiKey),
+    articleEditorUrl: `https://${session.shop}/admin/themes/current/editor?template=article`,
     blockUrls: {
       carousel: buildArticleBlockDeepLink(
         session.shop,
@@ -62,7 +67,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function ThemeSetupPage() {
-  const { shop, appEmbedUrl, blockUrls } = useLoaderData<typeof loader>();
+  const { shop, themeName, blocks, appEmbedUrl, articleEditorUrl, blockUrls } = useLoaderData<typeof loader>();
+  const revalidator = useRevalidator();
+  const required = blocks ? [blocks.appEmbed, blocks.carousel || blocks.grid] : [];
+  const requiredDone = required.filter(Boolean).length;
 
   return (
     <Page
@@ -74,6 +82,19 @@ export default function ThemeSetupPage() {
         <Layout.Section>
           <BlockStack gap="500">
             <WorkspaceTabs tabs={SETTINGS_WORKSPACE_TABS} activeId="theme" />
+            {blocks ? (
+              <Banner
+                tone={requiredDone === required.length ? "success" : "warning"}
+                title={requiredDone === required.length ? `Setup complete on ${themeName}` : `${requiredDone} of ${required.length} required steps done on ${themeName}`}
+                action={{ content: "Check again", onAction: () => revalidator.revalidate(), loading: revalidator.state !== "idle" }}
+              >
+                <p>Status is read from your published theme. After saving in the theme editor, click Check again.</p>
+              </Banner>
+            ) : (
+              <Banner tone="warning" title="Setup status unavailable" action={{ content: "Check again", onAction: () => revalidator.revalidate(), loading: revalidator.state !== "idle" }}>
+                <p>The published theme could not be read, so each step shows its instructions only.</p>
+              </Banner>
+            )}
             <Banner title="Before you start" tone="info">
               <p>
                 The buttons below open the published theme for {shop}. App blocks require an
@@ -82,7 +103,7 @@ export default function ThemeSetupPage() {
               </p>
             </Banner>
 
-            <SetupStep number="1" title="Enable the Shoppable Blog Markers app embed" required>
+            <SetupStep number="1" title="Enable the Shoppable Blog Markers app embed" required done={blocks?.appEmbed}>
               <BlockStack gap="300">
                 <Text as="p" variant="bodyMd">
                   This embed loads product markers and app-managed content inside blog articles.
@@ -103,7 +124,7 @@ export default function ThemeSetupPage() {
               </BlockStack>
             </SetupStep>
 
-            <SetupStep number="2" title="Add a product display block to blog articles" required>
+            <SetupStep number="2" title="Add a product display block to blog articles" required done={blocks ? blocks.carousel || blocks.grid : undefined}>
               <BlockStack gap="300">
                 <Text as="p" variant="bodyMd">
                   Choose either a carousel or a grid for the Default blog post template. The block
@@ -124,12 +145,16 @@ export default function ThemeSetupPage() {
                     action="Add carousel"
                     url={blockUrls.carousel}
                     recommended
+                    editorUrl={articleEditorUrl}
+                    installed={blocks?.carousel}
                   />
                   <BlockChoice
                     title="Product Grid"
                     description="A multi-column product grid."
                     action="Add grid"
                     url={blockUrls.grid}
+                    editorUrl={articleEditorUrl}
+                    installed={blocks?.grid}
                   />
                 </InlineGrid>
               </BlockStack>
@@ -141,24 +166,34 @@ export default function ThemeSetupPage() {
                   These blocks are optional. Add them one at a time to the Default blog post
                   template, configure their settings, move them into position, and click Save.
                 </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Settings on a block in the theme editor apply to that block. Settings in the app apply to
+                  products and navigation placed inside post content, and to options a block does not have.
+                </Text>
                 <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                   <BlockChoice
                     title="SEO Schema (JSON-LD)"
                     description="Adds BlogPosting schema and optional breadcrumb schema. It has no visible storefront output."
                     action="Add SEO schema"
                     url={blockUrls.seoSchema}
+                    editorUrl={articleEditorUrl}
+                    installed={blocks?.seoSchema}
                   />
                   <BlockChoice
                     title="Advanced Breadcrumbs"
                     description="Adds visible breadcrumb navigation. Pro or Growth plan required."
                     action="Add breadcrumbs"
                     url={blockUrls.breadcrumbs}
+                    editorUrl={articleEditorUrl}
+                    installed={blocks?.breadcrumbs}
                   />
                   <BlockChoice
                     title="Table of Contents"
                     description="Builds navigation from article headings. Pro or Growth plan required."
                     action="Add table of contents"
                     url={blockUrls.tableOfContents}
+                    editorUrl={articleEditorUrl}
+                    installed={blocks?.tableOfContents}
                   />
                 </InlineGrid>
               </BlockStack>
@@ -201,12 +236,15 @@ function SetupStep({
   title,
   required,
   optional,
+  done,
   children,
 }: {
   number: string;
   title: string;
   required?: boolean;
   optional?: boolean;
+  /** undefined when the theme could not be read. */
+  done?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -227,7 +265,7 @@ function SetupStep({
           <Text as="h2" variant="headingMd">
             {title}
           </Text>
-          {required ? <Badge tone="attention">Required</Badge> : null}
+          {done ? <Badge tone="success">Done</Badge> : required ? <Badge tone="attention">{done === false ? "Required · not detected" : "Required"}</Badge> : null}
           {optional ? <Badge>Optional</Badge> : null}
         </InlineStack>
         <Divider />
@@ -257,12 +295,16 @@ function BlockChoice({
   action,
   url,
   recommended,
+  installed,
+  editorUrl,
 }: {
   title: string;
   description: string;
   action: string;
   url: string;
   recommended?: boolean;
+  installed?: boolean;
+  editorUrl: string;
 }) {
   return (
     <Card>
@@ -271,13 +313,13 @@ function BlockChoice({
           <Text as="h3" variant="headingSm">
             {title}
           </Text>
-          {recommended ? <Badge tone="success">Recommended</Badge> : null}
+          {installed ? <Badge tone="success">Installed</Badge> : recommended ? <Badge tone="info">Recommended</Badge> : null}
         </InlineStack>
         <Text as="p" variant="bodyMd" tone="subdued">
           {description}
         </Text>
-        <Button url={url} target="_top">
-          {action}
+        <Button url={installed ? editorUrl : url} target="_top" variant={installed ? "plain" : undefined}>
+          {installed ? "Open in theme editor" : action}
         </Button>
       </BlockStack>
     </Card>

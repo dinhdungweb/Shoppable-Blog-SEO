@@ -1,7 +1,8 @@
 import { register } from "@shopify/web-pixels-extension";
 
 register(({ analytics, browser, init, settings }) => {
-  const TRACK_API_URL = "https://shopable-blog.bluepeaks.top/api/track";
+  // The app passes its own endpoint when it connects the pixel; older installs fall back to production.
+  const TRACK_API_URL = trackUrlFrom(settings?.trackUrl) || "https://shopable-blog.bluepeaks.top/api/track";
   const STORAGE_KEY = "sbs_attribution";
   const ATTRIBUTION_EVENT = "shoppable_blog:product_selected";
   // Used when a click did not carry its own expiry (older widget versions).
@@ -258,3 +259,12 @@ register(({ analytics, browser, init, settings }) => {
     }
   });
 });
+
+function trackUrlFrom(value: unknown) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && url.pathname === "/api/track" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}

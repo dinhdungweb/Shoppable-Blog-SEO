@@ -70,7 +70,7 @@ export default function PrivacyPolicy() {
         <section style={{ marginBottom: "2rem" }}>
           <h2 style={{ fontSize: "1.5rem", marginTop: 0 }}>Data Retention</h2>
           <p>
-            When you install the App, we will maintain your Store Information and App configuration data for our records unless and until you ask us to delete this information. If you uninstall the app, you may request the deletion of your data by contacting us.
+            While the App is installed, we keep your Store Information, App configuration and analytics so the App can work. When you uninstall the App, access to your store is revoked immediately and your data is kept for 48 hours, so reinstalling restores your settings. After that, Shopify asks us to erase your store data and we delete it permanently. You can also request deletion at any time by contacting us.
           </p>
         </section>
 

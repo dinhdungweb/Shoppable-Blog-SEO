@@ -229,7 +229,7 @@
     widget.classList.toggle("bp-widget--compact", cardLayout === "compact");
 
     if (style === "grid") {
-      container.setAttribute("data-columns", normalizeGridColumns(config.gridColumns || widget.dataset.columns || "3"));
+      container.setAttribute("data-columns", normalizeGridColumns(widget.dataset.columns || config.gridColumns || "3"));
     } else {
       container.setAttribute("data-visible", normalizeCarouselItemsVisible(config.carouselItemsVisible || "4"));
     }

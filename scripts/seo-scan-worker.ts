@@ -37,7 +37,7 @@ async function claimNextJob() {
 }
 
 async function enqueueScheduledJobs() {
-  const configs = await prisma.shopConfig.findMany({ where: { seoAutoScanEnabled: true }, select: { shop: true } });
+  const configs = await prisma.shopConfig.findMany({ where: { seoAutoScanEnabled: true, uninstalledAt: null }, select: { shop: true } });
   const cutoff = new Date(Date.now() - WEEK_MS);
   for (const config of configs) {
     await prisma.$transaction(async (tx) => {

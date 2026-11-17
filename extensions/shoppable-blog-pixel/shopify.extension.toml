@@ -12,3 +12,8 @@ name = "Account ID"
 description = "Account ID"
 type = "single_line_text_field"
 
+
+[settings.fields.trackUrl]
+name = "Tracking endpoint"
+description = "App endpoint that receives attribution events (set by the app)"
+type = "single_line_text_field"

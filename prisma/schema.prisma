@@ -115,6 +115,11 @@ model ShopConfig {
   // Cached shop locale (refreshed from the Admin API) for analytics day buckets and money.
   timezone     String @default("")
   currencyCode String @default("")
+  // Last known Shopify billing plan (free|plus|pro|growth), refreshed after PLAN_CACHE_TTL or a subscription webhook.
+  planKey       String    @default("")
+  planCheckedAt DateTime?
+  // Set when the app is uninstalled; data is kept until shop/redact so a reinstall restores it.
+  uninstalledAt DateTime?
 
   /// Set once legacy [[SBS_...]] text placeholders in existing articles were converted.
   markersMigratedAt DateTime?

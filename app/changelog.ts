@@ -10,6 +10,24 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.11.21",
+    date: "2026-11-21",
+    title: "Settings you can trust",
+    summary: "Your settings are never deleted by plan changes or a temporary Shopify error, setup shows what is really installed, and tracking shows whether data is arriving.",
+    tags: ["New", "Improved", "Fixed"],
+    changes: [
+      { type: "Fixed", text: "Changing plans, or a temporary Shopify billing error, no longer deletes custom CSS or turns off breadcrumbs, table of contents and scheduled scans. Features outside your plan pause and come back when you upgrade." },
+      { type: "Fixed", text: "If Shopify billing cannot be reached, the app keeps your last confirmed plan instead of falling back to Free, so storefront navigation no longer disappears." },
+      { type: "Improved", text: "The app checks your plan far less often, so pages load faster, and plan changes made in Shopify are picked up automatically." },
+      { type: "Fixed", text: "Uninstalling no longer deletes your data immediately: it is kept for 48 hours so a reinstall restores everything, then permanently deleted." },
+      { type: "New", text: "Theme setup shows which steps are done on your published theme: app embed, product display, schema, breadcrumbs and table of contents." },
+      { type: "New", text: "Settings › Tracking shows whether the checkout pixel is connected (with a Connect button) and when the last event and order were received." },
+      { type: "Improved", text: "Settings use Shopify's standard save bar, and each tab can be reset to its defaults before saving." },
+      { type: "Improved", text: "Product Grid blocks in the theme editor now keep their own column setting; the app's settings apply to products placed inside post content." },
+      { type: "New", text: "SEO & AI rules suggests a content language based on your store's country." },
+    ],
+  },
+  {
     version: "2026.11.20",
     date: "2026-11-20",
     title: "Safer catalog editing and bulk product SEO",

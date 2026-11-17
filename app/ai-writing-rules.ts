@@ -124,3 +124,26 @@ export function renderMetaTemplate(
 function clean(value: string | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
+
+const COUNTRY_LANGUAGES: Record<string, (typeof CONTENT_LANGUAGES)[number]> = {
+  VN: "Vietnamese",
+  ES: "Spanish", MX: "Spanish", AR: "Spanish", CO: "Spanish", CL: "Spanish", PE: "Spanish",
+  FR: "French",
+  DE: "German", AT: "German",
+  IT: "Italian",
+  PT: "Portuguese", BR: "Portuguese",
+  NL: "Dutch",
+  PL: "Polish",
+  SE: "Swedish",
+  JP: "Japanese",
+  KR: "Korean",
+  CN: "Chinese (Simplified)",
+  TW: "Chinese (Traditional)", HK: "Chinese (Traditional)",
+  TH: "Thai",
+  ID: "Indonesian",
+};
+
+/** A likely content language for a store's country; null when unclear (e.g. multilingual countries). */
+export function suggestedLanguageForCountry(countryCode: string): (typeof CONTENT_LANGUAGES)[number] | null {
+  return COUNTRY_LANGUAGES[String(countryCode || "").toUpperCase()] || null;
+}

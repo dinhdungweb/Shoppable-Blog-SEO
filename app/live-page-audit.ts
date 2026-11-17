@@ -126,7 +126,7 @@ export function auditLivePage(
   if (options.expectProductSchema) {
     const productSchemas = snapshot.productSchemaCount || 0;
     if (productSchemas === 0) {
-      add({ type: "missing_product_schema", label: "No Product structured data", message: "The live product page has no Product JSON-LD, so it cannot show price, availability or ratings in search results.", severity: "warning", impact: "High", effort: "Low", fix: "Use a theme that outputs Product structured data, or add the app's “SEO Schema (JSON-LD)” block to the product template.", points: 5, category: "schema" });
+      add({ type: "missing_product_schema", label: "No Product structured data", message: "The live product page has no Product JSON-LD, so it cannot show price, availability or ratings in search results.", severity: "warning", impact: "High", effort: "Low", fix: "Current Shopify themes output Product structured data on product pages. If yours does not, update the theme or ask the theme developer to add Product JSON-LD with offers.", points: 5, category: "schema" });
     } else {
       if (productSchemas > 1) {
         add({ type: "duplicate_product_schema", label: "Duplicate Product structured data", message: `The live page declares ${productSchemas} Product entities, usually from both the theme and an app.`, severity: "warning", impact: "Medium", effort: "Low", fix: "Keep one source of Product schema: remove the extra app block or disable the theme's built-in product schema.", points: 2, category: "schema" });

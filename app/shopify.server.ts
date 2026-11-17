@@ -9,6 +9,7 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 import { GROWTH_PLAN, PAID_PLANS, PLUS_PLAN, PRO_PLAN, getPlanKey, getLimitsForPlan, isFullAccessShop } from "./pricing-plans";
 import type { PlanKey, PlanLimits } from "./pricing-plans";
+import { resolvePlanKey } from "./plan-cache.server";
 
 export function isBillingTestMode() {
   const billingTestMode = process.env.SHOPIFY_BILLING_TEST?.trim().toLowerCase();
@@ -78,6 +79,16 @@ const shopify = shopifyApp({
       ],
     },
   },
+  hooks: {
+    // Runs on install and reinstall: data kept since an uninstall becomes active again,
+    // and the plan is re-checked because subscriptions end when an app is removed.
+    afterAuth: async ({ session }) => {
+      await prisma.shopConfig.updateMany({
+        where: { shop: session.shop },
+        data: { uninstalledAt: null, planCheckedAt: null },
+      }).catch((error) => console.error("[auth] could not reactivate shop data", error));
+    },
+  },
   future: {
     unstable_newEmbeddedAuthStrategy: true,
     expiringOfflineAccessTokens: true,
@@ -96,90 +107,80 @@ export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;
 export const sessionStorage = shopify.sessionStorage;
 
+type AdminBilling = Awaited<ReturnType<typeof authenticate.admin>>["billing"];
+
+const PLAN_NAMES: Record<PlanKey, string> = { free: "free", plus: PLUS_PLAN, pro: PRO_PLAN, growth: GROWTH_PLAN };
+
 /**
- * Resolve the currently active billing plan name for the authenticated merchant.
+ * Asks Shopify for the active paid plan. Throws when Shopify cannot answer, so
+ * callers can keep the last known plan instead of treating the shop as Free.
  *
  * IMPORTANT: Per Shopify docs, billing.check() must NOT be used inside the root
- * layout to avoid redirect loops. Call this only in individual route loaders/actions
- * where plan enforcement is needed.
- *
- * Returns the Shopify plan name string (e.g. "Pro") or "free".
+ * layout to avoid redirect loops.
  */
-export async function getActivePlanName(
-  billing: Awaited<ReturnType<typeof authenticate.admin>>["billing"],
-): Promise<string> {
-  try {
-    // Omit isTest so Shopify's billing helper returns every active subscription.
-    // Passing false hides test subscriptions, which prevents app-review and
-    // development stores from seeing the plan they just approved.
-    const billingCheck = await billing.check({
-      plans: [...PAID_PLANS],
-    });
-
-    const activeSubscription = billingCheck.appSubscriptions?.find(
-      (subscription) => getPlanKey(String(subscription?.name || "")) !== "free",
-    );
-
-    if (billingCheck.hasActivePayment && activeSubscription?.name) {
-      return activeSubscription.name;
-    }
-  } catch (err) {
-    console.error("[billing] getActivePlanName check failed:", err);
-  }
-  return "free";
+export async function checkBillingPlanKey(billing: AdminBilling): Promise<PlanKey> {
+  // Omit isTest so Shopify's billing helper returns every active subscription.
+  // Passing false hides test subscriptions, which prevents app-review and
+  // development stores from seeing the plan they just approved.
+  const billingCheck = await billing.check({ plans: [...PAID_PLANS] });
+  const activeSubscription = billingCheck.appSubscriptions?.find(
+    (subscription) => getPlanKey(String(subscription?.name || "")) !== "free",
+  );
+  return billingCheck.hasActivePayment && activeSubscription?.name ? getPlanKey(activeSubscription.name) : "free";
 }
 
 /**
- * Convenience: returns the local plan key and limits in one call.
+ * The shop's plan and limits. Uses the cached plan (refreshed every few
+ * minutes and on subscription webhooks), so most requests make no billing call.
  */
 export async function getActivePlanAndLimits(
-  billing: Awaited<ReturnType<typeof authenticate.admin>>["billing"],
+  billing: AdminBilling,
   shop?: string,
 ): Promise<{ planKey: PlanKey; planName: string; limits: PlanLimits }> {
   if (shop && hasFullAccessOverride(shop)) {
     return { planKey: "growth", planName: GROWTH_PLAN, limits: getLimitsForPlan(GROWTH_PLAN) };
   }
-  const planName = await getActivePlanName(billing);
-  const planKey = getPlanKey(planName);
-  const limits = getLimitsForPlan(planName);
-  return { planKey, planName, limits };
+  const planKey = shop
+    ? await resolvePlanKey(shop, () => checkBillingPlanKey(billing))
+    : await checkBillingPlanKey(billing).catch((error) => {
+        console.error("[billing] plan check failed:", error);
+        return "free" as const;
+      });
+  const planName = PLAN_NAMES[planKey];
+  return { planKey, planName, limits: getLimitsForPlan(planName) };
+}
+
+async function fetchUnauthenticatedPlanKey(shop: string): Promise<PlanKey> {
+  const { admin } = await unauthenticated.admin(shop);
+  const response = await admin.graphql(
+    `#graphql
+    query ActiveAppSubscriptions {
+      currentAppInstallation {
+        activeSubscriptions {
+          name
+          status
+          test
+        }
+      }
+    }`,
+  );
+  const payload: any = await response.json();
+  if (payload.errors?.length) throw new Error(payload.errors.map((error: any) => error.message).join("; "));
+  const subscriptions = payload.data?.currentAppInstallation?.activeSubscriptions || [];
+  const activeSubscription = subscriptions.find((subscription: any) =>
+    getPlanKey(String(subscription?.name || "")) !== "free" &&
+    String(subscription?.status || "").toUpperCase() === "ACTIVE",
+  );
+  return activeSubscription?.name ? getPlanKey(activeSubscription.name) : "free";
 }
 
 /**
- * Resolve active billing for storefront/app-proxy requests where authenticate.admin()
- * is not available. Used only for entitlement checks on public widget APIs.
+ * Plan name for storefront, worker and OAuth-callback requests where
+ * authenticate.admin() is not available. Cached like getActivePlanAndLimits.
  */
 export async function getUnauthenticatedActivePlanName(shop: string): Promise<string> {
   if (hasFullAccessOverride(shop)) return GROWTH_PLAN;
-  try {
-    const { admin } = await unauthenticated.admin(shop);
-    const response = await admin.graphql(
-      `#graphql
-      query ActiveAppSubscriptions {
-        currentAppInstallation {
-          activeSubscriptions {
-            name
-            status
-            test
-          }
-        }
-      }`,
-    );
-    const payload = await response.json();
-    const subscriptions = payload.data?.currentAppInstallation?.activeSubscriptions || [];
-    const activeSubscription = subscriptions.find((subscription: any) => {
-      const name = String(subscription?.name || "");
-      return (
-        getPlanKey(name) !== "free" &&
-        String(subscription?.status || "").toUpperCase() === "ACTIVE"
-      );
-    });
-
-    return activeSubscription?.name || "free";
-  } catch (err) {
-    console.error("[billing] unauthenticated active plan check failed:", err);
-    return "free";
-  }
+  return PLAN_NAMES[await resolvePlanKey(shop, () => fetchUnauthenticatedPlanKey(shop))];
 }
 
 export function hasFullAccessOverride(shop: string) {

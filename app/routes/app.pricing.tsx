@@ -25,7 +25,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { GROWTH_PLAN, PAID_PLANS, PLUS_PLAN, PRO_PLAN, PLAN_LIMITS, getPlanKey } from "../pricing-plans";
 import { authenticate, isBillingTestMode } from "../shopify.server";
 import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
-import prisma from "../db.server";
+import { writeCachedPlan } from "../plan-cache.server";
 import type { PlanKey } from "../pricing-plans";
 
 type PricingPlan = {
@@ -184,11 +184,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (billingCheck.hasActivePayment && activeSubscription?.name) {
       activePlan = activeSubscription.name;
     }
+    // This page is where merchants land after approving a charge, so refresh the cached plan.
+    await writeCachedPlan(session.shop, getPlanKey(activePlan));
   } catch (error) {
     console.error("Billing check failed:", error);
     billingError = "Could not verify the current Shopify billing subscription.";
   }
-  await applyPlanRestrictions(session.shop, getPlanKey(activePlan));
 
   return json({
     activePlan,
@@ -222,7 +223,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           prorate: true,
         });
       }
-      await applyPlanRestrictions(session.shop, "free");
+      // Settings for paid features are kept (not deleted): they stop applying on Free and return on upgrade.
+      await writeCachedPlan(session.shop, "free");
 
       return redirect("/app/pricing");
     } catch (error) {
@@ -355,32 +357,6 @@ export default function PricingPage() {
       </div>
     </Page>
   );
-}
-
-async function applyPlanRestrictions(shop: string, planKey: PlanKey) {
-  const data =
-    planKey === "free" || planKey === "plus"
-      ? {
-          customCss: null,
-          contentNavCustomCss: null,
-          breadcrumbsEnabled: false,
-          tocEnabled: false,
-          tocAutoInsertEnabled: false,
-          seoAutoScanEnabled: false,
-        }
-      : planKey === "pro"
-        ? {
-            customCss: null,
-            contentNavCustomCss: null,
-          }
-        : null;
-
-  if (!data) return;
-
-  await prisma.shopConfig.updateMany({
-    where: { shop },
-    data,
-  });
 }
 
 function PricingPlanCard({

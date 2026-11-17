@@ -19,19 +19,20 @@ import {
 } from "@shopify/polaris";
 import {
   SettingsIcon,
-  AlertTriangleIcon,
   StoreIcon,
   ChartVerticalIcon,
   CheckCircleIcon,
   ListBulletedIcon,
   HomeIcon,
 } from "@shopify/polaris-icons";
-import { useAppBridge } from "@shopify/app-bridge-react";
+import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { SearchConsoleCard } from "../components/SearchConsoleCard";
 import { loadSearchConsoleView } from "../search-console-view.server";
 import { getAiUsageStatus } from "../ai-usage.server";
+import { checkWebPixel, loadTrackingActivity } from "../setup-status.server";
+import { SETTINGS_TAB_DEFAULTS, isResettableSettingsTab } from "../settings-defaults";
 import { ATTRIBUTION_WINDOW_OPTIONS } from "../analytics-core";
 import { isNineRouterConfigured } from "../ai-seo.server";
 import {
@@ -43,6 +44,7 @@ import {
   META_TEMPLATE_TOKENS,
   parseForbiddenWords,
   renderMetaTemplate,
+  suggestedLanguageForCountry,
   type BrandTone,
 } from "../ai-writing-rules";
 
@@ -77,7 +79,7 @@ const META_TEMPLATE_PREVIEW = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, billing } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const url = new URL(request.url);
   const { limits, planKey } = await getActivePlanAndLimits(billing, shop);
@@ -92,13 +94,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
-  const [searchConsole, aiUsage] = await Promise.all([
+  const [searchConsole, aiUsage, webPixelEnabled, trackingActivity, suggestedLanguage] = await Promise.all([
     loadSearchConsoleView(shop, limits.canSearchConsole),
     getAiUsageStatus(shop, limits.aiRequestsPerMonth),
+    checkWebPixel(admin),
+    loadTrackingActivity(shop),
+    // Only suggest while the language is still the untouched default.
+    config.language === "English" ? loadSuggestedLanguage(admin) : Promise.resolve(null),
   ]);
+  // Internal bookkeeping columns are not settings and never round-trip through the form.
+  const { planKey: _planKey, planCheckedAt: _planCheckedAt, uninstalledAt: _uninstalledAt, markersMigratedAt: _markersMigratedAt, timezone: _timezone, currencyCode: _currencyCode, ...settings } = config;
 
   return {
-    config: { ...config, ...normalizeContentNavConfig(config) },
+    config: { ...settings, ...normalizeContentNavConfig(settings) },
+    tracking: { webPixelEnabled, ...trackingActivity },
+    suggestedLanguage,
     searchConsole,
     aiStatus: { configured: isNineRouterConfigured(), usage: aiUsage },
     canContentNavigation: limits.canContentNavigation,
@@ -107,6 +117,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     planKey,
   };
 };
+
+async function loadSuggestedLanguage(admin: any) {
+  try {
+    const response = await admin.graphql(`#graphql
+      query SettingsShopCountry { shop { billingAddress { countryCodeV2 } } }`);
+    const payload: any = await response.json();
+    const language = suggestedLanguageForCountry(String(payload.data?.shop?.billingAddress?.countryCodeV2 || ""));
+    return language && language !== "English" ? language : null;
+  } catch {
+    return null;
+  }
+}
 
 function getInitialSettingsTab(tab: string | null) {
   if (tab === "display") return 1;
@@ -244,9 +266,16 @@ const CustomToggle = ({
 );
 
 export default function Settings() {
-  const { config, searchConsole, aiStatus, canContentNavigation, canCustomCss, initialTab, planKey } = useLoaderData<typeof loader>();
+  const { config, tracking, suggestedLanguage, searchConsole, aiStatus, canContentNavigation, canCustomCss, initialTab, planKey } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
+  const pixelFetcher = useFetcher<{ success?: boolean; error?: string }>();
+  const pixelConnected = tracking.webPixelEnabled === true || Boolean(pixelFetcher.data?.success);
+  useEffect(() => {
+    if (pixelFetcher.state !== "idle" || !pixelFetcher.data) return;
+    if (pixelFetcher.data.success) shopify.toast.show("Tracking pixel connected");
+    else if (pixelFetcher.data.error) shopify.toast.show(pixelFetcher.data.error, { isError: true });
+  }, [pixelFetcher.state, pixelFetcher.data, shopify]);
 
   const [formState, setFormState] = useState(config);
   const [savedState, setSavedState] = useState(config);
@@ -313,6 +342,13 @@ export default function Settings() {
     setFormState(savedState);
   };
 
+  // Fills the tab with default values; nothing is saved until the merchant clicks Save.
+  const handleResetTab = (tab: string) => {
+    if (!isResettableSettingsTab(tab)) return;
+    setFormState((previous) => ({ ...previous, ...SETTINGS_TAB_DEFAULTS[tab] }));
+    shopify.toast.show("Defaults applied. Review and save to keep them.");
+  };
+
   const [selectedTab, setSelectedTab] = useState(initialTab);
   const settingsTabs = useMemo(
     () => [
@@ -367,7 +403,9 @@ export default function Settings() {
                 <Text as="span" tone="success">All changes saved</Text>
               </InlineStack>
             )}
-            <Button onClick={handleDiscard} disabled={!hasChanges}>Discard changes</Button>
+            {isResettableSettingsTab(selectedTabId) && (
+              <Button onClick={() => handleResetTab(selectedTabId)} disabled={(selectedTabId === 'content-navigation' && contentNavigationLocked)}>Reset this tab to defaults</Button>
+            )}
           </InlineStack>
         </InlineStack>
 
@@ -415,6 +453,7 @@ export default function Settings() {
 
           <div id={settingsTabs[selectedTab]?.panelID || 'general-panel'}>
           {selectedTabId === 'general' && (
+            <BlockStack gap="400">
             <Card padding="400">
               <BlockStack gap="400">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -426,7 +465,7 @@ export default function Settings() {
                 <InlineStack align="space-between" blockAlign="center">
                   <BlockStack gap="0">
                     <Text as="h3" variant="bodyMd" fontWeight="bold">App status</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">Controls storefront widget output and tracking collection.</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">When inactive, products, breadcrumbs and the table of contents are hidden on the storefront and no tracking data is collected. Your settings and data are kept.</Text>
                   </BlockStack>
                   <InlineStack gap="200" blockAlign="center">
                     <div style={{ backgroundColor: formState.appStatus ? '#E8F5E9' : '#F1F2F3', color: formState.appStatus ? '#29845A' : '#6D7175', padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold' }}>
@@ -437,9 +476,26 @@ export default function Settings() {
                 </InlineStack>
               </BlockStack>
             </Card>
+            <Card padding="400">
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd" fontWeight="bold">Your data</Text>
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  Changing plans never deletes settings: features outside your plan stop applying and come back when you upgrade.
+                  If you uninstall the app, your data is kept for 48 hours so reinstalling restores everything, then it is permanently deleted.
+                </Text>
+                <InlineStack>
+                  <Button variant="plain" url="/privacy" target="_blank">Privacy policy</Button>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+            </BlockStack>
           )}
 
           {selectedTabId === 'display' && (
+            <BlockStack gap="300">
+            <Banner tone="info">
+              <p>These settings style products placed inside post content. A Product Carousel or Product Grid block added in the theme editor uses its own block settings (for example, grid columns) and these settings for everything else.</p>
+            </Banner>
             <InlineGrid columns={{ xs: 1, lg: 'minmax(380px, 1fr) minmax(420px, 1fr)' }} gap="400">
               <BlockStack gap="400">
                 <Card padding="400">
@@ -644,9 +700,16 @@ export default function Settings() {
                 <ShoppableDisplayPreview config={formState} />
               </Card>
             </InlineGrid>
+            </BlockStack>
           )}
 
           {selectedTabId === 'content-navigation' && (
+            <BlockStack gap="300">
+            {!contentNavigationLocked && (
+              <Banner tone="info">
+                <p>These settings apply to the automatic table of contents and to navigation placed inside post content. Breadcrumbs or Table of Contents blocks added in the theme editor use their own block settings first.</p>
+              </Banner>
+            )}
             <InlineGrid columns={{ xs: 1, lg: 'minmax(380px, 1fr) minmax(420px, 1fr)' }} gap="400">
               <BlockStack gap="400">
                 {contentNavigationLocked && (
@@ -880,6 +943,7 @@ export default function Settings() {
                 </BlockStack>
               </Card>
             </InlineGrid>
+            </BlockStack>
           )}
 
           {selectedTabId === 'tracking' && (
@@ -893,17 +957,31 @@ export default function Settings() {
 
                 <BlockStack gap="100">
                   <Text as="span" variant="bodyMd" fontWeight="semibold">Tracking status</Text>
-                  <InlineStack gap="100" blockAlign="center">
-                    <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: formState.enableConversionTracking ? '#29845A' : '#6D7175' }} />
-                    <Text as="span" fontWeight="bold" tone={formState.enableConversionTracking ? "success" : "subdued"}>{formState.enableConversionTracking ? 'Active' : 'Inactive'}</Text>
-                  </InlineStack>
-                  <Text as="p" variant="bodySm" tone="subdued">{formState.enableConversionTracking ? 'Tracking is collecting data' : 'Tracking is paused'}</Text>
+                  <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
+                    <TrackingFact
+                      label="Conversion tracking"
+                      ok={formState.enableConversionTracking && formState.appStatus}
+                      value={!formState.appStatus ? 'Paused (app is inactive)' : formState.enableConversionTracking ? 'On' : 'Off'}
+                    />
+                    <TrackingFact
+                      label="Checkout pixel"
+                      ok={pixelConnected}
+                      value={pixelConnected ? 'Connected' : tracking.webPixelEnabled === null ? 'Could not check' : 'Not connected'}
+                      hint={pixelConnected ? undefined : 'Needed to credit add-to-carts and orders to posts.'}
+                      action={pixelConnected ? undefined : <Button size="slim" loading={pixelFetcher.state !== 'idle'} onClick={() => pixelFetcher.submit({ intent: 'activate_pixel' }, { method: 'post', action: '/app/dashboard-status' })}>Connect pixel</Button>}
+                    />
+                    <TrackingFact
+                      label="Last event received"
+                      ok={Boolean(tracking.lastEventAt)}
+                      value={tracking.lastEventAt ? formatRelative(tracking.lastEventAt) : 'None yet'}
+                      hint={tracking.lastPurchaseAt ? `Last order credited ${formatRelative(tracking.lastPurchaseAt)}` : 'Events appear after readers visit a post with linked products.'}
+                    />
+                  </InlineGrid>
                 </BlockStack>
 
                 <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
                   <BlockStack gap="100">
                     <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} helpText="UTMs are added only when a shopper clicks, for your analytics. Search engines always see clean product links, and conversion tracking works either way." />
-                    <Text as="p" variant="bodySm" tone="subdued">Appends UTM parameters to outbound links</Text>
                   </BlockStack>
                   <Select
                     label="Attribution window"
@@ -935,6 +1013,11 @@ export default function Settings() {
                     <Text as="h2" variant="headingMd" fontWeight="bold">AI writing rules</Text>
                     <Text as="p" variant="bodyMd" tone="subdued">Applied to every AI generation in the app: post drafts, rewrites, SEO fixes, FAQs, briefs, catalog copy, alt text and internal link anchors.</Text>
                   </BlockStack>
+                  {suggestedLanguage && formState.language === 'English' && (
+                    <Banner tone="info" title={`Write new content in ${suggestedLanguage}?`} action={{ content: `Use ${suggestedLanguage}`, onAction: () => handleChange('language', suggestedLanguage) }}>
+                      <p>Your store's address suggests your shoppers read {suggestedLanguage}. AI currently writes new posts in English.</p>
+                    </Banner>
+                  )}
                   <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
                     <Select
                       label="Content language"
@@ -1026,24 +1109,37 @@ export default function Settings() {
         </BlockStack>
       </BlockStack>
 
-      {/* FLOATING CONTEXTUAL SAVE BAR */}
-      {hasChanges && (
-        <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', width: '90%', maxWidth: '900px', backgroundColor: '#fff', borderRadius: '12px', padding: '16px 24px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', border: '1px solid #EBEBEB', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
-           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-              <Icon source={AlertTriangleIcon} tone="warning" />
-              <Text as="span" fontWeight="bold">You have unsaved changes</Text>
-           </div>
-           <InlineStack gap="200">
-              <Button onClick={handleDiscard}>Discard changes</Button>
-              <Button variant="primary" tone="critical" onClick={handleSave} loading={fetcher.state === 'submitting'}>Save changes</Button> 
-           </InlineStack>
-        </div>
-      )}
-
-      {/* Spacing at bottom to ensure save bar doesn't cover content */}
-      <div style={{ height: '100px' }} />
+      <SaveBar id="settings-save-bar" open={hasChanges}>
+        <button variant="primary" onClick={handleSave} loading={fetcher.state !== 'idle' ? '' : undefined}>Save</button>
+        <button onClick={handleDiscard}>Discard</button>
+      </SaveBar>
     </Page>
   );
+}
+
+function TrackingFact({ label, value, ok, hint, action }: { label: string; value: string; ok: boolean; hint?: string; action?: React.ReactNode }) {
+  return (
+    <Card padding="300">
+      <BlockStack gap="100">
+        <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+        <InlineStack gap="100" blockAlign="center">
+          <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: ok ? '#29845A' : '#B98900' }} />
+          <Text as="span" fontWeight="semibold">{value}</Text>
+        </InlineStack>
+        {hint && <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>}
+        {action}
+      </BlockStack>
+    </Card>
+  );
+}
+
+function formatRelative(iso: string) {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 function Snippet({ label, value }: { label: string; value: string }) {

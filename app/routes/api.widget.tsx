@@ -1,7 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
+import { authenticate, getUnauthenticatedActivePlanName } from "../shopify.server";
+import { getLimitsForPlan } from "../pricing-plans";
 import { createTrackingToken } from "../tracking-token.server";
 import { attributionWindowDays } from "../analytics-core";
 
@@ -12,7 +13,6 @@ const DEFAULT_WIDGET_CONFIG = {
   productCardLayout: "Standard",
   buttonText: "View product",
   showPrice: true,
-  showRating: true,
   showAddToCart: true,
   openInNewTab: true,
   imageAspectRatio: "Square",
@@ -28,7 +28,6 @@ const DEFAULT_WIDGET_CONFIG = {
   borderRadius: "8px",
   customCss: "",
   utmRules: "Auto-append to product links",
-  seoAutoSchema: true,
   maxProducts: 6,
   attributionWindow: "7 days",
 };
@@ -54,7 +53,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json({ error: "Missing articleId or shop parameter" }, { status: 400 });
   }
 
-  const config =
+  let config =
     (await prisma.shopConfig.findUnique({
       where: { shop },
       select: {
@@ -64,7 +63,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         productCardLayout: true,
         buttonText: true,
         showPrice: true,
-        showRating: true,
         showAddToCart: true,
         openInNewTab: true,
         imageAspectRatio: true,
@@ -80,7 +78,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         borderRadius: true,
         customCss: true,
         utmRules: true,
-        seoAutoSchema: true,
         maxProducts: true,
         attributionWindow: true,
       },
@@ -88,6 +85,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   if (!config.appStatus) {
     return json({ products: [], config: { ...config, appStatus: false } }, { headers: WIDGET_HEADERS });
+  }
+  // Custom CSS is a Growth feature. It is kept in settings after a downgrade and only stops applying.
+  if (config.customCss && !getLimitsForPlan(await getUnauthenticatedActivePlanName(shop)).canCustomCss) {
+    config = { ...config, customCss: "" };
   }
 
   const articleIds = getArticleIdCandidates(articleId);

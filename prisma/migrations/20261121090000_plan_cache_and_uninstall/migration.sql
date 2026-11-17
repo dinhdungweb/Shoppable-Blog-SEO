@@ -1,0 +1,3 @@
+ALTER TABLE "ShopConfig" ADD COLUMN "planKey" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "ShopConfig" ADD COLUMN "planCheckedAt" TIMESTAMP(3);
+ALTER TABLE "ShopConfig" ADD COLUMN "uninstalledAt" TIMESTAMP(3);

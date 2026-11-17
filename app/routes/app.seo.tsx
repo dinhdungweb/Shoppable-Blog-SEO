@@ -314,7 +314,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     ]);
     const limits = getLimitsForPlan(planName);
     if (job.trigger === "schedule" && !limits.canAutoSeoScan) {
-      await prisma.shopConfig.updateMany({ where: { shop: job.shop }, data: { seoAutoScanEnabled: false } });
+      // The merchant's choice is kept; scheduled scans resume if they upgrade again.
       return json({ scannedCount: 0, analyzedCount: 0, averageScore: 0, skipped: true });
     }
     const result = await runSeoScan({

@@ -1,20 +1,49 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { checkThemeSetup, checkWebPixel } from "../setup-status.server";
 
+function pixelSettings(shop: string) {
+  const appUrl = String(process.env.SHOPIFY_APP_URL || "").replace(/\/+$/, "");
+  return { accountID: shop, ...(appUrl.startsWith("https://") ? { trackUrl: `${appUrl}/api/track` } : {}) };
+}
+
+function graphqlErrors(result: any, key: string): string[] {
+  return [
+    ...(result.errors || []).map((error: any) => error.message),
+    ...(result.data?.[key]?.userErrors || []).map((error: any) => error.message),
+  ].filter(Boolean);
+}
+
+/** Connects the checkout pixel, or points an existing one at this app's tracking endpoint. */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   if (formData.get("intent") !== "activate_pixel") return json({ error: "Unsupported action" }, { status: 400 });
+  const settings = pixelSettings(session.shop);
 
+  let existing: { id: string; settings: unknown } | null = null;
   try {
     const checkResponse = await admin.graphql(`#graphql
-      query DashboardPixelStatus { webPixel { id } }
+      query DashboardPixelStatus { webPixel { id settings } }
     `);
     const checkResult: any = await checkResponse.json();
-    if (checkResult.data?.webPixel?.id) return json({ success: true, webPixelEnabled: true });
+    existing = checkResult.data?.webPixel?.id ? checkResult.data.webPixel : null;
   } catch (error) {
     if (!isMissingWebPixelError(error)) throw error;
+  }
+
+  if (existing) {
+    const current = typeof existing.settings === "string" ? safeJson(existing.settings) : existing.settings;
+    if (JSON.stringify(current) === JSON.stringify(settings)) return json({ success: true, webPixelEnabled: true });
+    const updateResponse = await admin.graphql(`#graphql
+      mutation DashboardWebPixelUpdate($id: ID!, $webPixel: WebPixelInput!) {
+        webPixelUpdate(id: $id, webPixel: $webPixel) { webPixel { id } userErrors { field message } }
+      }`, { variables: { id: existing.id, webPixel: { settings: JSON.stringify(settings) } } });
+    const errors = graphqlErrors(await updateResponse.json(), "webPixelUpdate");
+    // The pixel already works with its previous settings, so an update failure is not fatal.
+    if (errors.length) console.warn("Web pixel settings update failed", errors);
+    return json({ success: true, webPixelEnabled: true });
   }
 
   const createResponse = await admin.graphql(
@@ -22,59 +51,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     mutation DashboardWebPixelCreate($webPixel: WebPixelInput!) {
       webPixelCreate(webPixel: $webPixel) { webPixel { id } userErrors { field message } }
     }`,
-    { variables: { webPixel: { settings: JSON.stringify({ accountID: session.shop }) } } },
+    { variables: { webPixel: { settings: JSON.stringify(settings) } } },
   );
   const createResult: any = await createResponse.json();
-  const errors = [
-    ...(createResult.errors || []).map((error: any) => error.message),
-    ...(createResult.data?.webPixelCreate?.userErrors || []).map((error: any) => error.message),
-  ].filter(Boolean);
+  const errors = graphqlErrors(createResult, "webPixelCreate");
   if (errors.length || !createResult.data?.webPixelCreate?.webPixel?.id) {
     return json({ error: errors.join(", ") || "Shopify did not activate the Web Pixel." }, { status: 400 });
   }
   return json({ success: true, webPixelEnabled: true });
 };
 
+function safeJson(value: string) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
   const { admin, session } = await authenticate.admin(request);
-  let appEmbedEnabled = false;
-  let appEmbedError = "";
-  let webPixelEnabled = false;
-  let webPixelError = "";
-  try {
-    const themesResponse = await fetch(`https://${session.shop}/admin/api/2026-04/themes.json`, { headers: { "X-Shopify-Access-Token": session.accessToken || "" } });
-    if (!themesResponse.ok) throw new Error(`Theme check failed (${themesResponse.status})`);
-    const themesResult = await themesResponse.json();
-    const mainTheme = themesResult.themes?.find((theme: any) => theme.role === "main");
-    if (mainTheme) {
-      const assetResponse = await fetch(`https://${session.shop}/admin/api/2026-04/themes/${mainTheme.id}/assets.json?asset[key]=config/settings_data.json`, { headers: { "X-Shopify-Access-Token": session.accessToken || "" } });
-      if (!assetResponse.ok) throw new Error(`Theme settings check failed (${assetResponse.status})`);
-      const assetResult = await assetResponse.json();
-      const settings = assetResult.asset?.value ? JSON.parse(assetResult.asset.value) : null;
-      appEmbedEnabled = Object.values(settings?.current?.blocks || {}).some((block: any) => block?.type?.includes("sbs-article-embed") && String(block.disabled) !== "true");
-    }
-  } catch (error) {
-    console.error("Deferred app embed check failed:", error);
-    appEmbedError = "Could not check theme status";
-  }
-  try {
-    try {
-      const response = await admin.graphql(`#graphql
-        query DashboardPixelStatus { webPixel { id } }
-      `);
-      const result: any = await response.json();
-      webPixelEnabled = Boolean(result.data?.webPixel?.id);
-    } catch (error) {
-      if (!isMissingWebPixelError(error)) throw error;
-      webPixelEnabled = false;
-    }
-  } catch (error) {
-    console.error("Deferred web pixel check failed:", error);
-    webPixelError = "Could not check Web Pixel status";
-  }
+  const [theme, pixel] = await Promise.all([checkThemeSetup(admin), checkWebPixel(admin)]);
   console.info("Dashboard deferred setup timing", { shop: session.shop, durationMs: Date.now() - startedAt });
-  return json({ appEmbedEnabled, appEmbedError, webPixelEnabled, webPixelError });
+  return json({
+    appEmbedEnabled: "blocks" in theme ? theme.blocks.appEmbed : false,
+    appEmbedError: "error" in theme ? "Could not check theme status" : "",
+    webPixelEnabled: pixel === true,
+    webPixelError: pixel === null ? "Could not check Web Pixel status" : "",
+  });
 };
 
 function isMissingWebPixelError(error: unknown) {

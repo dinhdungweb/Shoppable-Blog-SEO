@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { purgeShopData } from "../shop-data.server";
+import { deactivateShop } from "../shop-data.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   let shop: string;
@@ -14,10 +14,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    await purgeShopData(shop);
+    // Data is kept for a reinstall and erased on shop/redact (48 hours later).
+    await deactivateShop(shop);
   } catch (error) {
     // Return 5xx so Shopify retries the delivery instead of treating it as rejected.
-    console.error(`[Webhook] Failed to purge data for ${shop} on app/uninstalled:`, error);
+    console.error(`[Webhook] Failed to deactivate ${shop} on app/uninstalled:`, error);
     return new Response(null, { status: 500 });
   }
 
