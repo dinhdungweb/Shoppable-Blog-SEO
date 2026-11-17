@@ -21,6 +21,15 @@
     const config = document.querySelector(".bp-app-embed-config");
     if (!config) return;
 
+    // Current placeholders: hidden <div|span data-sbs-products="block:style"> elements,
+    // invisible to readers and search engines when the widget is not running.
+    document.querySelectorAll("[data-sbs-products]").forEach((element, index) => {
+      if (element.closest(".bp-widget")) return;
+      const tokens = String(element.getAttribute("data-sbs-products") || "").split(":");
+      const widget = createWidget(config, parseMarker(tokens[0] || undefined, tokens[1] || undefined, config), `p${index}`);
+      element.replaceWith(widget);
+    });
+
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         if (!node.nodeValue || !node.nodeValue.includes("[[SBS_PRODUCTS")) {

@@ -90,7 +90,8 @@ export function analyzeContentDecay(input: {
     if (oldYears.length) issues.push(makeIssue(article, "outdated_year", "medium", "Title contains an older year", String(Math.max(...oldYears)), String(now.getFullYear()), "Confirm the article is current before changing the year in the title and URL metadata."));
 
     const articleProducts = products.get(article.id) || [];
-    if (/\[\[SBS_PRODUCTS(?::[^\]]+)?\]\]/i.test(article.body) && articleProducts.length === 0) {
+    // Placeholders are text markers (legacy) or hidden data-sbs-products elements.
+    if ((/\[\[SBS_PRODUCTS(?::[^\]]+)?\]\]/i.test(article.body) || /\bdata-sbs-products\s*=/i.test(article.body)) && articleProducts.length === 0) {
       issues.push(makeIssue(article, "unavailable_product", "high", "Product block has no active products", "Product block present", "No linked product", "Add an available Shopify product or remove the empty product block."));
     }
     for (const product of articleProducts) {

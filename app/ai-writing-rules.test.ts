@@ -19,7 +19,8 @@ describe("parseForbiddenWords", () => {
 
 describe("normalizeAiWritingRules", () => {
   it("falls back to safe defaults", () => {
-    expect(normalizeAiWritingRules({ brandTone: "Shouty", forbiddenWords: "", defaultContentStructure: " " })).toEqual({
+    expect(normalizeAiWritingRules({ language: "Klingon", brandTone: "Shouty", forbiddenWords: "", defaultContentStructure: " " })).toEqual({
+      language: "English",
       brandTone: "Professional",
       forbiddenWords: [],
       contentStructure: DEFAULT_CONTENT_STRUCTURE,
@@ -28,7 +29,7 @@ describe("normalizeAiWritingRules", () => {
 });
 
 describe("injectAiWritingRules", () => {
-  const rules = { brandTone: "Friendly", forbiddenWords: ["cheap"], contentStructure: "Intro, Steps, FAQ" };
+  const rules = { language: "Vietnamese", brandTone: "Friendly", forbiddenWords: ["cheap"], contentStructure: "Intro, Steps, FAQ" };
 
   it("appends rules to the existing system message", () => {
     const body = JSON.stringify({ model: "m", messages: [{ role: "system", content: "Return JSON." }, { role: "user", content: "Hi" }] });
@@ -37,6 +38,7 @@ describe("injectAiWritingRules", () => {
     expect(result.messages[0].content).toMatch(/^Return JSON\.\n\nMerchant writing rules/);
     expect(result.messages[0].content).toContain('Never use these words or phrases: "cheap".');
     expect(result.messages[0].content).toContain("Brand tone: Friendly.");
+    expect(result.messages[0].content).toContain("write new content in Vietnamese");
     expect(result.messages[1]).toEqual({ role: "user", content: "Hi" });
   });
 

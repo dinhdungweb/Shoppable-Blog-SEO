@@ -6,7 +6,7 @@ import type {
 } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import { useBlocker, useFetcher, useLoaderData, useNavigate, useRevalidator, useSearchParams } from "@remix-run/react";
 import {
   Badge,
   Banner,
@@ -68,10 +68,14 @@ import {
   ViewIcon,
   InfoIcon,
 } from "@shopify/polaris-icons";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { SaveBar, TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { formatLimit, PLAN_LIMITS } from "../pricing-plans";
+import { markersToStorage, storageToMarkers } from "../content-markers";
+import { sanitizeArticleHtml } from "../editor-html";
+import { ArticlePreviewModal } from "../components/ArticlePreview";
+import { clearDraft, draftDiffers, draftKey, readDraft, writeDraft, type EditorDraft } from "../editor-draft";
 import { SEO_SCORE_AREAS, auditSeo as runSeoAudit, slugifySeoText, toStoredSeoIssues, type SeoAuditIssue, type SeoAuditResult } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
@@ -500,6 +504,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const articleJson: any = await articleResponse.json();
   const article = articleJson.data?.article;
+  // Shopify stores app placeholders as hidden elements; the editor works with text markers.
+  if (article) article.body = storageToMarkers(article.body || "");
 
   if (!article) {
     if (articleJson.errors?.length) {
@@ -930,7 +936,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         blogId,
         title,
         author: { name: authorName },
-        body: body || "<p></p>",
+        // Placeholders are saved as hidden elements so they never show as raw text.
+        body: markersToStorage(body) || "<p></p>",
         summary,
         tags,
         isPublished,
@@ -1014,6 +1021,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const seoSyncError = await syncArticleSeoMetafields(admin, article.id, {
         metaTitle,
         metaDescription,
+        defaults: { title, summary },
       });
       if (seoSyncError) {
         return json({ success: false, error: seoSyncError }, { status: 400 });
@@ -1115,10 +1123,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         }
       }
 
+      if (briefId) {
+        // Link the brief to the post written from it.
+        try {
+          const savedBrief = await prisma.contentBrief.findFirst({ where: { id: briefId, shop }, select: { draft: true } });
+          if (savedBrief) {
+            const draft = savedBrief.draft && typeof savedBrief.draft === "object" ? savedBrief.draft as Record<string, unknown> : {};
+            await prisma.contentBrief.update({ where: { id: briefId }, data: { status: "written", draft: { ...draft, articleId: article.id } } });
+          }
+        } catch (error) {
+          console.error("Could not link the content brief to the new post", error);
+        }
+      }
+
       return json({
         success: true,
         action: "post_created",
-        article,
+        article: { ...article, body: storageToMarkers(article?.body || "") },
         score: audit.score,
         issues: audit.issues,
         linkedProductCount,
@@ -1126,11 +1147,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
+    const expectedUpdatedAt = cleanString(formData.get("expectedUpdatedAt"));
+    if (expectedUpdatedAt && formData.get("forceOverwrite") !== "true") {
+      const currentResponse = await admin.graphql(`#graphql
+        query ArticleVersion($id: ID!) { article(id: $id) { updatedAt } }`, { variables: { id: articleId } });
+      const currentJson: any = await currentResponse.json();
+      const currentUpdatedAt = String(currentJson.data?.article?.updatedAt || "");
+      if (currentUpdatedAt && new Date(currentUpdatedAt).getTime() !== new Date(expectedUpdatedAt).getTime()) {
+        return json({ success: false, action: "save_conflict", currentUpdatedAt }, { status: 409 });
+      }
+    }
+
     const articleInput: Record<string, unknown> = {
       title,
       handle,
       author: { name: authorName },
-      body,
+      // Placeholders are saved as hidden elements so they never show as raw text.
+      body: markersToStorage(body),
       summary,
       tags,
       isPublished,
@@ -1206,6 +1239,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const seoSyncError = await syncArticleSeoMetafields(admin, articleId, {
       metaTitle,
       metaDescription,
+      defaults: { title, summary },
     });
     if (seoSyncError) {
       return json({ success: false, error: seoSyncError }, { status: 400 });
@@ -1259,7 +1293,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({
       success: true,
       action: "post_updated",
-      article: result.data.articleUpdate.article,
+      article: { ...result.data.articleUpdate.article, body: storageToMarkers(result.data.articleUpdate.article?.body || "") },
       score: audit.score,
       issues: audit.issues,
     });
@@ -1691,7 +1725,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   return json({ success: false, error: "Invalid action." }, { status: 400 });
 };
 
-export default function ArticleDetail() {
+export default function ArticleRoute() {
+  const data = useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+  // "v" changes only when the merchant reloads the latest Shopify version after a conflict.
+  return <ArticleDetail key={`${data.article?.id || "new"}:${searchParams.get("v") || ""}`} />;
+}
+
+function ArticleDetail() {
   const { shop, shopDomains, tocAuditOptions, article, embeddedProducts, seoData, stats, livePostUrl, isNewPost, blogs, defaultAuthorName, fileImages, fileImagesError, internalLinkCandidates, canInternalLinking, canEditSeo, planKey, aiEnabled, aiUsage, contentRefresh, contentRefreshRequested, briefPrefill } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
@@ -1775,6 +1816,13 @@ export default function ArticleDetail() {
   const [imagePickerMode, setImagePickerMode] = useState<"featured" | "editor">("featured");
   const [imageRemoved, setImageRemoved] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  // Shopify version this editor started from; sent on save to detect overwrites.
+  const [baselineUpdatedAt, setBaselineUpdatedAt] = useState<string>(article.updatedAt || "");
+  const [saveConflict, setSaveConflict] = useState<{ updatedAt: string } | null>(null);
+  const [pendingDraft, setPendingDraft] = useState<EditorDraft | null>(null);
+  const allowNavigationRef = useRef(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const draftStorageKey = draftKey(shop, isNewPost ? "" : String(article.id || ""));
   const [showStyleModal, setShowStyleModal] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [selectedStyle, setSelectedStyle] = useState("card");
@@ -1840,6 +1888,8 @@ export default function ArticleDetail() {
     seoFixFetcher.data,
   ]);
 
+  // The live audit runs once typing pauses, not on every keystroke.
+  const auditBody = useDebouncedValue(body, 400);
   const { score: seoScore, issues: seoIssues, keywordScores, breakdown: seoBreakdown } = useMemo((): Pick<SeoAuditResult, "score" | "issues" | "keywordScores"> & { breakdown?: SeoAuditResult["breakdown"] } => {
     if (!article) return { score: 0, issues: [], keywordScores: {} };
     return runSeoAudit({
@@ -1847,7 +1897,7 @@ export default function ArticleDetail() {
       title: effectiveMetaTitle || title,
       handle,
       summary: metaDescription || excerpt || "",
-      body,
+      body: auditBody,
       hasImage: !!(featuredImageUrl || (article.image?.url && !imageRemoved)),
       imageAlt: featuredImageAlt || article.image?.altText || "",
       imageWidth: article.image?.width || null,
@@ -1861,7 +1911,7 @@ export default function ArticleDetail() {
       shopDomains,
       ...tocAuditOptions,
     });
-  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, body, featuredImageUrl, imageRemoved, featuredImageAlt, displayedProductCount, focusKeyword, authorName, shop, shopDomains, tocAuditOptions]);
+  }, [article, effectiveMetaTitle, title, handle, metaDescription, excerpt, auditBody, featuredImageUrl, imageRemoved, featuredImageAlt, displayedProductCount, focusKeyword, authorName, shop, shopDomains, tocAuditOptions]);
 
   const productBlockOptions = useMemo(
     () => buildProductBlockOptions(body, [
@@ -1985,6 +2035,8 @@ export default function ArticleDetail() {
           : fetcherData.productLinkWarning || "Post created successfully",
         { isError: Boolean(fetcherData.productLinkWarning && linkedProductCount === 0) },
       );
+      clearDraft(window.localStorage, draftStorageKey);
+      allowNavigationRef.current = true;
       navigate(`/app/blogs/${encodeURIComponent(fetcherData.article.id)}`);
       return;
     }
@@ -1993,6 +2045,7 @@ export default function ArticleDetail() {
       setIsDirty(false);
       setImageRemoved(false);
       if (fetcherData.article) {
+        if (fetcherData.article.updatedAt) setBaselineUpdatedAt(fetcherData.article.updatedAt);
         setTitle(fetcherData.article.title ?? "");
         setHandle(fetcherData.article.handle ?? "");
         setBody(fetcherData.article.body ?? "");
@@ -2005,7 +2058,12 @@ export default function ArticleDetail() {
         setFeaturedImageUrl(fetcherData.article.image?.url || "");
         setFeaturedImageAlt(fetcherData.article.image?.altText || "");
       }
+      clearDraft(window.localStorage, draftStorageKey);
       shopify.toast.show("Post updated successfully");
+    }
+
+    if (fetcherData.action === "save_conflict") {
+      setSaveConflict({ updatedAt: String(fetcherData.currentUpdatedAt || "") });
     }
 
     if (fetcherData.action === "seo_analyzed") {
@@ -2051,7 +2109,7 @@ export default function ArticleDetail() {
       setShowStyleModal(false);
       shopify.toast.show("Product display style updated");
     }
-  }, [defaultAuthorName, fetcherData, navigate, shopify]);
+  }, [defaultAuthorName, draftStorageKey, fetcherData, navigate, shopify]);
 
   useEffect(() => {
     const data = aiFetcher.data as any;
@@ -2343,9 +2401,12 @@ export default function ArticleDetail() {
     [uploadFetcher],
   );
 
-  const handleSave = useCallback(() => {
+  // Only an explicit `true` overwrites a newer Shopify version (never a click event).
+  const handleSave = useCallback((force?: unknown) => {
     const formData = new FormData();
     formData.append("intent", "update_post");
+    formData.append("expectedUpdatedAt", baselineUpdatedAt);
+    if (force === true) formData.append("forceOverwrite", "true");
     formData.append("title", title);
     formData.append("handle", handle);
     formData.append("blogId", selectedBlogId);
@@ -2363,13 +2424,12 @@ export default function ArticleDetail() {
     formData.append("removeImage", imageRemoved ? "true" : "false");
     formData.append("productCount", String(displayedProductCount));
     formData.append("focusKeyword", focusKeyword);
-    formData.append("seoScore", String(seoScore));
-    formData.append("seoIssues", JSON.stringify(seoIssues));
     if (briefPrefill?.id) formData.append("briefId", briefPrefill.id);
     fetcher.submit(formData, { method: "POST" });
   }, [
     activeImage,
     authorName,
+    baselineUpdatedAt,
     body,
     briefPrefill?.id,
     displayedProductCount,
@@ -2387,9 +2447,74 @@ export default function ArticleDetail() {
     title,
     visibility,
     focusKeyword,
-    seoScore,
-    seoIssues,
   ]);
+
+  // ── Unsaved work protection ─────────────────────────────────────────────
+  const draftFields = useMemo(
+    () => ({ title, handle, excerpt, body, metaTitle, metaDescription, tags, focusKeyword }),
+    [title, handle, excerpt, body, metaTitle, metaDescription, tags, focusKeyword],
+  );
+
+  // Offer a recovery draft left by a previous session.
+  useEffect(() => {
+    const draft = readDraft(window.localStorage, draftStorageKey);
+    if (draft && draftDiffers(draft, draftFields)) setPendingDraft(draft);
+    else if (draft) clearDraft(window.localStorage, draftStorageKey);
+    // Only on first render of this article.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftStorageKey]);
+
+  // Keep a local draft while there are unsaved changes.
+  useEffect(() => {
+    if (!isDirty || pendingDraft) return;
+    const timer = window.setTimeout(() => writeDraft(window.localStorage, draftStorageKey, draftFields, baselineUpdatedAt), 800);
+    return () => window.clearTimeout(timer);
+  }, [baselineUpdatedAt, draftFields, draftStorageKey, isDirty, pendingDraft]);
+
+  // Browser close / reload.
+  useEffect(() => {
+    if (!isDirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [isDirty]);
+
+  // Navigation inside the app.
+  const navigationBlocker = useBlocker(({ currentLocation, nextLocation }) =>
+    isDirty && !allowNavigationRef.current && (currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search),
+  );
+
+  const restoreDraft = useCallback(() => {
+    if (!pendingDraft) return;
+    setTitle(pendingDraft.title);
+    setHandle(pendingDraft.handle);
+    setExcerpt(pendingDraft.excerpt);
+    setBody(pendingDraft.body);
+    setMetaTitle(pendingDraft.metaTitle);
+    setMetaTitleTouched(Boolean(pendingDraft.metaTitle && pendingDraft.metaTitle !== pendingDraft.title));
+    setMetaDescription(pendingDraft.metaDescription);
+    setTags(pendingDraft.tags);
+    setFocusKeyword(pendingDraft.focusKeyword);
+    setPendingDraft(null);
+    setIsDirty(true);
+    shopify.toast.show("Draft restored. Review it, then save to publish.");
+  }, [pendingDraft, shopify]);
+
+  const discardDraft = useCallback(() => {
+    clearDraft(window.localStorage, draftStorageKey);
+    setPendingDraft(null);
+  }, [draftStorageKey]);
+
+  // Reloads the latest Shopify version; current edits stay recoverable as a local draft.
+  const reloadLatestVersion = useCallback(() => {
+    writeDraft(window.localStorage, draftStorageKey, draftFields, baselineUpdatedAt);
+    setSaveConflict(null);
+    allowNavigationRef.current = true;
+    navigate(`?v=${Date.now()}`, { replace: true });
+  }, [baselineUpdatedAt, draftFields, draftStorageKey, navigate]);
 
   const handleRunSeoScan = useCallback(() => {
     const formData = new FormData();
@@ -2929,6 +3054,63 @@ export default function ArticleDetail() {
     <Page fullWidth>
       <TitleBar title={isNewPost ? "Create post" : "Blog detail"} />
       <style>{DETAIL_STYLES}</style>
+      {pendingDraft && (
+        <div style={{ marginBottom: 16 }}>
+          <Banner
+            tone="warning"
+            title="Unsaved changes were recovered"
+            action={{ content: "Restore draft", onAction: restoreDraft }}
+            secondaryAction={{ content: "Discard", onAction: discardDraft }}
+          >
+            <p>
+              Changes from {new Date(pendingDraft.savedAt).toLocaleString()} were not saved to Shopify.
+              {pendingDraft.baseUpdatedAt && article.updatedAt && pendingDraft.baseUpdatedAt !== article.updatedAt
+                ? " The post has changed in Shopify since then; restoring will replace those newer changes when you save."
+                : ""}
+            </p>
+          </Banner>
+        </div>
+      )}
+      <Modal
+        open={Boolean(saveConflict)}
+        onClose={() => setSaveConflict(null)}
+        title="This post changed in Shopify"
+        primaryAction={{ content: "Overwrite with my version", destructive: true, onAction: () => { setSaveConflict(null); handleSave(true); } }}
+        secondaryActions={[{ content: "Load latest version", onAction: reloadLatestVersion }, { content: "Cancel", onAction: () => setSaveConflict(null) }]}
+      >
+        <Modal.Section>
+          <p>
+            Someone saved this post{saveConflict?.updatedAt ? ` at ${new Date(saveConflict.updatedAt).toLocaleString()}` : ""} after you opened it, in Shopify admin or another tab.
+            Overwriting replaces their changes. Loading the latest version keeps your edits as a recoverable draft.
+          </p>
+        </Modal.Section>
+      </Modal>
+      <ArticlePreviewModal
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        title={title}
+        blogTitle={currentBlog?.title || "Blog"}
+        body={body}
+        featuredImageUrl={featuredImageUrl || (!imageRemoved ? article.image?.url || "" : "")}
+        products={[...embeddedProducts, ...pendingBriefProducts].map((product: any) => ({
+          blockId: product.blockId || "default",
+          productTitle: product.productTitle || product.title || "Product",
+          productImage: product.productImage || product.image || "",
+          productPrice: String(product.productPrice || product.price || ""),
+        }))}
+        livePostUrl={article.publishedAt ? livePostUrl : undefined}
+      />
+      <Modal
+        open={navigationBlocker.state === "blocked"}
+        onClose={() => navigationBlocker.reset?.()}
+        title="Leave without saving?"
+        primaryAction={{ content: "Leave page", destructive: true, onAction: () => navigationBlocker.proceed?.() }}
+        secondaryActions={[{ content: "Stay", onAction: () => navigationBlocker.reset?.() }]}
+      >
+        <Modal.Section>
+          <p>Your changes have not been saved to Shopify. A local draft is kept in this browser and can be restored when you return.</p>
+        </Modal.Section>
+      </Modal>
 
       <div className="bp-detail-shell">
         <div className="bp-detail-header">
@@ -3072,10 +3254,11 @@ export default function ArticleDetail() {
                 ]}
               />
             </Popover>
+            <Button onClick={() => setPreviewOpen(true)}>Preview</Button>
             <Button loading={isSubmitting && fetcherData?.action === "seo_analyzed"} onClick={handleRunSeoScan}>
               Run SEO scan
             </Button>
-            <Button variant="primary" loading={isSubmitting && (fetcherData?.action === "post_updated" || fetcherData?.action === "post_created")} onClick={handleSave}>
+            <Button variant="primary" loading={isSubmitting && (fetcherData?.action === "post_updated" || fetcherData?.action === "post_created")} onClick={() => handleSave()}>
               {isNewPost ? "Create post" : "Update post"}
             </Button>
           </InlineStack>
@@ -3415,26 +3598,11 @@ export default function ArticleDetail() {
         </div>
       </div>
 
-      {shouldShowSaveBar && (
-        <div className="bp-save-bar">
-          <InlineStack align="space-between" blockAlign="center">
-            <InlineStack gap="200" blockAlign="center">
-              <Icon source={AlertCircleIcon} tone="base" />
-              <Text as="span" variant="bodyMd" fontWeight="semibold">
-                You have unsaved changes
-              </Text>
-            </InlineStack>
-            <ButtonGroup>
-              <Button onClick={resetChanges} disabled={isSubmitting}>
-                Discard changes
-              </Button>
-              <Button variant="primary" loading={isSubmitting} onClick={handleSave}>
-                Save changes
-              </Button>
-            </ButtonGroup>
-          </InlineStack>
-        </div>
-      )}
+      {/* App Bridge save bar: Shopify admin asks for confirmation before leaving while it is open. */}
+      <SaveBar id="article-save-bar" open={shouldShowSaveBar}>
+        <button variant="primary" onClick={() => handleSave()} loading={isSubmitting ? "" : undefined} disabled={isSubmitting}>Save</button>
+        <button onClick={resetChanges} disabled={isSubmitting}>Discard</button>
+      </SaveBar>
 
       <Modal
         open={faqSetupOpen}
@@ -4117,6 +4285,15 @@ export default function ArticleDetail() {
   );
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
+
 function MetricCard({
   title,
   value,
@@ -4592,7 +4769,8 @@ function RichArticleEditor({
     const editor = editorRef.current;
     if (!editor || value === lastHtmlRef.current) return;
     const cleanedValue = (value || "").replace(/\s+(bis_[a-z_]+|data-[a-z-]*gramm[a-z-]*|data-lt-tmp-id|spellcheck|data-gr-ext-installed|data-new-gr-c-s-check-loaded)="[^"]*"/ig, '');
-    editor.innerHTML = cleanedValue;
+    // Never render unsanitized article HTML inside the app (stored XSS).
+    editor.innerHTML = sanitizeArticleHtml(cleanedValue);
     lastHtmlRef.current = cleanedValue;
   }, [value]);
 
@@ -4689,7 +4867,7 @@ function RichArticleEditor({
     editor.focus();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    document.execCommand("insertHTML", false, selectionAiSuggestion.replacementHtml);
+    document.execCommand("insertHTML", false, sanitizeArticleHtml(selectionAiSuggestion.replacementHtml));
     emitChange();
     saveSelection();
     closeSelectionAi();
@@ -4712,7 +4890,7 @@ function RichArticleEditor({
       if (!editor) return;
 
       restoreSelection();
-      document.execCommand("insertHTML", false, html);
+      document.execCommand("insertHTML", false, sanitizeArticleHtml(html));
       emitChange();
       saveSelection();
     },
@@ -7374,14 +7552,41 @@ async function getSeoTocAuditOptions(shop: string, canContentNavigation: boolean
   };
 }
 
+/**
+ * Writes the article's search listing. With `defaults`, a value equal to the
+ * article title / excerpt (or empty) is not a customization: the metafield is
+ * removed so Shopify keeps following the current title and excerpt instead of
+ * freezing a copy that goes stale when they change.
+ */
 async function syncArticleSeoMetafields(
   admin: any,
   ownerId: string,
-  input: { metaTitle: string; metaDescription: string },
+  input: { metaTitle: string; metaDescription: string; defaults?: { title: string; summary: string } },
 ) {
-  const metaTitle = cleanSeoMetafieldValue(input.metaTitle);
-  const metaDescription = cleanSeoMetafieldValue(input.metaDescription);
+  const isDefault = (value: string, fallback: string) =>
+    !value || normalizeSeoComparison(value) === normalizeSeoComparison(stripHtml(fallback));
+  const titleIsDefault = Boolean(input.defaults) && isDefault(cleanSeoMetafieldValue(input.metaTitle), input.defaults?.title || "");
+  const descriptionIsDefault = Boolean(input.defaults) && isDefault(cleanSeoMetafieldValue(input.metaDescription), input.defaults?.summary || "");
+  const metaTitle = titleIsDefault ? "" : cleanSeoMetafieldValue(input.metaTitle);
+  const metaDescription = descriptionIsDefault ? "" : cleanSeoMetafieldValue(input.metaDescription);
   const metafields = [];
+
+  const toDelete = [
+    ...(titleIsDefault ? [{ ownerId, namespace: "global", key: "title_tag" }] : []),
+    ...(descriptionIsDefault ? [{ ownerId, namespace: "global", key: "description_tag" }] : []),
+  ];
+  if (toDelete.length) {
+    const deleteResponse = await admin.graphql(
+      `#graphql
+      mutation DeleteDefaultSeoMetafields($metafields: [MetafieldIdentifierInput!]!) {
+        metafieldsDelete(metafields: $metafields) { userErrors { field message } }
+      }`,
+      { variables: { metafields: toDelete } },
+    );
+    const deleteResult: any = await deleteResponse.json();
+    const deleteErrors = [...(deleteResult.errors || []), ...(deleteResult.data?.metafieldsDelete?.userErrors || [])];
+    if (deleteErrors.length) return deleteErrors[0]?.message || "Shopify could not reset the search engine listing.";
+  }
 
   if (metaTitle) {
     metafields.push({
@@ -7433,6 +7638,10 @@ async function syncArticleSeoMetafields(
   }
 
   return "";
+}
+
+function normalizeSeoComparison(value: string) {
+  return value.replace(/s+/g, " ").trim().toLowerCase();
 }
 
 function cleanSeoMetafieldValue(value: string) {

@@ -9,8 +9,10 @@ import {
 } from "@remix-run/react";
 import {
   Badge,
+  Banner,
   Page,
   Card,
+  Modal,
   Text,
   BlockStack,
   InlineStack,
@@ -21,10 +23,11 @@ import {
   TextField,
   Select,
 } from "@shopify/polaris";
-import { 
-  SearchIcon, 
-  EditIcon, 
+import {
+  SearchIcon,
+  EditIcon,
 } from "@shopify/polaris-icons";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { formatLimit } from "../pricing-plans";
@@ -32,23 +35,19 @@ import {
   CONTENT_WORKSPACE_TABS,
   WorkspaceTabs,
 } from "../components/WorkspaceTabs";
-
-function parseMoney(value: string) {
-  const number = Number((value || "0").replace(/[^0-9.]/g, ""));
-  return Number.isFinite(number) ? number : 0;
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
-}
+import { analyticsWindow, formatMoney, groupRows } from "../analytics-core";
+import { canonicalArticleId, getShopLocale, loadLinkedProducts, priceLookup } from "../analytics.server";
+import { convertLegacyMarkers } from "../content-markers.server";
 
 const BLOG_MANAGER_PAGE_SIZE = 20;
+const METRICS_WINDOW_DAYS = 30;
+const NEEDS_SEO_BELOW = 60;
 
-type BlogManagerStatus = "all" | "published" | "draft" | "needs_seo" | "no_products" | "high_traffic";
+type BlogManagerStatus = "all" | "published" | "draft" | "needs_seo" | "no_products" | "most_read";
 type BlogManagerSort = "date_desc" | "date_asc" | "title_asc" | "title_desc";
+
+/** Tabs computed from app data across every post (not just the current Shopify page). */
+const DATA_TABS = new Set<BlogManagerStatus>(["needs_seo", "no_products", "most_read"]);
 
 function cleanParam(value: string | null) {
   const trimmed = (value || "").trim();
@@ -56,15 +55,8 @@ function cleanParam(value: string | null) {
 }
 
 function getStatusParam(value: string | null): BlogManagerStatus {
-  if (
-    value === "published" ||
-    value === "draft" ||
-    value === "needs_seo" ||
-    value === "no_products" ||
-    value === "high_traffic"
-  ) {
-    return value;
-  }
+  if (value === "high_traffic") return "most_read"; // old links
+  if (value === "published" || value === "draft" || value === "needs_seo" || value === "no_products" || value === "most_read") return value;
   return "all";
 }
 
@@ -84,42 +76,56 @@ function getNumericShopifyId(id: string) {
   return id.split("/").pop() || id;
 }
 
-function buildArticleSearchQuery({
-  search,
-  blogId,
-  status,
-}: {
-  search: string | null;
-  blogId: string | null;
-  status: BlogManagerStatus;
-}) {
+/** Shopify search syntax: quote free text so characters like ":" cannot change the query. */
+function buildArticleSearchQuery({ search, blogId, status }: { search: string | null; blogId: string | null; status: BlogManagerStatus }) {
   const parts: string[] = [];
-
-  if (search) parts.push(search);
+  if (search) parts.push(`"${search.replace(/["\\]/g, " ").trim()}"`);
   if (blogId) parts.push(`blog_id:${getNumericShopifyId(blogId)}`);
   if (status === "published") parts.push("published_status:published");
   if (status === "draft") parts.push("published_status:unpublished");
-
   return parts.length ? parts.join(" ") : null;
 }
 
-function articleMatchesTab(article: any, status: BlogManagerStatus) {
-  if (status === "published") return Boolean(article.publishedAt);
-  if (status === "draft") return !article.publishedAt;
-  if (status === "needs_seo") return article.seoScore === null || article.seoScore === undefined || article.seoScore < 60;
-  if (status === "no_products") return !article.productCount;
-  if (status === "high_traffic") return (article.clicks || 0) >= 100;
-  return true;
-}
+const ARTICLE_FIELDS = `
+  id
+  title
+  handle
+  tags
+  publishedAt
+  updatedAt
+  image { url altText }
+  blog { id title handle }
+`;
 
-function buildTabCounts(articles: any[]) {
+/** Ordered article ids for a data tab, plus counts for every data tab. */
+async function loadDataTabs(shop: string, metricsStart: Date) {
+  const [seoRows, linked, readers] = await Promise.all([
+    prisma.articleSEO.findMany({
+      where: { shop, lastAnalyzedAt: { not: null } },
+      select: { articleId: true, articleTitle: true, blogHandle: true, seoScore: true, sourceUpdatedAt: true },
+    }),
+    prisma.articleProduct.findMany({ where: { shop, isActive: true }, select: { articleId: true }, distinct: ["articleId"] }),
+    prisma.analyticsDaily.groupBy({
+      by: ["articleId"],
+      where: { shop, date: { gte: metricsStart }, views: { gt: 0 } },
+      _sum: { views: true },
+    }),
+  ]);
+  const withProducts = new Set(linked.map((row) => canonicalArticleId(row.articleId)));
+  const byRecent = (a: { sourceUpdatedAt: Date | null }, b: { sourceUpdatedAt: Date | null }) => (b.sourceUpdatedAt?.getTime() || 0) - (a.sourceUpdatedAt?.getTime() || 0);
+  const scanned = seoRows.map((row) => ({ ...row, articleId: canonicalArticleId(row.articleId) }));
+  const viewTotals = new Map<string, number>();
+  for (const row of readers) {
+    const id = canonicalArticleId(row.articleId);
+    viewTotals.set(id, (viewTotals.get(id) || 0) + (row._sum.views || 0));
+  }
   return {
-    all: articles.length,
-    published: articles.filter((article) => articleMatchesTab(article, "published")).length,
-    draft: articles.filter((article) => articleMatchesTab(article, "draft")).length,
-    needsSeo: articles.filter((article) => articleMatchesTab(article, "needs_seo")).length,
-    noProducts: articles.filter((article) => articleMatchesTab(article, "no_products")).length,
-    highTraffic: articles.filter((article) => articleMatchesTab(article, "high_traffic")).length,
+    scanned,
+    lists: {
+      needs_seo: scanned.filter((row) => row.seoScore < NEEDS_SEO_BELOW).sort((a, b) => a.seoScore - b.seoScore).map((row) => row.articleId),
+      no_products: scanned.filter((row) => !withProducts.has(row.articleId)).sort(byRecent).map((row) => row.articleId),
+      most_read: [...viewTotals].sort((a, b) => b[1] - a[1]).map(([id]) => id),
+    } as Record<"needs_seo" | "no_products" | "most_read", string[]>,
   };
 }
 
@@ -134,271 +140,210 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const sort = getSortParam(url.searchParams.get("sort"));
   const after = cleanParam(url.searchParams.get("after"));
   const before = cleanParam(url.searchParams.get("before"));
-  const pageQuery = buildArticleSearchQuery({ search, blogId, status });
-  const { sortKey, reverse } = getArticleSort(sort);
+  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const isDataTab = DATA_TABS.has(status);
 
-  let blogs: any[] = [];
-  let articleEdges: any[] = [];
-  let pageInfo = {
-    hasNextPage: false,
-    hasPreviousPage: false,
-    startCursor: null as string | null,
-    endCursor: null as string | null,
-  };
+  const locale = await getShopLocale(admin, shop);
+  const { currentStart: metricsStart } = analyticsWindow(new Date(), METRICS_WINDOW_DAYS, locale.timezone);
+  const [dataTabs, config] = await Promise.all([
+    loadDataTabs(shop, metricsStart),
+    prisma.shopConfig.findUnique({ where: { shop }, select: { markersMigratedAt: true } }),
+  ]);
+
+  let blogs: Array<{ id: string; title: string; handle: string }> = [];
+  let nodes: any[] = [];
   let shopifyError: string | null = null;
+  let pagination = { mode: "cursor" as "cursor" | "offset", page, hasNextPage: false, hasPreviousPage: false, startCursor: null as string | null, endCursor: null as string | null, total: null as number | null };
 
   try {
-    const response = await admin.graphql(
-      `#graphql
-      query GetBlogManagerArticles(
-        $first: Int
-        $last: Int
-        $after: String
-        $before: String
-        $query: String
-        $sortKey: ArticleSortKeys!
-        $reverse: Boolean!
-      ) {
-        articles(
-          first: $first
-          last: $last
-          after: $after
-          before: $before
-          query: $query
-          sortKey: $sortKey
-          reverse: $reverse
-        ) {
-          edges {
-            cursor
-            node {
-              id
-              title
-              handle
-              tags
-              publishedAt
-              updatedAt
-              image {
-                url
-                altText
-              }
-              blog {
-                id
-                title
-                handle
-              }
-            }
+    if (isDataTab) {
+      // Data tabs page through app data, then load just this page from Shopify.
+      const blogsResponse = await admin.graphql(`#graphql
+        query BlogManagerBlogs { blogs(first: 250) { nodes { id title handle } } }`);
+      blogs = ((await blogsResponse.json()) as any).data?.blogs?.nodes || [];
+      const blogHandle = blogId ? blogs.find((blog) => blog.id === blogId)?.handle : null;
+      const titleMatch = search?.toLowerCase();
+      const scannedById = new Map(dataTabs.scanned.map((row) => [row.articleId, row]));
+      const ids = dataTabs.lists[status as "needs_seo" | "no_products" | "most_read"].filter((id) => {
+        const row = scannedById.get(id);
+        if (blogHandle && row && row.blogHandle !== blogHandle) return false;
+        if (titleMatch && row && !row.articleTitle.toLowerCase().includes(titleMatch)) return false;
+        return true;
+      });
+      const pageIds = ids.slice((page - 1) * BLOG_MANAGER_PAGE_SIZE, page * BLOG_MANAGER_PAGE_SIZE);
+      if (pageIds.length) {
+        const response = await admin.graphql(`#graphql
+          query BlogManagerArticlesById($ids: [ID!]!) { nodes(ids: $ids) { ... on Article { ${ARTICLE_FIELDS} } } }`, { variables: { ids: pageIds } });
+        const payload: any = await response.json();
+        if (payload.errors?.length) throw new Error(payload.errors.map((error: any) => error.message).join("; "));
+        nodes = (payload.data?.nodes || []).filter(Boolean);
+      }
+      pagination = { ...pagination, mode: "offset", hasNextPage: page * BLOG_MANAGER_PAGE_SIZE < ids.length, hasPreviousPage: page > 1, total: ids.length };
+    } else {
+      const { sortKey, reverse } = getArticleSort(sort);
+      const response = await admin.graphql(`#graphql
+        query GetBlogManagerArticles($first: Int, $last: Int, $after: String, $before: String, $query: String, $sortKey: ArticleSortKeys!, $reverse: Boolean!) {
+          articles(first: $first, last: $last, after: $after, before: $before, query: $query, sortKey: $sortKey, reverse: $reverse) {
+            nodes { ${ARTICLE_FIELDS} }
+            pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
           }
-          pageInfo {
-            hasNextPage
-            hasPreviousPage
-            startCursor
-            endCursor
-          }
-        }
-        blogs(first: 250) {
-          nodes {
-            id
-            title
-            handle
-          }
-        }
-      }`,
-      {
+          blogs(first: 250) { nodes { id title handle } }
+        }`, {
         variables: {
           first: before ? null : BLOG_MANAGER_PAGE_SIZE,
           last: before ? BLOG_MANAGER_PAGE_SIZE : null,
           after: before ? null : after,
           before,
-          query: pageQuery,
+          query: buildArticleSearchQuery({ search, blogId, status }),
           sortKey,
           reverse,
         },
-      },
-    );
-
-    const responseJson: any = await response.json();
-    if (responseJson.errors?.length) {
-      throw new Error(responseJson.errors.map((error: any) => error.message).join("; "));
+      });
+      const payload: any = await response.json();
+      if (payload.errors?.length) throw new Error(payload.errors.map((error: any) => error.message).join("; "));
+      nodes = payload.data?.articles?.nodes || [];
+      blogs = payload.data?.blogs?.nodes || [];
+      const info = payload.data?.articles?.pageInfo || {};
+      pagination = { ...pagination, hasNextPage: Boolean(info.hasNextPage), hasPreviousPage: Boolean(info.hasPreviousPage), startCursor: info.startCursor || null, endCursor: info.endCursor || null };
     }
-
-    const articlesConnection = responseJson.data?.articles;
-    articleEdges = articlesConnection?.edges || [];
-    pageInfo = articlesConnection?.pageInfo || pageInfo;
-    blogs = responseJson.data?.blogs?.nodes || [];
   } catch (error) {
-    console.error("[blogs] Failed to load paginated articles from Shopify:", error);
+    console.error("[blogs] Failed to load articles from Shopify:", error);
     shopifyError = "Failed to load articles from Shopify.";
   }
 
-  const articles = articleEdges.map(({ node: article }: any) => ({
-      id: article.id,
-      title: article.title,
-      handle: article.handle,
-      tags: article.tags || [],
-      publishedAt: article.publishedAt,
-      updatedAt: article.updatedAt,
-      image: article.image?.url || null,
-      imageAlt: article.image?.altText || "",
-      blogId: article.blog?.id || "",
-      blogTitle: article.blog?.title || "Default",
-    }));
-  const articleIds = articles.map((article) => article.id);
-
-  let embedCounts: any[] = [];
-  let seoData: any[] = [];
-  let clickCounts: any[] = [];
-  let articleProducts: any[] = [];
-  let purchaseCounts: any[] = [];
-
-  if (articleIds.length > 0) {
-    [embedCounts, seoData, clickCounts, articleProducts, purchaseCounts] = await Promise.all([
-      prisma.articleProduct.groupBy({
-        by: ["articleId"],
-        where: { shop, articleId: { in: articleIds }, isActive: true },
-        _count: { productId: true },
-      }),
-      prisma.articleSEO.findMany({
-        where: { shop, articleId: { in: articleIds } },
-        select: { articleId: true, seoScore: true, baseSeoScore: true },
-      }),
-      prisma.widgetEvent.groupBy({
-        by: ["articleId"],
-        where: { shop, articleId: { in: articleIds }, eventType: "click" },
-        _count: { id: true },
-      }),
-      prisma.articleProduct.findMany({
-        where: { shop, articleId: { in: articleIds }, isActive: true },
-        select: { articleId: true, productId: true, productPrice: true },
-      }),
-      prisma.widgetEvent.groupBy({
-        by: ["articleId", "productId"],
-        where: { shop, articleId: { in: articleIds }, eventType: { in: ["purchase", "order"] } },
-        _count: { id: true },
-      }),
-    ]);
+  // Page metrics: same aggregates and currency as Insights, last 30 days.
+  const articleIds = nodes.map((node) => node.id as string);
+  const numericIds = articleIds.map(getNumericShopifyId);
+  const [productCounts, seoRows, dailyRows, linkedProducts] = articleIds.length
+    ? await Promise.all([
+        prisma.articleProduct.groupBy({ by: ["articleId"], where: { shop, articleId: { in: [...articleIds, ...numericIds] }, isActive: true }, _count: { productId: true } }),
+        prisma.articleSEO.findMany({ where: { shop, articleId: { in: articleIds } }, select: { articleId: true, seoScore: true, lastAnalyzedAt: true } }),
+        prisma.analyticsDaily.findMany({ where: { shop, date: { gte: metricsStart }, articleId: { in: [...articleIds, ...numericIds] } } }),
+        loadLinkedProducts(shop),
+      ])
+    : [[], [], [], []];
+  const productCountMap = new Map<string, number>();
+  for (const row of productCounts) {
+    const id = canonicalArticleId(row.articleId);
+    productCountMap.set(id, (productCountMap.get(id) || 0) + row._count.productId);
   }
-
-  const embedCountMap = new Map(
-    embedCounts.map((ec) => [ec.articleId, ec._count.productId]),
+  const seoMap = new Map(seoRows.map((row) => [row.articleId, row.lastAnalyzedAt ? row.seoScore : null]));
+  const metrics = groupRows(
+    dailyRows.map((row) => ({ ...row, articleId: canonicalArticleId(row.articleId), revenue: Number(row.revenue) })),
+    (row) => row.articleId,
+    locale.currencyCode,
+    priceLookup(linkedProducts),
   );
 
-  const seoMap = new Map(
-    seoData.map((seo) => [
-      seo.articleId,
-      {
-        onPageScore: seo.baseSeoScore > 0 ? seo.baseSeoScore : seo.seoScore,
-        siteAdjustedScore: seo.seoScore,
-      },
-    ]),
-  );
-
-  const clickMap = new Map(clickCounts.map((c) => [c.articleId, c._count.id]));
-
-  const priceMap = new Map<string, number>();
-  articleProducts.forEach(ap => {
-    priceMap.set(`${ap.articleId}_${ap.productId}`, parseMoney(ap.productPrice || "0"));
+  const articles = nodes.map((article) => {
+    const postMetrics = metrics.get(article.id);
+    return {
+      id: article.id as string,
+      title: article.title as string,
+      handle: article.handle as string,
+      publishedAt: article.publishedAt as string | null,
+      updatedAt: article.updatedAt as string | null,
+      image: article.image?.url || null,
+      blogTitle: article.blog?.title || "Default",
+      productCount: productCountMap.get(article.id) || 0,
+      seoScore: seoMap.has(article.id) ? seoMap.get(article.id)! : null,
+      readers: postMetrics?.views || 0,
+      clicks: postMetrics?.clicks || 0,
+      revenue: postMetrics?.revenue || 0,
+    };
   });
-
-  const revenueMap = new Map<string, number>();
-  purchaseCounts.forEach(pc => {
-    const key = `${pc.articleId}_${pc.productId}`;
-    const price = priceMap.get(key) || 0;
-    const rev = price * pc._count.id;
-    const existingRev = revenueMap.get(pc.articleId) || 0;
-    revenueMap.set(pc.articleId, existingRev + rev);
-  });
-
-  const finalArticles = articles.map((article) => ({
-    ...article,
-    productCount: embedCountMap.get(article.id) || 0,
-    seoScore: seoMap.get(article.id)?.onPageScore ?? null,
-    siteAdjustedScore: seoMap.get(article.id)?.siteAdjustedScore ?? null,
-    clicks: clickMap.get(article.id) || 0,
-    revenue: revenueMap.get(article.id) || 0,
-  }));
-  const tabCounts = buildTabCounts(finalArticles);
-  const visibleArticles = finalArticles.filter((article) => articleMatchesTab(article, status));
-
-  const blogChoices = blogs.map((blog) => ({
-    id: blog.id,
-    title: blog.title,
-    handle: blog.handle,
-  }));
 
   return {
-    articles: visibleArticles,
-    blogs: blogChoices,
-    tabCounts,
-    filters: {
-      search: search || "",
-      blogId: blogId || "all",
-      status,
-      sort,
+    articles,
+    blogs: blogs.map((blog) => ({ id: blog.id, title: blog.title, handle: blog.handle })),
+    tabCounts: {
+      needsSeo: dataTabs.lists.needs_seo.length,
+      noProducts: dataTabs.lists.no_products.length,
+      mostRead: dataTabs.lists.most_read.length,
     },
-    pagination: {
-      pageSize: BLOG_MANAGER_PAGE_SIZE,
-      hasNextPage: pageInfo.hasNextPage,
-      hasPreviousPage: pageInfo.hasPreviousPage,
-      startCursor: pageInfo.startCursor,
-      endCursor: pageInfo.endCursor,
-    },
+    filters: { search: search || "", blogId: blogId || "all", status, sort },
+    pagination: { ...pagination, pageSize: BLOG_MANAGER_PAGE_SIZE },
+    currency: locale.currencyCode,
+    metricsWindowDays: METRICS_WINDOW_DAYS,
+    markersMigrated: Boolean(config?.markersMigratedAt),
     error: shopifyError,
     shop,
     canBulkReview: limits.canBulkReview,
   };
 };
 
+/** Runs Shopify mutations a few at a time and reports per-article failures. */
+async function runForArticles(
+  ids: string[],
+  run: (id: string) => Promise<string | null>,
+  concurrency = 4,
+) {
+  const failed: Array<{ id: string; error: string }> = [];
+  const succeeded: string[] = [];
+  for (let index = 0; index < ids.length; index += concurrency) {
+    const results = await Promise.all(ids.slice(index, index + concurrency).map(async (id) => {
+      try {
+        return { id, error: await run(id) };
+      } catch (error) {
+        return { id, error: error instanceof Error ? error.message : "Request failed" };
+      }
+    }));
+    for (const result of results) {
+      if (result.error) failed.push({ id: result.id, error: result.error });
+      else succeeded.push(result.id);
+    }
+  }
+  return { succeeded, failed };
+}
+
+function userErrorMessage(payload: any, key: string) {
+  const errors = [...(payload.errors || []), ...(payload.data?.[key]?.userErrors || [])];
+  return errors.length ? String(errors[0].message || "Shopify rejected the change") : null;
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
   const { limits, planKey } = await getActivePlanAndLimits(billing, shop);
   const formData = await request.formData();
-  
   const intent = formData.get("intent");
 
   if (intent === "bulk_draft" || intent === "bulk_publish") {
-    const idsJson = formData.get("ids") as string;
-    if (!idsJson) return json({ error: "No ids provided" }, { status: 400 });
-    const ids = parseArticleIds(idsJson);
-    
-    for (const id of ids) {
-      await admin.graphql(
-        `#graphql
-        mutation UpdateArticle($id: ID!, $article: ArticleUpdateInput!) {
-          articleUpdate(id: $id, article: $article) {
-            article { id }
-          }
-        }`,
-        {
-          variables: {
-            id,
-            article: { isPublished: intent === "bulk_publish" },
-          },
-        }
-      );
-    }
-    return json({ success: true, count: ids.length });
+    const ids = parseArticleIds(String(formData.get("ids") || ""));
+    const result = await runForArticles(ids, async (id) => {
+      const response = await admin.graphql(`#graphql
+        mutation BulkPublishArticle($id: ID!, $article: ArticleUpdateInput!) {
+          articleUpdate(id: $id, article: $article) { article { id } userErrors { field message } }
+        }`, { variables: { id, article: { isPublished: intent === "bulk_publish" } } });
+      return userErrorMessage(await response.json(), "articleUpdate");
+    });
+    return json({ intent, updated: result.succeeded.length, failed: result.failed });
   }
 
   if (intent === "bulk_delete") {
-    const idsJson = formData.get("ids") as string;
-    if (!idsJson) return json({ error: "No ids provided" }, { status: 400 });
-    const ids = parseArticleIds(idsJson);
-    
-    for (const id of ids) {
-      await admin.graphql(
-        `#graphql
-        mutation DeleteArticle($id: ID!) {
-          articleDelete(id: $id) {
-            deletedArticleId
-          }
-        }`,
-        {
-          variables: { id },
-        }
-      );
+    const ids = parseArticleIds(String(formData.get("ids") || ""));
+    const result = await runForArticles(ids, async (id) => {
+      const response = await admin.graphql(`#graphql
+        mutation DeleteArticle($id: ID!) { articleDelete(id: $id) { deletedArticleId userErrors { field message } } }`, { variables: { id } });
+      return userErrorMessage(await response.json(), "articleDelete");
+    });
+    if (result.succeeded.length) {
+      // App data for deleted posts (both stored id formats). Analytics history is kept.
+      const deletedIds = [...result.succeeded, ...result.succeeded.map(getNumericShopifyId)];
+      await prisma.$transaction([
+        prisma.articleProduct.deleteMany({ where: { shop, articleId: { in: deletedIds } } }),
+        prisma.articleSEO.deleteMany({ where: { shop, articleId: { in: deletedIds } } }),
+      ]);
     }
-    return json({ success: true, count: ids.length });
+    return json({ intent, deleted: result.succeeded.length, failed: result.failed });
+  }
+
+  if (intent === "convert_markers") {
+    try {
+      return json({ intent, ...(await convertLegacyMarkers(admin, shop)) });
+    } catch (error) {
+      return json({ intent, error: error instanceof Error ? error.message : "Could not update placeholders." }, { status: 500 });
+    }
   }
 
   if (intent === "link_products") {
@@ -452,40 +397,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       for (let i = 0; i < products.length; i++) {
         const product = products[i];
-        await tx.articleProduct.upsert({
-        where: {
-          shop_articleId_blockId_productId: {
-            shop,
-            articleId,
-            blockId: "default",
-            productId: product.id,
-          },
-        },
-        update: {
-          position: i,
-          isActive: true,
-          articleTitle: verifiedArticle.title,
-          articleHandle: verifiedArticle.handle,
-          blogId: verifiedArticle.blog?.id || blogId,
-          productTitle: product.title,
-          productHandle: product.handle,
-          productImage: product.featuredImage?.url || "",
-          productPrice: product.priceRangeV2?.minVariantPrice?.amount || "0",
-        },
-        create: {
-          shop,
-          articleId,
+        const data = {
           articleTitle: verifiedArticle.title || articleTitle,
           articleHandle: verifiedArticle.handle || articleHandle,
           blogId: verifiedArticle.blog?.id || blogId,
-          blockId: "default",
-          productId: product.id,
           productTitle: product.title,
           productHandle: product.handle,
           productImage: product.featuredImage?.url || "",
           productPrice: product.priceRangeV2?.minVariantPrice?.amount || "0",
           position: i,
-        },
+        };
+        await tx.articleProduct.upsert({
+          where: { shop_articleId_blockId_productId: { shop, articleId, blockId: "default", productId: product.id } },
+          update: { ...data, isActive: true },
+          create: { shop, articleId, blockId: "default", productId: product.id, ...data },
         });
       }
     });
@@ -516,128 +441,173 @@ function parseProductSelection(value: string) {
 }
 
 const TabBadge = ({ label, count, isActive, onClick }: { label: string, count?: number | string, isActive?: boolean, onClick?: () => void }) => (
-  <div onClick={onClick} style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: isActive ? '#EBEBEB' : 'transparent', cursor: 'pointer', display: 'flex', gap: '8px', alignItems: 'center' }}>
+  <div onClick={onClick} style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: isActive ? '#EBEBEB' : 'transparent', cursor: 'pointer', display: 'flex', gap: '8px', alignItems: 'center', whiteSpace: 'nowrap' }}>
     <Text as="span" variant="bodyMd" fontWeight={isActive ? 'semibold' : 'regular'}>{label}</Text>
     {count !== undefined ? <Text as="span" variant="bodySm" tone="subdued">{count}</Text> : null}
   </div>
 );
 
+type ActionResult = {
+  intent?: string;
+  updated?: number;
+  deleted?: number;
+  converted?: number;
+  scanned?: number;
+  done?: boolean;
+  failed?: Array<{ id: string; error: string } | string>;
+  error?: string;
+};
+
 export default function BlogManager() {
-  const { articles, blogs, tabCounts, filters, pagination, canBulkReview } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher();
+  const { articles, blogs, tabCounts, filters, pagination, canBulkReview, currency, metricsWindowDays, markersMigrated, error } = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<ActionResult>();
+  const markerFetcher = useFetcher<ActionResult>();
   const navigate = useNavigate();
+  const shopify = useAppBridge();
   const [searchParams] = useSearchParams();
-  
   const [searchValue, setSearchValue] = useState(filters.search);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const isDataTab = filters.status === "needs_seo" || filters.status === "no_products" || filters.status === "most_read";
 
   const getListUrl = useCallback(
     (updates: Record<string, string | null>) => {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.delete("after");
       nextParams.delete("before");
-
+      nextParams.delete("page");
       Object.entries(updates).forEach(([key, value]) => {
-        if (!value || value === "all" || (key === "sort" && value === "date_desc")) {
-          nextParams.delete(key);
-        } else {
-          nextParams.set(key, value);
-        }
+        if (!value || value === "all" || (key === "sort" && value === "date_desc")) nextParams.delete(key);
+        else nextParams.set(key, value);
       });
-
       const queryString = nextParams.toString();
       return `/app/blogs${queryString ? `?${queryString}` : ""}`;
     },
     [searchParams],
   );
 
-  const updateFilters = useCallback(
-    (updates: Record<string, string | null>) => {
-      navigate(getListUrl(updates));
-    },
-    [getListUrl, navigate],
-  );
+  const updateFilters = useCallback((updates: Record<string, string | null>) => navigate(getListUrl(updates)), [getListUrl, navigate]);
 
-  const goToCursor = useCallback(
-    (key: "after" | "before", cursor: string | null) => {
-      if (!cursor) return;
+  const goToPage = useCallback(
+    (direction: "next" | "previous") => {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.delete("after");
       nextParams.delete("before");
-      nextParams.set(key, cursor);
+      if (pagination.mode === "offset") {
+        nextParams.set("page", String(Math.max(1, pagination.page + (direction === "next" ? 1 : -1))));
+      } else {
+        const cursor = direction === "next" ? pagination.endCursor : pagination.startCursor;
+        if (!cursor) return;
+        nextParams.set(direction === "next" ? "after" : "before", cursor);
+      }
       const queryString = nextParams.toString();
       navigate(`/app/blogs${queryString ? `?${queryString}` : ""}`);
     },
-    [navigate, searchParams],
+    [navigate, pagination, searchParams],
   );
 
-  useEffect(() => {
-    setSearchValue(filters.search);
-  }, [filters.search]);
+  useEffect(() => { setSearchValue(filters.search); }, [filters.search]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      if (searchValue !== filters.search) {
-        updateFilters({ search: searchValue });
-      }
+      if (searchValue !== filters.search) updateFilters({ search: searchValue });
     }, 400);
-
     return () => window.clearTimeout(handle);
   }, [filters.search, searchValue, updateFilters]);
 
-  const blogOptions = [
-    { label: 'Blog', value: 'all' },
-    ...blogs.map((blog: any) => ({ label: blog.title, value: blog.id })),
-  ];
-  // Table selection state
-  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(articles as any);
+  // Bulk action results.
+  useEffect(() => {
+    const result = fetcher.data;
+    if (fetcher.state !== "idle" || !result) return;
+    const failed = result.failed || [];
+    if (result.error) shopify.toast.show(result.error, { isError: true });
+    else if (result.intent === "bulk_delete") shopify.toast.show(failed.length ? `${result.deleted} deleted, ${failed.length} failed` : `${result.deleted} post(s) deleted`, { isError: failed.length > 0 });
+    else if (result.intent === "bulk_publish" || result.intent === "bulk_draft") shopify.toast.show(failed.length ? `${result.updated} updated, ${failed.length} failed` : `${result.updated} post(s) updated`, { isError: failed.length > 0 });
+  }, [fetcher.state, fetcher.data, shopify]);
 
-  const selectedArticlesData = articles.filter((a: any) => selectedResources.includes(a.id));
-  const hasPublishedSelected = selectedArticlesData.some((a: any) => a.publishedAt);
-  const hasDraftSelected = selectedArticlesData.some((a: any) => !a.publishedAt);
+  const blogOptions = [{ label: 'All blogs', value: 'all' }, ...blogs.map((blog) => ({ label: blog.title, value: blog.id }))];
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(articles as any);
+  const selectedArticlesData = articles.filter((article) => selectedResources.includes(article.id));
+  const hasPublishedSelected = selectedArticlesData.some((article) => article.publishedAt);
+  const hasDraftSelected = selectedArticlesData.some((article) => !article.publishedAt);
+  const bulkFailures = (fetcher.state === "idle" && fetcher.data?.failed) || [];
+  const markerResult = markerFetcher.data;
+  const money = (value: number) => formatMoney(value, currency);
+
+  const submitBulk = (intent: string) => {
+    fetcher.submit({ intent, ids: JSON.stringify(selectedResources) }, { method: "POST" });
+    clearSelection();
+  };
 
   return (
     <Page fullWidth>
       <BlockStack gap="500">
         <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="posts" />
-        
-        {/* HEADER */}
+
         <InlineStack align="space-between" blockAlign="center">
           <BlockStack gap="100">
             <Text as="h1" variant="headingLg" fontWeight="bold">Blog posts</Text>
             <Text as="p" variant="bodyMd" tone="subdued">Manage and optimize all your blog posts in one place.</Text>
           </BlockStack>
-          <InlineStack gap="200">
-            <Button variant="primary" onClick={() => navigate("/app/blogs/new")}>Create post</Button>
-          </InlineStack>
+          <Button variant="primary" onClick={() => navigate("/app/blogs/new")}>Create post</Button>
         </InlineStack>
+
+        {error && <Banner tone="critical" title={error} />}
+
+        {!markersMigrated && !markerResult?.done && (
+          <Banner
+            tone="info"
+            title="Make product placeholders invisible to search engines"
+            action={{ content: markerResult && !markerResult.done ? "Continue" : "Update existing posts", loading: markerFetcher.state !== "idle", onAction: () => markerFetcher.submit({ intent: "convert_markers" }, { method: "POST" }) }}
+          >
+            <p>
+              Older posts store product and table-of-contents placeholders as text such as [[SBS_PRODUCTS]], which can appear in search results, RSS feeds and excerpts.
+              This updates them to invisible placeholders. Only the placeholders change; posts you save in the app are updated automatically.
+            </p>
+            {markerResult?.error && <p>{markerResult.error}</p>}
+            {markerResult && !markerResult.error && <p>Updated {markerResult.converted} of {markerResult.scanned} scanned posts{markerResult.done ? "." : ". Run it again to continue."}</p>}
+            {(markerResult?.failed || []).slice(0, 3).map((failure) => <p key={String(failure)}>{String(failure)}</p>)}
+          </Banner>
+        )}
+        {markerResult?.done && <Banner tone="success" title={`Placeholders updated in ${markerResult.converted} post(s).`} />}
+
+        {bulkFailures.length > 0 && (
+          <Banner tone="warning" title="Some posts could not be changed">
+            {bulkFailures.slice(0, 5).map((failure) => typeof failure === "string" ? <p key={failure}>{failure}</p> : <p key={failure.id}>{articles.find((article) => article.id === failure.id)?.title || failure.id}: {failure.error}</p>)}
+          </Banner>
+        )}
 
         <Card padding="0">
           <BlockStack gap="0">
-            {/* TABS & FILTERS COMBINED */}
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #EBEBEB', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-              
-              {/* TABS (Left) */}
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', flexWrap: 'nowrap' }}>
-                <TabBadge label="All" count={tabCounts.all} isActive={filters.status === 'all'} onClick={() => updateFilters({ status: 'all' })} />
-                <TabBadge label="Published" count={tabCounts.published} isActive={filters.status === 'published'} onClick={() => updateFilters({ status: 'published' })} />
-                <TabBadge label="Draft" count={tabCounts.draft} isActive={filters.status === 'draft'} onClick={() => updateFilters({ status: 'draft' })} />
+                <TabBadge label="All" isActive={filters.status === 'all'} onClick={() => updateFilters({ status: 'all' })} />
+                <TabBadge label="Published" isActive={filters.status === 'published'} onClick={() => updateFilters({ status: 'published' })} />
+                <TabBadge label="Draft" isActive={filters.status === 'draft'} onClick={() => updateFilters({ status: 'draft' })} />
                 <TabBadge label="Needs SEO" count={tabCounts.needsSeo} isActive={filters.status === 'needs_seo'} onClick={() => updateFilters({ status: 'needs_seo' })} />
-                <TabBadge label="No products linked" count={tabCounts.noProducts} isActive={filters.status === 'no_products'} onClick={() => updateFilters({ status: 'no_products' })} />
-                <TabBadge label="High traffic" count={tabCounts.highTraffic} isActive={filters.status === 'high_traffic'} onClick={() => updateFilters({ status: 'high_traffic' })} />
+                <TabBadge label="No products" count={tabCounts.noProducts} isActive={filters.status === 'no_products'} onClick={() => updateFilters({ status: 'no_products' })} />
+                <TabBadge label={`Most read (${metricsWindowDays}d)`} count={tabCounts.mostRead} isActive={filters.status === 'most_read'} onClick={() => updateFilters({ status: 'most_read' })} />
               </div>
-
-              {/* FILTERS (Right) */}
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ width: '250px' }}>
                   <TextField labelHidden label="Search" prefix={<Icon source={SearchIcon} tone="subdued" />} placeholder="Search posts" value={searchValue} onChange={setSearchValue} autoComplete="off" />
                 </div>
                 <Select labelHidden label="Blog" options={blogOptions} value={filters.blogId} onChange={(value) => updateFilters({ blog: value })} />
-                <Select labelHidden label="Sort" options={[{label: 'Newest', value: 'date_desc'}, {label: 'Oldest', value: 'date_asc'}, {label: 'A-Z', value: 'title_asc'}, {label: 'Z-A', value: 'title_desc'}]} value={filters.sort} onChange={(value) => updateFilters({ sort: value })} />
+                {!isDataTab && (
+                  <Select labelHidden label="Sort" options={[{ label: 'Newest', value: 'date_desc' }, { label: 'Oldest', value: 'date_asc' }, { label: 'A-Z', value: 'title_asc' }, { label: 'Z-A', value: 'title_desc' }]} value={filters.sort} onChange={(value) => updateFilters({ sort: value })} />
+                )}
               </div>
-
             </div>
+            {isDataTab && (
+              <div style={{ padding: '8px 16px', borderBottom: '1px solid #EBEBEB' }}>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {filters.status === "needs_seo" && `Scanned posts with an SEO score below ${NEEDS_SEO_BELOW}, lowest first.`}
+                  {filters.status === "no_products" && "Scanned posts without linked products, most recently updated first."}
+                  {filters.status === "most_read" && `Posts by readers in the last ${metricsWindowDays} days.`}
+                  {" "}Run an SEO scan to include new posts.
+                </Text>
+              </div>
+            )}
 
-            {/* TABLE */}
             <IndexTable
               resourceName={{ singular: 'post', plural: 'posts' }}
               itemCount={articles.length}
@@ -645,116 +615,87 @@ export default function BlogManager() {
               onSelectionChange={handleSelectionChange}
               pagination={pagination.hasNextPage || pagination.hasPreviousPage ? {
                 hasNext: pagination.hasNextPage,
-                onNext: () => goToCursor("after", pagination.endCursor),
+                onNext: () => goToPage("next"),
                 hasPrevious: pagination.hasPreviousPage,
-                onPrevious: () => goToCursor("before", pagination.startCursor),
-                label: `${articles.length} posts loaded - ${pagination.pageSize} per page`
+                onPrevious: () => goToPage("previous"),
+                label: pagination.mode === "offset" && pagination.total !== null
+                  ? `Page ${pagination.page} of ${Math.max(1, Math.ceil(pagination.total / pagination.pageSize))} · ${pagination.total} posts`
+                  : `${articles.length} posts · ${pagination.pageSize} per page`,
               } : undefined}
               promotedBulkActions={[
                 ...(canBulkReview ? [{
                   content: 'Bulk edit',
-                  onAction: () => {
-                    const ids = selectedResources.map(id => id.split('/').pop()).join(',');
-                    navigate(`/app/blogs/bulk_edit?ids=${ids}`);
-                  },
+                  onAction: () => navigate(`/app/blogs/bulk_edit?ids=${selectedResources.map((id) => id.split('/').pop()).join(',')}`),
                 }] : []),
-                ...(hasPublishedSelected ? [{
-                  content: 'Set as draft',
-                  onAction: () => {
-                    fetcher.submit({ intent: "bulk_draft", ids: JSON.stringify(selectedResources) }, { method: "POST" });
-                    clearSelection();
-                  },
-                }] : []),
-                ...(hasDraftSelected ? [{
-                  content: 'Publish posts',
-                  onAction: () => {
-                    fetcher.submit({ intent: "bulk_publish", ids: JSON.stringify(selectedResources) }, { method: "POST" });
-                    clearSelection();
-                  },
-                }] : []),
+                ...(hasPublishedSelected ? [{ content: 'Set as draft', onAction: () => submitBulk("bulk_draft") }] : []),
+                ...(hasDraftSelected ? [{ content: 'Publish posts', onAction: () => submitBulk("bulk_publish") }] : []),
               ]}
-              bulkActions={[
-                {
-                  content: 'Delete posts',
-                  onAction: () => {
-                    if (confirm("Are you sure you want to delete the selected posts?")) {
-                      fetcher.submit({ intent: "bulk_delete", ids: JSON.stringify(selectedResources) }, { method: "POST" });
-                      clearSelection();
-                    }
-                  },
-                },
-              ]}
+              bulkActions={[{ content: 'Delete posts', onAction: () => setDeleteOpen(true) }]}
               headings={[
                 { title: 'Post title' },
                 { title: 'Status' },
-                { title: 'On-page score' },
-                { title: 'Products linked' },
-                { title: 'Clicks' },
-                { title: 'Revenue' },
+                { title: 'SEO score' },
+                { title: 'Products' },
+                { title: `Readers (${metricsWindowDays}d)`, alignment: 'end' },
+                { title: 'Clicks', alignment: 'end' },
+                { title: 'Revenue', alignment: 'end' },
                 { title: 'Updated' },
-                { title: 'Actions', alignment: 'end' }
+                { title: '', alignment: 'end' },
               ]}
-              selectable={true}
+              selectable
             >
-              {articles.map((post: any, index: number) => {
-                const seoScore = post.seoScore;
-                return (
-                <IndexTable.Row
-                  id={post.id}
-                  key={post.id}
-                  position={index}
-                  selected={selectedResources.includes(post.id)}
-                  onClick={() => navigate(`/app/blogs/${encodeURIComponent(post.id)}`)}
-                >
+              {articles.map((post, index) => (
+                <IndexTable.Row id={post.id} key={post.id} position={index} selected={selectedResources.includes(post.id)} onClick={() => navigate(`/app/blogs/${encodeURIComponent(post.id)}`)}>
                   <IndexTable.Cell>
-                    <Text as="span" variant="bodyMd" fontWeight="semibold">{post.title}</Text>
+                    <BlockStack gap="050">
+                      <Text as="span" variant="bodyMd" fontWeight="semibold">{post.title}</Text>
+                      <Text as="span" variant="bodySm" tone="subdued">{post.blogTitle}</Text>
+                    </BlockStack>
                   </IndexTable.Cell>
+                  <IndexTable.Cell>{post.publishedAt ? <Badge tone="success">Published</Badge> : <Badge tone="attention">Draft</Badge>}</IndexTable.Cell>
                   <IndexTable.Cell>
-                    {post.publishedAt ? (
-                      <Badge tone="success">Published</Badge>
-                    ) : (
-                      <Badge tone="attention">Draft</Badge>
-                    )}
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    {seoScore !== null && seoScore !== undefined ? (
+                    {post.seoScore !== null ? (
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        <Text as="span" variant="bodyMd" fontWeight="semibold">{seoScore}</Text>
-                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: seoScore >= 80 ? '#29845A' : seoScore >= 60 ? '#B98900' : '#D82C0D' }} />
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">{post.seoScore}</Text>
+                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: post.seoScore >= 80 ? '#29845A' : post.seoScore >= 60 ? '#B98900' : '#D82C0D' }} />
                       </div>
-                    ) : (
-                      <Text as="span" variant="bodyMd" fontWeight="semibold" tone="subdued">-</Text>
-                    )}
+                    ) : <Text as="span" tone="subdued">Not scanned</Text>}
+                  </IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" variant="bodyMd">{post.productCount}</Text></IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" alignment="end" numeric>{post.readers.toLocaleString()}</Text></IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" alignment="end" numeric>{post.clicks.toLocaleString()}</Text></IndexTable.Cell>
+                  <IndexTable.Cell><Text as="span" alignment="end" numeric>{money(post.revenue)}</Text></IndexTable.Cell>
+                  <IndexTable.Cell>
+                    <Text as="span" variant="bodyMd" tone="subdued">{post.updatedAt ? new Date(post.updatedAt).toLocaleDateString() : '-'}</Text>
                   </IndexTable.Cell>
                   <IndexTable.Cell>
-                    <Text as="span" variant="bodyMd">{post.productCount}</Text>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <Text as="span" variant="bodyMd">{post.clicks || 0}</Text>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <Text as="span" variant="bodyMd">{formatMoney(post.revenue || 0)}</Text>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <Text as="span" variant="bodyMd" tone="subdued">
-                      {post.publishedAt ? new Date(post.publishedAt).toLocaleDateString('vi-VN') : '-'}
-                    </Text>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <InlineStack gap="200" wrap={false} align="end">
-                      <div style={{ cursor: 'pointer', padding: '6px', borderRadius: '4px' }} onClick={(e) => { e.stopPropagation(); navigate(`/app/blogs/${encodeURIComponent(post.id)}`); }}>
+                    <InlineStack align="end">
+                      <div style={{ cursor: 'pointer', padding: '6px', borderRadius: '4px' }} onClick={(event) => { event.stopPropagation(); navigate(`/app/blogs/${encodeURIComponent(post.id)}`); }}>
                         <Icon source={EditIcon} tone="base" />
                       </div>
                     </InlineStack>
                   </IndexTable.Cell>
                 </IndexTable.Row>
-                );
-              })}
+              ))}
             </IndexTable>
           </BlockStack>
         </Card>
       </BlockStack>
 
+      <Modal
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        title={`Delete ${selectedResources.length} post(s)?`}
+        primaryAction={{ content: "Delete", destructive: true, loading: fetcher.state !== "idle", onAction: () => { submitBulk("bulk_delete"); setDeleteOpen(false); } }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setDeleteOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="200">
+            <Text as="p">This permanently deletes the posts from Shopify. It cannot be undone.</Text>
+            <Text as="p" tone="subdued">Linked products and SEO data for these posts are removed from the app. Analytics history is kept.</Text>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

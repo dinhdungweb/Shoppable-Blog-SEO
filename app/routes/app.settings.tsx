@@ -36,6 +36,7 @@ import { ATTRIBUTION_WINDOW_OPTIONS } from "../analytics-core";
 import { isNineRouterConfigured } from "../ai-seo.server";
 import {
   BRAND_TONES,
+  CONTENT_LANGUAGES,
   DEFAULT_CONTENT_STRUCTURE,
   DEFAULT_META_DESCRIPTION_TEMPLATE,
   DEFAULT_META_TITLE_TEMPLATE,
@@ -151,6 +152,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       utmRules: pickSettingChoice(formData, "utmRules", ["Auto-append to product links", "Do not append"], "Auto-append to product links"),
       enableConversionTracking: formData.get("enableConversionTracking") === "true",
       attributionWindow: pickSettingChoice(formData, "attributionWindow", ATTRIBUTION_WINDOW_OPTIONS, "7 days"),
+      language: pickSettingChoice(formData, "language", CONTENT_LANGUAGES, "English"),
       brandTone: pickSettingChoice(formData, "brandTone", BRAND_TONES, "Professional"),
       forbiddenWords: parseForbiddenWords(String(formData.get("forbiddenWords") || "")).join(", "),
       defaultContentStructure: cleanSettingText(formData.get("defaultContentStructure"), 300, DEFAULT_CONTENT_STRUCTURE),
@@ -933,7 +935,14 @@ export default function Settings() {
                     <Text as="h2" variant="headingMd" fontWeight="bold">AI writing rules</Text>
                     <Text as="p" variant="bodyMd" tone="subdued">Applied to every AI generation in the app: post drafts, rewrites, SEO fixes, FAQs, briefs, catalog copy, alt text and internal link anchors.</Text>
                   </BlockStack>
-                  <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+                  <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
+                    <Select
+                      label="Content language"
+                      options={CONTENT_LANGUAGES.map((language) => ({ label: language, value: language }))}
+                      value={CONTENT_LANGUAGES.includes(formState.language as (typeof CONTENT_LANGUAGES)[number]) ? formState.language : 'English'}
+                      onChange={(value) => handleChange('language', value)}
+                      helpText="For new posts and drafts. Rewrites keep the post's existing language."
+                    />
                     <Select
                       label="Brand tone"
                       options={BRAND_TONES.map((tone) => ({ label: tone, value: tone }))}

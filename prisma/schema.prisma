@@ -116,6 +116,9 @@ model ShopConfig {
   timezone     String @default("")
   currencyCode String @default("")
 
+  /// Set once legacy [[SBS_...]] text placeholders in existing articles were converted.
+  markersMigratedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

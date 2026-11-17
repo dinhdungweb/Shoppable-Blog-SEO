@@ -46,6 +46,7 @@ import {
   WorkspaceTabs,
 } from "../components/WorkspaceTabs";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
+import { isAiQuotaExceededError, runWithAiUsage } from "../ai-usage.server";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 type SerializedBrief = {
@@ -57,6 +58,8 @@ type SerializedBrief = {
   status: string;
   brief: AiContentBrief;
   hasDraft: boolean;
+  /** Post created from this brief, once saved in the editor. */
+  articleId: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -72,7 +75,7 @@ type ActionResponse = {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session, billing } = await authenticate.admin(request);
   const { limits, planKey } = await getActivePlanAndLimits(billing, session.shop);
-  const canUse = limits.canInternalLinking;
+  const canUse = limits.canContentBriefs;
   if (!canUse) {
     return json({
       canUse,
@@ -112,9 +115,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Apply Settings → SEO & AI rules to every AI generation in this request.
   enterAiWritingRules(await loadShopAiWritingRules(session.shop));
   const { limits } = await getActivePlanAndLimits(billing, session.shop);
-  if (!limits.canInternalLinking) {
+  if (!limits.canContentBriefs) {
     return json({ error: "AI Content Brief is available on Pro and Growth plans." }, { status: 403 });
   }
+  // Every AI generation here counts toward the plan's monthly AI allowance.
+  const withQuota = <T,>(generate: () => Promise<T>) =>
+    runWithAiUsage({ shop: session.shop, limit: limits.aiRequestsPerMonth }, generate).then(({ result }) => result);
 
   const formData = await request.formData();
   const intent = clean(formData.get("intent"), 50);
@@ -131,14 +137,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     try {
       const context = await loadBriefContext(admin, session.shop, `${title} ${seedKeyword}`, sourceArticleId);
       const source = context.articles.find((article) => article.id === sourceArticleId);
-      const brief = await generateAiContentBrief({
+      const brief = await withQuota(() => generateAiContentBrief({
         title,
         seedKeyword,
         audience,
         objective,
         sourceArticleId,
         context,
-      });
+      }));
       const saved = await prisma.contentBrief.create({
         data: {
           shop: session.shop,
@@ -152,6 +158,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ success: true, brief: serializeBrief(saved) });
     } catch (error) {
       console.error("AI content brief generation failed", error instanceof Error ? error.message : String(error));
+      if (isAiQuotaExceededError(error)) return json({ error: quotaMessage(error) }, { status: 429 });
       return json({ error: getPublicNineRouterErrorMessage(error, "AI could not create the content brief. Please try again.") });
     }
   }
@@ -172,7 +179,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         `${current.title} ${current.primaryKeyword}`,
         saved.sourceArticleId,
       );
-      const regenerated = await generateAiContentBrief({
+      const regenerated = await withQuota(() => generateAiContentBrief({
         title: current.title,
         seedKeyword: current.primaryKeyword,
         audience: current.audience,
@@ -181,7 +188,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         context,
         existingBrief: current,
         regenerateSection: section,
-      });
+      }));
       const brief = mergeBriefSection(current, regenerated, section);
       const updated = await prisma.contentBrief.update({
         where: { id: saved.id },
@@ -196,6 +203,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ success: true, brief: serializeBrief(updated) });
     } catch (error) {
       console.error("AI content brief section regeneration failed", error instanceof Error ? error.message : String(error));
+      if (isAiQuotaExceededError(error)) return json({ error: quotaMessage(error) }, { status: 429 });
       return json({ error: getPublicNineRouterErrorMessage(error, "AI could not regenerate this brief section. Please try again.") });
     }
   }
@@ -208,7 +216,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const brief = saved.brief as unknown as AiContentBrief;
 
     try {
-      const generatedDraft = await generateAiBlogDraft({
+      const generatedDraft = await withQuota(() => generateAiBlogDraft({
         mode: "draft",
         title: brief.title,
         body: "",
@@ -216,7 +224,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         primaryKeyword: brief.primaryKeyword,
         secondaryKeywords: brief.secondaryKeywords,
         instruction: contentBriefDraftInstruction(brief),
-      });
+      }));
       const draft = {
         ...generatedDraft,
         bodyHtml: prepareContentBriefProductBody(
@@ -239,6 +247,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     } catch (error) {
       console.error("Content brief draft generation failed", error instanceof Error ? error.message : String(error));
+      if (isAiQuotaExceededError(error)) return json({ error: quotaMessage(error) }, { status: 429 });
       return json({ error: getPublicNineRouterErrorMessage(error, "AI could not generate the article draft. Please try again.") });
     }
   }
@@ -370,7 +379,7 @@ function BriefWorkspace({ brief: saved, busy, activeSection, regenerate, generat
     <Card>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="start" gap="300">
-          <BlockStack gap="100"><Text as="h2" variant="headingLg">{brief.title}</Text><InlineStack gap="200"><Badge tone="success">{brief.searchIntent}</Badge><Badge tone="info">{brief.primaryKeyword || "Keyword pending"}</Badge>{saved.sourceArticleTitle && <Badge>{`Source: ${saved.sourceArticleTitle}`}</Badge>}</InlineStack></BlockStack>
+          <BlockStack gap="100"><Text as="h2" variant="headingLg">{brief.title}</Text><InlineStack gap="200"><Badge tone="success">{brief.searchIntent}</Badge><Badge tone="info">{brief.primaryKeyword || "Keyword pending"}</Badge>{saved.sourceArticleTitle && <Badge>{`Source: ${saved.sourceArticleTitle}`}</Badge>}{saved.articleId && <Badge tone="success">Written</Badge>}</InlineStack>{saved.articleId && <InlineStack><Button variant="plain" url={`/app/blogs/${encodeURIComponent(saved.articleId.split("/").pop() || saved.articleId)}`}>Open the post written from this brief</Button></InlineStack>}</BlockStack>
           <InlineStack gap="200"><Button size="micro" loading={busy && activeSection === "strategy"} disabled={busy} onClick={() => regenerate("strategy")}>Regenerate strategy</Button><Button disabled={busy} tone="critical" onClick={remove}>Delete</Button><Button variant="primary" loading={busy && !activeSection} disabled={busy} onClick={generateDraft}>{saved.hasDraft ? "Regenerate draft" : "Generate draft"}</Button></InlineStack>
         </InlineStack>
         <Divider />
@@ -550,9 +559,14 @@ function serializeBrief(row: {
     status: row.status,
     brief: row.brief as AiContentBrief,
     hasDraft: Boolean(row.draft),
+    articleId: typeof (row.draft as { articleId?: unknown } | null)?.articleId === "string" ? String((row.draft as { articleId: string }).articleId) : "",
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function quotaMessage(error: { status: { limit: number | null; resetsAt: string } }) {
+  return `You have used all ${error.status.limit} AI generations included this month. They reset on ${new Date(error.status.resetsAt).toLocaleDateString()}; upgrade for more.`;
 }
 
 function clean(value: FormDataEntryValue | null, max: number) {

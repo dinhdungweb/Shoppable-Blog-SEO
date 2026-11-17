@@ -15,7 +15,14 @@ export const META_TEMPLATE_TOKENS = ["{{title}}", "{{blog}}", "{{store}}", "{{ex
 const MAX_FORBIDDEN_WORDS = 50;
 const MAX_FORBIDDEN_WORD_LENGTH = 60;
 
+export const CONTENT_LANGUAGES = [
+  "English", "Vietnamese", "Spanish", "French", "German", "Italian", "Portuguese", "Dutch",
+  "Polish", "Swedish", "Japanese", "Korean", "Chinese (Simplified)", "Chinese (Traditional)", "Thai", "Indonesian",
+] as const;
+
 export type AiWritingRules = {
+  /** Language for new content; existing text keeps its own language. */
+  language: string;
   brandTone: string;
   forbiddenWords: string[];
   contentStructure: string;
@@ -36,12 +43,14 @@ export function parseForbiddenWords(value: string | null | undefined): string[] 
 }
 
 export function normalizeAiWritingRules(config: {
+  language?: string | null;
   brandTone?: string | null;
   forbiddenWords?: string | null;
   defaultContentStructure?: string | null;
 }): AiWritingRules {
   const tone = BRAND_TONES.find((item) => item === config.brandTone) || "Professional";
   return {
+    language: CONTENT_LANGUAGES.find((item) => item === config.language) || "English",
     brandTone: tone,
     forbiddenWords: parseForbiddenWords(config.forbiddenWords),
     contentStructure: String(config.defaultContentStructure || "").replace(/\s+/g, " ").trim().slice(0, 300) || DEFAULT_CONTENT_STRUCTURE,
@@ -51,6 +60,7 @@ export function normalizeAiWritingRules(config: {
 export function buildAiWritingRulesPrompt(rules: AiWritingRules): string {
   const lines = [
     "Merchant writing rules (apply to all customer-facing text you write):",
+    `- Language: write new content in ${rules.language}. When improving or rewriting existing text, keep the language that text is already written in.`,
     `- Brand tone: ${rules.brandTone}.`,
   ];
   if (rules.forbiddenWords.length) {

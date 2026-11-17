@@ -576,7 +576,7 @@ function getHeadingTexts(body: string) {
 }
 
 function hasTableOfContents(body: string) {
-  return /\[\[SBS_TOC(?::[^\]]+)?\]\]/i.test(body) || /data-bp-content-nav=["']toc["']|class=["'][^"']*\bbp-toc\b/i.test(body);
+  return /\[\[SBS_TOC(?::[^\]]+)?\]\]/i.test(body) || /\bdata-sbs-toc\s*=/i.test(body) || /data-bp-content-nav=["']toc["']|class=["'][^"']*\bbp-toc\b/i.test(body);
 }
 
 function getBodyImageAltText(body: string) {

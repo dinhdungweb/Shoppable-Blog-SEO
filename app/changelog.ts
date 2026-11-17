@@ -10,6 +10,26 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.11.19",
+    date: "2026-11-19",
+    title: "A safer, more reliable post editor",
+    summary: "Your work is protected from accidental loss and overwrites, placeholders no longer leak into search results, and the post list filters every post.",
+    tags: ["New", "Improved", "Fixed"],
+    changes: [
+      { type: "Fixed", text: "Article HTML is sanitized before it is shown in the editor, so unsafe markup added elsewhere can no longer run inside the app." },
+      { type: "Fixed", text: "Product, table-of-contents and breadcrumb placeholders are saved as invisible elements, so text like [[SBS_PRODUCTS]] no longer appears in search results, RSS, excerpts or after the app is removed. Existing posts can be updated from the Posts page." },
+      { type: "New", text: "Unsaved changes are protected: Shopify's save bar asks before leaving, the browser warns before closing, and a local draft can be restored after a crash or accidental navigation." },
+      { type: "New", text: "If a post was changed in Shopify after you opened it, saving asks whether to overwrite or load the latest version instead of silently replacing it." },
+      { type: "Fixed", text: "SEO titles and descriptions are only stored when you customize them, so search listings follow later title and excerpt changes." },
+      { type: "Improved", text: "Needs SEO, No products and Most read tabs now cover all scanned posts with their own pagination, and the list shows readers, clicks and revenue for the last 30 days." },
+      { type: "Improved", text: "Bulk delete asks for confirmation in the app, reports posts that could not be changed, and removes the app's data for deleted posts." },
+      { type: "New", text: "Preview a post with its products, table of contents and breadcrumbs before publishing." },
+      { type: "New", text: "Choose the content language for AI-written posts in Settings › SEO & AI rules." },
+      { type: "Fixed", text: "AI content briefs and brief drafts now count toward the monthly AI allowance, and a brief links to the post written from it." },
+      { type: "Improved", text: "The editor's live SEO check runs when you pause typing, keeping long posts responsive." },
+    ],
+  },
+  {
     version: "2026.11.18",
     date: "2026-11-18",
     title: "Insights you can trust: real revenue and the full reader funnel",

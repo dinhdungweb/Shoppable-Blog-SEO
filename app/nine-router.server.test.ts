@@ -70,7 +70,7 @@ describe("9Router model options", () => {
 });
 
 describe("9Router merchant writing rules", () => {
-  const rules = { brandTone: "Luxury", forbiddenWords: ["cheap"], contentStructure: "Intro, Body" };
+  const rules = { language: "English", brandTone: "Luxury", forbiddenWords: ["cheap"], contentStructure: "Intro, Body" };
   const body = JSON.stringify({ messages: [{ role: "system", content: "Return JSON." }, { role: "user", content: "Write" }] });
 
   it("injects the active request's rules into the system prompt", async () => {
@@ -95,7 +95,7 @@ describe("9Router rules entered inside a route action", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
     vi.stubGlobal("fetch", fetchMock);
     const body = JSON.stringify({ messages: [{ role: "system", content: "S" }] });
-    const loadRules = async () => ({ brandTone: "Casual", forbiddenWords: [], contentStructure: "A" });
+    const loadRules = async () => ({ language: "English", brandTone: "Casual", forbiddenWords: [] as string[], contentStructure: "A" });
     const action = async () => {
       enterAiWritingRules(await loadRules());
       await new Promise((resolve) => setTimeout(resolve, 1));

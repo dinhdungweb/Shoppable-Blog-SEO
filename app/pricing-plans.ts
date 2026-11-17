@@ -16,6 +16,7 @@ export type PlanKey = "free" | "plus" | "pro" | "growth";
  * - analyticsWindowDays: how many past days are shown in analytics / dashboard.
  * - canContentNavigation: access to breadcrumbs and table of contents settings (Pro+).
  * - canInternalLinking: access to Internal Linking Assistant (Pro+).
+ * - canContentBriefs: access to AI Content Briefs (Pro+).
  * - canBulkReview: access to Bulk Review workflow (Growth only).
  * - canCustomCss: access to Custom CSS field in widget settings (Growth only).
  * - canContentDecay: access to Content Decay Monitor (Growth only).
@@ -36,6 +37,7 @@ export const PLAN_LIMITS = {
     canAutoSeoScan: false,
     canContentNavigation: false,
     canInternalLinking: false,
+    canContentBriefs: false,
     canBulkReview: false,
     canCustomCss: false,
     canContentDecay: false,
@@ -50,6 +52,7 @@ export const PLAN_LIMITS = {
     canAutoSeoScan: false,
     canContentNavigation: false,
     canInternalLinking: false,
+    canContentBriefs: false,
     canBulkReview: false,
     canCustomCss: false,
     canContentDecay: false,
@@ -64,6 +67,7 @@ export const PLAN_LIMITS = {
     canAutoSeoScan: true,
     canContentNavigation: true,
     canInternalLinking: true,
+    canContentBriefs: true,
     canBulkReview: false,
     canCustomCss: false,
     canContentDecay: false,
@@ -78,6 +82,7 @@ export const PLAN_LIMITS = {
     canAutoSeoScan: true,
     canContentNavigation: true,
     canInternalLinking: true,
+    canContentBriefs: true,
     canBulkReview: true,
     canCustomCss: true,
     canContentDecay: true,
@@ -92,6 +97,7 @@ export const PLAN_LIMITS = {
   canAutoSeoScan: boolean;
   canContentNavigation: boolean;
   canInternalLinking: boolean;
+  canContentBriefs: boolean;
   canBulkReview: boolean;
   canCustomCss: boolean;
   canContentDecay: boolean;

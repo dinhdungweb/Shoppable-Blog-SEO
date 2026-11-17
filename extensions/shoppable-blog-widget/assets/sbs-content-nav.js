@@ -82,6 +82,14 @@
     const context = document.querySelector(CONFIG_SELECTOR);
     if (!context) return;
 
+    // Current placeholders: hidden <div|span data-sbs-toc|data-sbs-breadcrumbs="style">.
+    document.querySelectorAll("[data-sbs-toc], [data-sbs-breadcrumbs]").forEach((element, index) => {
+      if (element.closest(".bp-content-nav")) return;
+      const type = element.hasAttribute("data-sbs-toc") ? "toc" : "breadcrumbs";
+      const token = String(element.getAttribute(`data-sbs-${type}`) || "").split(":")[0];
+      element.replaceWith(createContentNavElement(type, context, token || undefined, `p${index}`));
+    });
+
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         if (!node.nodeValue || !node.nodeValue.includes("[[SBS_")) {

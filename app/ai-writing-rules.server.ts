@@ -14,7 +14,7 @@ export async function loadShopAiWritingRules(shop: string): Promise<AiWritingRul
   try {
     const config = await prisma.shopConfig.findUnique({
       where: { shop },
-      select: { brandTone: true, forbiddenWords: true, defaultContentStructure: true },
+      select: { language: true, brandTone: true, forbiddenWords: true, defaultContentStructure: true },
     });
     return normalizeAiWritingRules(config || {});
   } catch (error) {
