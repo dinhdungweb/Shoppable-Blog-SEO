@@ -24,7 +24,7 @@ export type PortfolioSeoIssue = {
 const relatedPostCache = new WeakMap<PortfolioSeoPost[], Map<string, PortfolioSeoPost | undefined>>();
 const relatedTokenCache = new WeakMap<PortfolioSeoPost[], Map<string, Set<string>>>();
 
-export function auditSeoPortfolio(posts: PortfolioSeoPost[]) {
+export function auditSeoPortfolio(posts: PortfolioSeoPost[], options: { includeOrphans?: boolean } = {}) {
   const issues = new Map<string, PortfolioSeoIssue[]>();
   posts.forEach((post) => issues.set(post.id, []));
 
@@ -33,7 +33,9 @@ export function auditSeoPortfolio(posts: PortfolioSeoPost[]) {
   addDuplicateIssues(posts, issues, "seoDescription", "duplicate_meta_description", "Duplicate meta description", 6);
   addKeywordCannibalization(posts, issues);
   addSearchIntentOverlap(posts, issues);
-  addOrphanIssues(posts, issues);
+  // Orphans can only be identified when every post is in scope; a partial scan
+  // cannot see links from posts it did not load.
+  if (options.includeOrphans !== false) addOrphanIssues(posts, issues);
   addNearDuplicateIssues(posts, issues);
   return issues;
 }
@@ -239,15 +241,26 @@ function getHrefs(body: string) {
 }
 
 function normalizeHrefPath(href: string) {
+  let path: string;
   try {
-    return new URL(href, "https://store.invalid").pathname.replace(/\/$/, "").toLowerCase();
+    path = new URL(href, "https://store.invalid").pathname;
   } catch {
-    return href.split(/[?#]/)[0].replace(/\/$/, "").toLowerCase();
+    path = href.split(/[?#]/)[0];
   }
+  // Shopify Markets/translations prefix paths with a locale, e.g. /en/blogs/… or /fr-ca/blogs/….
+  return path.replace(/\/$/, "").toLowerCase().replace(/^\/[a-z]{2}(?:-[a-z]{2})?(?=\/blogs\/)/, "");
 }
 
+// Function words in English and Vietnamese (accent-stripped), ignored when comparing topics.
+const STOP_WORDS = new Set((
+  "the and for with from that this these those your you our are was were will can how what why when who which into about " +
+  "a an of to in on at by or as is it be if not no do does so than then them they their its has have had " +
+  "va cua cho la cac mot nhung voi trong tu tai duoc khi ve cach nay do co khong de nhu thi ma se da dang bi rat cung hay hoac neu vi"
+).split(" "));
+
 function words(value: string) {
-  return new Set(normalizeText(value.replace(/<[^>]*>/g, " ")).split(" ").filter((word) => word.length > 3));
+  // Keep 2+ character tokens so short Vietnamese syllables still count as words.
+  return new Set(normalizeText(value.replace(/<[^>]*>/g, " ")).split(" ").filter((word) => word.length >= 2 && !STOP_WORDS.has(word)));
 }
 
 function jaccard(left: Set<string>, right: Set<string>) {
@@ -260,7 +273,14 @@ function jaccard(left: Set<string>, right: Set<string>) {
 }
 
 function normalizeText(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // Accent-insensitive and script-agnostic: keeps letters of every language, maps \u0111 to d.
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .toLowerCase()
+    .replace(/\u0111/g, "d")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
 }
 
 function push(result: Map<string, PortfolioSeoIssue[]>, postId: string, issue: PortfolioSeoIssue) {

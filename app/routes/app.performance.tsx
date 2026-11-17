@@ -5,7 +5,7 @@ import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
 import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, InlineGrid, InlineStack, Page, Text, TextField } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
-import { AlertTriangleIcon, AppsIcon, ChartVerticalIcon, CheckCircleIcon, ChevronDownIcon, CodeIcon, DesktopIcon, GaugeIcon, HomeIcon, ImageIcon, MobileIcon, SearchIcon } from "@shopify/polaris-icons";
+import { AlertTriangleIcon, AppsIcon, ChartVerticalIcon, CheckCircleIcon, ChevronDownIcon, CodeIcon, CollectionIcon, DesktopIcon, GaugeIcon, HomeIcon, ImageIcon, MobileIcon, NoteIcon, ProductIcon, SearchIcon } from "@shopify/polaris-icons";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import performanceStyles from "../styles/performance.css?url";
@@ -238,7 +238,7 @@ export default function PerformancePage() {
 }
 
 function PageTypeButton({ target, selected, scan, onSelect }: { target: PerformanceTarget; selected: boolean; scan?: SavedScan; onSelect: () => void }) {
-  const PageIcon = ({ homepage: HomeIcon, other: SearchIcon } as const)[target.type];
+  const PageIcon = ({ homepage: HomeIcon, article: NoteIcon, product: ProductIcon, collection: CollectionIcon, other: SearchIcon } as const)[target.type];
   return <button type="button" onClick={onSelect} className={`bp-performance-page-button${selected ? " is-selected" : ""}`}>
     <InlineStack gap="200" blockAlign="center" wrap={false}><span className="bp-page-type-icon"><Icon source={PageIcon} /></span><div className="bp-page-type-copy"><BlockStack gap="100"><InlineStack align="space-between"><Text as="span" fontWeight="semibold">{labelFor(target.type)}</Text>{scan?.report && <Badge tone={scoreTone(scan.seoScore)}>{String(scan.seoScore)}</Badge>}</InlineStack><Text as="span" variant="bodySm" tone="subdued">{target.available ? scan ? target.title : "Not scanned" : "Unavailable"}</Text></BlockStack></div></InlineStack>
   </button>;
@@ -306,7 +306,7 @@ function metricName(label: string) {
 }
 
 function labelFor(type: PerformancePageType) {
-  return ({ homepage: "Homepage", other: "Other page" } as const)[type];
+  return ({ homepage: "Homepage", article: "Blog post", product: "Product page", collection: "Collection page", other: "Other page" } as const)[type];
 }
 
 function scoreTone(score: number): "success" | "warning" | "critical" {

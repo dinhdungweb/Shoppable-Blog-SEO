@@ -1,3 +1,5 @@
+import { META_DESCRIPTION_RANGE, SEO_TITLE_RANGE } from "./seo-audit";
+
 export type MetaTagProblem =
   | "missing_description"
   | "description_too_long"
@@ -15,8 +17,9 @@ export const META_TAG_PROBLEM_LABELS: Record<MetaTagProblem, string> = {
   missing_featured_alt: "Featured image missing alt",
 };
 
-export const META_TITLE_RANGE = { min: 30, max: 60 } as const;
-export const META_DESCRIPTION_RANGE = { min: 70, max: 160 } as const;
+// Same thresholds as the SEO engine, so Bulk Optimize and SEO Audit agree.
+export const META_TITLE_RANGE = SEO_TITLE_RANGE;
+export { META_DESCRIPTION_RANGE };
 
 export type MetaTagAuditInput = {
   articleTitle: string;

@@ -67,3 +67,44 @@ describe("SEO portfolio audit", () => {
     expect(result.get("1")?.some((issue) => issue.type === "orphan_article")).toBe(true);
   });
 });
+
+describe("SEO portfolio audit scope and languages", () => {
+  const types = (result: ReturnType<typeof auditSeoPortfolio>, id: string) => (result.get(id) || []).map((issue) => issue.type);
+
+  it("skips orphan detection for partial scans", () => {
+    const posts = [post({ id: "1", handle: "a", title: "Alpha guide" }), post({ id: "2", handle: "b", title: "Beta guide", focusKeyword: "beta" })];
+    expect(types(auditSeoPortfolio(posts), "1")).toContain("orphan_article");
+    expect(types(auditSeoPortfolio(posts, { includeOrphans: false }), "1")).not.toContain("orphan_article");
+  });
+
+  it("counts locale-prefixed links as inbound links", () => {
+    const posts = [
+      post({ id: "1", handle: "a", title: "Alpha guide", body: '<p><a href="https://shop.com/fr-ca/blogs/news/b">Beta</a></p>' }),
+      post({ id: "2", handle: "b", title: "Beta guide", focusKeyword: "beta", body: '<p><a href="/en/blogs/news/a">Alpha</a></p>' }),
+    ];
+    const result = auditSeoPortfolio(posts);
+    expect(types(result, "1")).not.toContain("orphan_article");
+    expect(types(result, "2")).not.toContain("orphan_article");
+  });
+
+  it("detects duplicate Vietnamese titles, including đ and composition differences", () => {
+    const title = "Cách chọn giày chạy địa hình";
+    const result = auditSeoPortfolio([
+      post({ id: "1", title, seoTitle: "Một", seoDescription: "Mô tả một", focusKeyword: "" }),
+      post({ id: "2", title: title.normalize("NFD"), seoTitle: "Hai", seoDescription: "Mô tả hai", focusKeyword: "" }),
+    ], { includeOrphans: false });
+    expect(types(result, "1")).toContain("duplicate_article_title");
+  });
+
+  it("detects near-duplicate Vietnamese articles made of short syllables", () => {
+    const body = "<p>Giày chạy bộ địa hình cần độ bám tốt, đế dày và ôm gót chân để đi đường núi an toàn hơn mỗi ngày. "
+      + "Khi thử nghiệm mười hai mẫu trong ba tháng, chúng tôi đo độ êm, trọng lượng, khả năng thoát nước và độ bền của lớp vải lưới. "
+      + "Người mới nên ưu tiên đệm dày, rãnh sâu bốn ly, mũi giày rộng; vận động viên lâu năm thường thích đế mỏng, nhẹ, phản hồi nhanh. "
+      + "Hãy mang thử buổi chiều, đi kèm tất chuyên dụng, kiểm tra gót không trượt và ngón cái còn khoảng trống bằng một đốt tay.</p>";
+    const result = auditSeoPortfolio([
+      post({ id: "1", title: "Giày chạy núi", seoTitle: "Giày chạy núi", seoDescription: "A", focusKeyword: "", body }),
+      post({ id: "2", title: "Chọn giày trail", seoTitle: "Chọn giày trail", seoDescription: "B", focusKeyword: "", body: body.replace("mỗi ngày", "mỗi tuần") }),
+    ], { includeOrphans: false });
+    expect(types(result, "1")).toContain("near_duplicate_content");
+  });
+});

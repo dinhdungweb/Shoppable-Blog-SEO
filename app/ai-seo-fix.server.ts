@@ -1,3 +1,4 @@
+import { isPublicUrlReachable } from "./safe-fetch.server";
 import type { SeoAuditIssue } from "./seo-audit";
 import { isNineRouterConfigured } from "./ai-seo.server";
 import { createNineRouterResponseError, fetchNineRouter, getNineRouterGenerationOptions, readNineRouterJson } from "./nine-router.server";
@@ -50,6 +51,8 @@ export type AiSeoFixInput = {
   featuredImageAlt: string;
   hasFeaturedImage: boolean;
   focusKeyword: string;
+  /** Checks that an AI-suggested source URL is live; defaults to a safe public HEAD/GET check. */
+  verifyLink?: (url: string) => Promise<boolean>;
 };
 
 const MAX_ARTICLE_CHARS = 50_000;
@@ -58,6 +61,7 @@ const MAX_OUTPUT_CHARS = 70_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MARKER_PATTERN = /\[\[SBS_(?:PRODUCTS|TOC)(?::[a-zA-Z0-9_-]+(?::[a-zA-Z0-9_-]+)?)?\]\]/g;
 const MANUAL_ONLY_TYPES = new Set([
+  "hidden_from_search",
   "url_length",
   "kw_url",
   "kw_missing",
@@ -260,6 +264,7 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
     ...parseManualActions(parsed.manualActions, selectedTypes),
     ...rejectedBodyActions,
   ], issues);
+  await dropUnreachableSuggestedLinks(manualActions, input.verifyLink || ((url) => isPublicUrlReachable(url)));
   if (!changes.length && !manualActions.length) {
     throw new Error("9Router returned no usable SEO fixes");
   }
@@ -271,6 +276,22 @@ export async function generateAiSeoFix(input: AiSeoFixInput): Promise<AiSeoFixSu
     changes,
     manualActions,
   };
+}
+
+/**
+ * AI models can invent plausible URLs. Only links that answer like a live page
+ * are shown to merchants; the action explains when suggestions were removed.
+ */
+async function dropUnreachableSuggestedLinks(actions: AiSeoFixManualAction[], verifyLink: (url: string) => Promise<boolean>) {
+  await Promise.all(actions.map(async (action) => {
+    if (!action.suggestedLinks.length) return;
+    const checks = await Promise.all(action.suggestedLinks.map(async (link) => ({ link, ok: await verifyLink(link.url).catch(() => false) })));
+    const live = checks.filter((check) => check.ok).map((check) => check.link);
+    if (live.length < action.suggestedLinks.length) {
+      action.action = `${action.action} ${action.suggestedLinks.length - live.length} suggested source(s) were removed because they did not respond as live pages.`.trim();
+    }
+    action.suggestedLinks = live;
+  }));
 }
 
 function ensureManualActions(actions: AiSeoFixManualAction[], issues: SeoAuditIssue[]) {

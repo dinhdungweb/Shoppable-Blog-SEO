@@ -10,6 +10,28 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.11.17",
+    date: "2026-11-17",
+    title: "A more accurate SEO score and live page checks",
+    summary: "One SEO engine now powers the post editor and SEO Audit, scores are split into clear areas, and scans check what your storefront actually serves to Google.",
+    tags: ["New", "Improved", "Fixed"],
+    changes: [
+      { type: "Improved", text: "The post editor and SEO Audit now use the same rules, so a post shows the same score and the same problems everywhere." },
+      { type: "Improved", text: "Scores are split into Search appearance, Content, Keywords, Images & media and Links. A missing meta description or a truncated SEO title now weighs more than a missing focus keyword." },
+      { type: "Improved", text: "Optional tips such as numbers in titles, outbound links and keywords in image alt text are still shown but no longer lower the score." },
+      { type: "New", text: "Scans fetch a rotating set of live storefront pages to catch noindex tags, wrong canonical URLs, missing or multiple H1 headings, missing or duplicate Article schema, and broken pages." },
+      { type: "New", text: "SEO Audit now covers online store pages, the homepage and blog listing pages, and flags anything hidden from search engines." },
+      { type: "New", text: "When Google Search Console is connected, issues are ranked by the search impressions of the affected posts." },
+      { type: "New", text: "Shoppable product widgets publish an ItemList of the featured products, and Site speed can test a blog post, product and collection page." },
+      { type: "Fixed", text: "Focus keywords match whole words only and Vietnamese text matches regardless of how accents are encoded." },
+      { type: "Fixed", text: "SEO titles and descriptions edited directly in Shopify are no longer overridden by older values saved in the app." },
+      { type: "Fixed", text: "Orphan-post warnings no longer appear on plans that scan only part of the blog, and duplicate detection now works for Vietnamese content." },
+      { type: "Fixed", text: "AI-suggested source links are checked before they are shown, and links that do not respond are removed." },
+      { type: "Fixed", text: "\"No linked products\" no longer counts as an SEO error." },
+      { type: "Improved", text: "Product links in shoppable widgets are now clean URLs for search engines. Optional UTMs are added only when a shopper clicks, and conversion tracking no longer needs a token in the URL." },
+    ],
+  },
+  {
     version: "2026.11.16",
     date: "2026-11-16",
     title: "A simpler workflow: find, fix, measure",

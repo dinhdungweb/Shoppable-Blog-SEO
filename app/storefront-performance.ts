@@ -1,4 +1,5 @@
-export const PERFORMANCE_PAGE_TYPES = ["homepage", "other"] as const;
+// One representative URL per storefront template; themes render each differently.
+export const PERFORMANCE_PAGE_TYPES = ["homepage", "article", "product", "collection", "other"] as const;
 export type PerformancePageType = typeof PERFORMANCE_PAGE_TYPES[number];
 
 export type PerformanceTarget = {

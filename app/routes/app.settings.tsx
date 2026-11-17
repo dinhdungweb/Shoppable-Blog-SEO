@@ -898,7 +898,7 @@ export default function Settings() {
 
                 <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
                   <BlockStack gap="100">
-                    <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} />
+                    <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} helpText="UTMs are added only when a shopper clicks, for your analytics. Search engines always see clean product links, and conversion tracking works either way." />
                     <Text as="p" variant="bodySm" tone="subdued">Appends UTM parameters to outbound links</Text>
                   </BlockStack>
                 </InlineGrid>

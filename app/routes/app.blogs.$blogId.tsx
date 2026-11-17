@@ -72,8 +72,7 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { formatLimit, PLAN_LIMITS } from "../pricing-plans";
-import { auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
-import type { SeoAuditIssue } from "../seo-audit";
+import { SEO_SCORE_AREAS, auditSeo as runSeoAudit, slugifySeoText, toStoredSeoIssues, type SeoAuditIssue, type SeoAuditResult } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
 import {
@@ -483,6 +482,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         seoDescription: metafield(namespace: "global", key: "description_tag") {
           value
         }
+        seoHidden: metafield(namespace: "seo", key: "hidden") {
+          value
+        }
         author {
           name
         }
@@ -559,6 +561,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   );
 
   const initialAudit = runSeoAudit({
+    hiddenFromSearch: article.seoHidden?.value === "1",
     title: seoData?.metaTitle || article.seoTitle?.value || article.title || "",
     handle: article.handle || "",
     summary: seoData?.metaDescription || article.seoDescription?.value || article.summary || "",
@@ -1057,7 +1060,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           metaTitle,
           metaDescription,
           focusKeyword,
-          issues: JSON.stringify(audit.issues),
+          issues: JSON.stringify(toStoredSeoIssues(audit.issues)),
           lastAnalyzedAt: new Date(),
         },
       });
@@ -1248,7 +1251,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         metaTitle,
         metaDescription,
         focusKeyword,
-        issues: JSON.stringify(audit.issues),
+        issues: JSON.stringify(toStoredSeoIssues(audit.issues)),
         lastAnalyzedAt: new Date(),
       },
     });
@@ -1546,7 +1549,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         metaTitle: cleanString(formData.get("metaTitle")),
         metaDescription: cleanString(formData.get("metaDescription")),
         focusKeyword,
-        issues: JSON.stringify(audit.issues),
+        issues: JSON.stringify(toStoredSeoIssues(audit.issues)),
         lastAnalyzedAt: new Date(),
       },
     });
@@ -1625,7 +1628,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         metaTitle: suggestedTitle,
         metaDescription: suggestedDescription,
         focusKeyword,
-        issues: JSON.stringify(audit.issues),
+        issues: JSON.stringify(toStoredSeoIssues(audit.issues)),
         lastAnalyzedAt: new Date(),
       },
     });
@@ -1837,9 +1840,10 @@ export default function ArticleDetail() {
     seoFixFetcher.data,
   ]);
 
-  const { score: seoScore, issues: seoIssues, keywordScores } = useMemo(() => {
+  const { score: seoScore, issues: seoIssues, keywordScores, breakdown: seoBreakdown } = useMemo((): Pick<SeoAuditResult, "score" | "issues" | "keywordScores"> & { breakdown?: SeoAuditResult["breakdown"] } => {
     if (!article) return { score: 0, issues: [], keywordScores: {} };
     return runSeoAudit({
+      hiddenFromSearch: article.seoHidden?.value === "1",
       title: effectiveMetaTitle || title,
       handle,
       summary: metaDescription || excerpt || "",
@@ -3245,6 +3249,7 @@ export default function ArticleDetail() {
                 {canEditSeo ? (
                   <SeoSidebar
                     seoScore={seoScore}
+                    scoreBreakdown={seoBreakdown}
                     issues={seoIssues}
                     focusKeyword={focusKeyword}
                     onChangeFocusKeyword={(val) => {
@@ -6018,6 +6023,7 @@ function HistoryPanel({ article, seoData, products }: { article: any; seoData: a
 
 function SeoSidebar({
   seoScore,
+  scoreBreakdown,
   issues,
   focusKeyword,
   onChangeFocusKeyword,
@@ -6034,6 +6040,7 @@ function SeoSidebar({
   onFixAll,
 }: {
   seoScore: number;
+  scoreBreakdown?: SeoAuditResult["breakdown"];
   issues: SeoIssue[];
   focusKeyword: string;
   onChangeFocusKeyword: (val: string) => void;
@@ -6139,6 +6146,24 @@ function SeoSidebar({
             </InlineStack>
           </InlineStack>
 
+          {scoreBreakdown && (
+            <BlockStack gap="150">
+              {(Object.keys(SEO_SCORE_AREAS) as Array<keyof typeof SEO_SCORE_AREAS>).map((area) => {
+                const part = scoreBreakdown[area];
+                const ratio = part.max ? part.score / part.max : 1;
+                return (
+                  <BlockStack key={area} gap="050">
+                    <InlineStack align="space-between">
+                      <Text as="span" variant="bodySm">{SEO_SCORE_AREAS[area].label}</Text>
+                      <Text as="span" variant="bodySm" tone={ratio >= 0.8 ? "success" : ratio >= 0.5 ? "caution" : "critical"}>{`${part.score}/${part.max}`}</Text>
+                    </InlineStack>
+                    <ProgressBar progress={Math.round(ratio * 100)} size="small" tone={ratio >= 0.8 ? "success" : ratio >= 0.5 ? "highlight" : "critical"} />
+                  </BlockStack>
+                );
+              })}
+            </BlockStack>
+          )}
+
           {Object.entries(categories).map(([cat, title]) => {
             const catIssues = issues.filter(i => i.category === cat);
             if (catIssues.length === 0) return null;
@@ -6243,6 +6268,7 @@ function SeoSidebar({
 }
 
 const MANUAL_ONLY_SEO_ISSUES_FOR_UI = new Set([
+  "hidden_from_search",
   "url_length",
   "kw_url",
   "kw_missing",

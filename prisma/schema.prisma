@@ -165,6 +165,7 @@ model ArticleSEO {
   contentHash     String?
   auditVersion    Int       @default(1)
   baseSeoScore    Int       @default(0)
+  liveCheckedAt   DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -192,6 +193,7 @@ model ResourceSEO {
   contentHash     String?
   sourceUpdatedAt DateTime?
   lastAnalyzedAt  DateTime?
+  liveCheckedAt   DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

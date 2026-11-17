@@ -4,7 +4,7 @@ import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
 import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, IndexTable, InlineGrid, InlineStack, Modal, Page, Pagination, Select, Tabs, Text, TextField, Thumbnail } from "@shopify/polaris";
-import { AlertTriangleIcon, CheckCircleIcon, CollectionIcon, ProductIcon } from "@shopify/polaris-icons";
+import { AlertTriangleIcon, CheckCircleIcon, CollectionIcon, NoteIcon, ProductIcon } from "@shopify/polaris-icons";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
@@ -25,7 +25,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { limits } = await getActivePlanAndLimits(billing, session.shop);
   if (!limits.canCatalogSeo) return redirect("/app/pricing?reason=catalog_seo");
   const url = new URL(request.url);
-  const resourceType: CatalogResourceType = url.searchParams.get("type") === "collection" ? "collection" : "product";
+  const requestedType = url.searchParams.get("type");
+  const resourceType: CatalogResourceType = requestedType === "collection" || requestedType === "page" ? requestedType : "product";
   const view = url.searchParams.get("view") === "manager" ? "manager" : "issues";
   const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
   const query = String(url.searchParams.get("q") || "").trim().slice(0, 100);
@@ -63,7 +64,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     id: row.resourceId, title: row.title || `Untitled ${resourceType}`, handle: row.handle, status: row.status,
     score: row.seoScore, imageUrl: row.imageUrl, imageAlt: row.imageAlt, issues: parseIssues(row.issues),
     lastAnalyzedAt: row.lastAnalyzedAt?.toISOString() || null,
-    editorUrl: `/app/catalog-seo/${resourceType}/${numericId(row.resourceId)}`,
+    editorUrl: resourceEditUrl(resourceType, row.resourceId),
   }));
   return json({ view, resourceType, page, total, filteredTotal, totalPages, query, status, averageScore: Math.round(aggregate._avg.seoScore || 0), needsAttention, totalIssues: aggregate._sum.issueCount || 0, issueGroups, rows: data, job: job ? { status: job.status, phase: job.phase } : null });
 };
@@ -79,7 +80,7 @@ export default function CatalogSeoPage() {
   const [reviewRow, setReviewRow] = useState<(typeof data.rows)[number] | null>(null);
   const [reviewIssue, setReviewIssue] = useState<(typeof data.issueGroups)[number] | null>(null);
   const isScanning = fetcher.state !== "idle" || data.job?.status === "queued" || data.job?.status === "running";
-  const typeLabel = data.resourceType === "product" ? "Products" : "Collections";
+  const typeLabel = data.resourceType === "product" ? "Products" : data.resourceType === "page" ? "Pages" : "Collections";
 
   useEffect(() => { setSearch(data.query); }, [data.query]);
   useEffect(() => {
@@ -111,19 +112,19 @@ export default function CatalogSeoPage() {
   return <Page fullWidth>
     <TitleBar title={data.view === "manager" ? "Catalog" : "SEO Audit"}><button variant="primary" disabled={isScanning} onClick={runScan}>{isScanning ? "Scanning..." : "Run SEO scan"}</button></TitleBar>
     <BlockStack gap="500">
-      <InlineStack align="space-between" blockAlign="end" gap="300"><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">{data.view === "manager" ? "Catalog" : "SEO Audit"}</Text><Text as="p" tone="subdued">{data.view === "manager" ? "Manage and optimize Shopify products and collections in one place." : `Find and fix SEO issues across your store. Showing recurring problems in scanned ${typeLabel.toLowerCase()}.`}</Text></BlockStack><InlineStack gap="200">{data.view === "issues" && <Button url={`/app/catalog-seo?view=manager&type=${data.resourceType}`}>Open in Catalog</Button>}<Button variant="primary" loading={isScanning} onClick={runScan}>Run SEO scan</Button></InlineStack></InlineStack>
+      <InlineStack align="space-between" blockAlign="end" gap="300"><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">{data.view === "manager" ? "Catalog" : "SEO Audit"}</Text><Text as="p" tone="subdued">{data.view === "manager" ? "Manage and optimize Shopify products and collections in one place." : `Find and fix SEO issues across your store. Showing recurring problems in scanned ${typeLabel.toLowerCase()}.`}</Text></BlockStack><InlineStack gap="200">{data.view === "issues" && data.resourceType !== "page" && <Button url={`/app/catalog-seo?view=manager&type=${data.resourceType}`}>Open in Catalog</Button>}<Button variant="primary" loading={isScanning} onClick={runScan}>Run SEO scan</Button></InlineStack></InlineStack>
       <div className="bp-seo-scope-tabs">
         {data.view === "manager"
           ? <Tabs tabs={[{ id: "products", content: "Products" }, { id: "collections", content: "Collections" }]} selected={data.resourceType === "product" ? 0 : 1} onSelect={switchManagerType} />
           : <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="issues" />}
       </div>
-      {data.view === "issues" && <IssueScopeSwitcher active={data.resourceType === "product" ? "products" : "collections"} />}
+      {data.view === "issues" && <IssueScopeSwitcher active={data.resourceType === "product" ? "products" : data.resourceType === "page" ? "pages" : "collections"} />}
       {isScanning && <Banner tone="info" title={data.job?.phase || "SEO scan queued"}><p>Products and collections are scanned in the background. This page updates automatically.</p></Banner>}
       {data.job?.status === "failed" && <Banner tone="critical" title="SEO scan failed"><p>The background scan could not be completed. Check the SEO worker log and run the scan again.</p></Banner>}
       {!data.total && !isScanning && <Banner tone="info" title={`No saved ${typeLabel.toLowerCase()} report`}><p>Run an SEO scan to analyze Shopify {typeLabel.toLowerCase()}.</p></Banner>}
       <InlineGrid columns={{ xs: 1, sm: 2, md: data.view === "manager" ? 4 : 3 }} gap="300">
         {data.view === "manager" && <StatCard label="Average score" value={`${data.averageScore}/100`} icon={CheckCircleIcon} tone={data.averageScore >= 80 ? "success" : "warning"} />}
-        <StatCard label="Resources scanned" value={String(data.total)} icon={data.resourceType === "product" ? ProductIcon : CollectionIcon} tone="info" />
+        <StatCard label="Resources scanned" value={String(data.total)} icon={data.resourceType === "product" ? ProductIcon : data.resourceType === "page" ? NoteIcon : CollectionIcon} tone="info" />
         <StatCard label="Need attention" value={String(data.needsAttention)} icon={AlertTriangleIcon} tone={data.needsAttention ? "critical" : "success"} />
         <StatCard label="Total issues" value={String(data.totalIssues)} icon={AlertTriangleIcon} tone={data.totalIssues ? "warning" : "success"} />
       </InlineGrid>
@@ -132,7 +133,7 @@ export default function CatalogSeoPage() {
         <Box padding="400"><BlockStack gap="300"><InlineStack align="space-between"><BlockStack gap="050"><Text as="h2" variant="headingMd">{typeLabel}</Text><Text as="p" variant="bodySm" tone="subdued">Lowest scores are shown first · {data.filteredTotal} matching resources.</Text></BlockStack><Badge>{`${data.total} total`}</Badge></InlineStack><div className="bp-catalog-filters"><TextField label={`Search ${typeLabel.toLowerCase()}`} labelHidden value={search} onChange={setSearch} placeholder={`Search ${typeLabel.toLowerCase()}`} autoComplete="off" connectedRight={<Button onClick={() => goToList({ query: search.trim(), page: 1 })}>Search</Button>} /><Select label="Issue status" labelHidden value={data.status} options={[{ label: "All resources", value: "all" }, { label: "Needs attention", value: "attention" }, { label: "All good", value: "good" }]} onChange={(value) => goToList({ status: value, page: 1 })} /></div></BlockStack></Box>
         <IndexTable resourceName={{ singular: data.resourceType, plural: typeLabel.toLowerCase() }} itemCount={data.rows.length} selectable={false} headings={[{ title: typeLabel.slice(0, -1) }, { title: "SEO score" }, { title: "Issues" }, { title: "Status" }, { title: "Action" }]}>
           {data.rows.map((row, index) => <IndexTable.Row id={row.id} key={row.id} position={index}>
-            <IndexTable.Cell><InlineStack gap="300" blockAlign="center" wrap={false}><Thumbnail source={row.imageUrl || PLACEHOLDER_IMAGE} alt={row.imageAlt || row.title} size="small" /><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.title}</Text><Text as="span" variant="bodySm" tone="subdued">/{data.resourceType === "product" ? "products" : "collections"}/{row.handle}</Text></BlockStack></InlineStack></IndexTable.Cell>
+            <IndexTable.Cell><InlineStack gap="300" blockAlign="center" wrap={false}><Thumbnail source={row.imageUrl || PLACEHOLDER_IMAGE} alt={row.imageAlt || row.title} size="small" /><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.title}</Text><Text as="span" variant="bodySm" tone="subdued">{resourcePath(data.resourceType, row.handle)}</Text></BlockStack></InlineStack></IndexTable.Cell>
             <IndexTable.Cell><Badge tone={scoreTone(row.score)}>{`${row.score}/100`}</Badge></IndexTable.Cell>
             <IndexTable.Cell>{row.issues.length ? <BlockStack gap="050"><Text as="span" variant="bodySm" fontWeight="semibold">{row.issues[0].label}</Text><Text as="span" variant="bodySm" tone="subdued">{row.issues.length === 1 ? "1 issue" : `${row.issues.length} issues`}</Text></BlockStack> : <Badge tone="success">All good</Badge>}</IndexTable.Cell>
             <IndexTable.Cell>{row.status ? <Badge tone={row.status === "ACTIVE" ? "success" : undefined}>{row.status}</Badge> : <Text as="span" tone="subdued">—</Text>}</IndexTable.Cell>
@@ -144,7 +145,7 @@ export default function CatalogSeoPage() {
       <Modal open={Boolean(reviewRow)} onClose={() => setReviewRow(null)} title={reviewRow?.title || "SEO review"} primaryAction={reviewRow ? { content: "Edit", url: reviewRow.editorUrl } : undefined} secondaryActions={[{ content: "Close", onAction: () => setReviewRow(null) }]}>
         <Modal.Section><BlockStack gap="400">{reviewRow?.issues.length ? reviewRow.issues.map((issue) => <div className="bp-catalog-review-issue" key={issue.type}><InlineStack align="space-between" blockAlign="center"><Text as="h3" fontWeight="semibold">{issue.label}</Text><Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>{issue.impact}</Badge></InlineStack><Text as="p" variant="bodySm" tone="subdued">{issue.message}</Text><Text as="p" variant="bodySm"><strong>Suggested fix:</strong> {issue.fix}</Text></div>) : <Banner tone="success" title="No SEO issues found"><p>This resource passed the current Shopify-compatible checks.</p></Banner>}</BlockStack></Modal.Section>
       </Modal>
-      <Modal open={Boolean(reviewIssue)} onClose={() => setReviewIssue(null)} title={reviewIssue?.label || "Affected resources"} secondaryActions={[{ content: "Close", onAction: () => setReviewIssue(null) }]}><Modal.Section><BlockStack gap="400"><Text as="p">{reviewIssue?.fix}</Text><Divider /><BlockStack gap="300">{reviewIssue?.affected.map((resource) => <InlineStack key={resource.id} align="space-between" blockAlign="center" gap="300"><BlockStack gap="050"><Text as="p" fontWeight="semibold">{resource.title}</Text><Text as="p" variant="bodySm" tone="subdued">/{data.resourceType === "product" ? "products" : "collections"}/{resource.handle}</Text></BlockStack><Button size="micro" url={`/app/catalog-seo/${data.resourceType}/${numericId(resource.id)}`}>Edit</Button></InlineStack>)}</BlockStack>{reviewIssue && reviewIssue.count > reviewIssue.affected.length && <Text as="p" variant="bodySm" tone="subdued">Showing {reviewIssue.affected.length} of {reviewIssue.count} affected resources.</Text>}</BlockStack></Modal.Section></Modal>
+      <Modal open={Boolean(reviewIssue)} onClose={() => setReviewIssue(null)} title={reviewIssue?.label || "Affected resources"} secondaryActions={[{ content: "Close", onAction: () => setReviewIssue(null) }]}><Modal.Section><BlockStack gap="400"><Text as="p">{reviewIssue?.fix}</Text><Divider /><BlockStack gap="300">{reviewIssue?.affected.map((resource) => <InlineStack key={resource.id} align="space-between" blockAlign="center" gap="300"><BlockStack gap="050"><Text as="p" fontWeight="semibold">{resource.title}</Text><Text as="p" variant="bodySm" tone="subdued">{resourcePath(data.resourceType, resource.handle)}</Text></BlockStack><Button size="micro" url={resourceEditUrl(data.resourceType, resource.id)} target={data.resourceType === "page" ? "_top" : undefined}>Edit</Button></InlineStack>)}</BlockStack>{reviewIssue && reviewIssue.count > reviewIssue.affected.length && <Text as="p" variant="bodySm" tone="subdued">Showing {reviewIssue.affected.length} of {reviewIssue.count} affected resources.</Text>}</BlockStack></Modal.Section></Modal>
     </BlockStack>
   </Page>;
 }
@@ -158,5 +159,18 @@ function parseIssues(value: string | null): CatalogSeoIssue[] {
 }
 
 function numericId(id: string) { return id.split("/").pop() || ""; }
+
+function resourcePath(type: CatalogResourceType, handle: string) {
+  if (type === "page") return handle.startsWith("/") ? handle : `/pages/${handle}`;
+  return `/${type === "product" ? "products" : "collections"}/${handle}`;
+}
+
+/** Products and collections open the in-app editor; store pages open in Shopify admin. */
+function resourceEditUrl(type: CatalogResourceType, id: string) {
+  if (type !== "page") return `/app/catalog-seo/${type}/${numericId(id)}`;
+  if (id === "homepage") return "shopify://admin/online_store/preferences";
+  if (id.startsWith("gid://shopify/Blog/")) return `shopify://admin/blogs/${numericId(id)}`;
+  return `shopify://admin/pages/${numericId(id)}`;
+}
 function impactRank(impact: CatalogSeoIssue["impact"]) { return impact === "High" ? 0 : impact === "Medium" ? 1 : 2; }
 function scoreTone(score: number): "success" | "warning" | "critical" { return score >= 80 ? "success" : score >= 60 ? "warning" : "critical"; }

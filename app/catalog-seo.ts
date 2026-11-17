@@ -1,4 +1,6 @@
-export type CatalogResourceType = "product" | "collection";
+import { HIDDEN_SCORE_CAP, containsPhrase, normalizeMatchText } from "./seo-audit";
+
+export type CatalogResourceType = "product" | "collection" | "page";
 
 export type CatalogResourceInput = {
   id: string;
@@ -17,6 +19,8 @@ export type CatalogResourceInput = {
   itemCount: number;
   focusKeyword?: string;
   mediaId?: string;
+  /** Shopify `seo.hidden` metafield: excluded from search engines and sitemaps. */
+  seoHidden?: boolean;
 };
 
 export type CatalogSeoIssue = {
@@ -43,9 +47,11 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
   const seoTitle = resource.seoTitle.trim() || resource.title.trim();
   // Shopify uses the resource description as the search-description fallback when no custom SEO value is saved.
   const seoDescription = resource.seoDescription.trim() || text.slice(0, 160).trim();
-  const focusKeyword = (resource.focusKeyword || "").trim().toLowerCase();
+  const focusKeyword = normalizeMatchText(resource.focusKeyword || "");
   let score = 100;
   const add = (penalty: number, issue: CatalogSeoIssue) => { score -= penalty; issues.push(issue); };
+
+  if (resource.seoHidden) add(0, issue("hidden_from_search", "Hidden from search engines", "High", "Low", `Remove the “hide from search engines” setting if this ${resource.type} should rank.`));
 
   if (!seoTitle) add(20, issue("missing_seo_title", "Missing SEO title", "High", "Low", "Add a unique search title in Shopify search engine listing."));
   else if (seoTitle.length > 70) add(7, issue("long_seo_title", "SEO title is too long", "Medium", "Low", "Shorten the search title to 70 characters or fewer."));
@@ -59,7 +65,7 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
   else if (seoDescription.length < 70) add(6, issue("short_meta_description", "Meta description is too short", "Medium", "Low", "Expand it with the main benefit and search intent."));
   else if (seoDescription.length > 165) add(5, issue("long_meta_description", "Meta description is too long", "Low", "Low", "Keep it at 165 characters or fewer."));
 
-  const minimumWords = resource.type === "product" ? 40 : 30;
+  const minimumWords = resource.type === "product" ? 40 : resource.type === "page" ? 50 : 30;
   if (!text) add(15, issue("missing_description", `Missing ${resource.type} description`, "High", "Medium", `Add useful, original ${resource.type} content in Shopify.`));
   else if (wordCount < minimumWords) add(7, issue("thin_description", "Thin description", "Medium", "Medium", `Expand the ${resource.type} description with useful shopper information.`));
 
@@ -67,7 +73,10 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
   else if (resource.handle.length > 80) add(3, issue("long_handle", "URL handle is too long", "Low", "Low", "Shorten the handle while preserving the primary topic."));
   if (/[A-Z_\s]/.test(resource.handle)) add(2, issue("unclean_handle", "URL handle is not search friendly", "Low", "Low", "Use lowercase words separated by hyphens in the Shopify handle."));
 
-  if (!resource.imageUrl) add(8, issue("missing_featured_image", `Missing ${resource.type} image`, "Medium", "Medium", `Add a representative image to this ${resource.type}.`));
+  // Online store pages have no featured image in Shopify, so image checks apply to products and collections only.
+  if (resource.type === "page") {
+    // no image checks
+  } else if (!resource.imageUrl) add(8, issue("missing_featured_image", `Missing ${resource.type} image`, "Medium", "Medium", `Add a representative image to this ${resource.type}.`));
   else {
     if (!resource.imageAlt.trim()) add(6, issue("missing_image_alt", "Image alt text is missing", "Medium", "Low", "Add concise descriptive alt text in Shopify."));
     else if (resource.imageAlt.trim().split(/\s+/).length > 18) add(2, issue("long_image_alt", "Image alt text is too long", "Low", "Low", "Keep alt text concise and describe only what is useful in the image."));
@@ -79,8 +88,8 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
   }
 
   if (text) {
-    const deeperMinimum = resource.type === "product" ? 80 : 60;
-    if (wordCount >= minimumWords && wordCount < deeperMinimum) add(3, issue("limited_content_depth", "Description could be more comprehensive", "Low", "Medium", `Add useful ${resource.type === "product" ? "benefits, materials, use and care details" : "context about the products and shopper intent"}.`));
+    const deeperMinimum = resource.type === "product" ? 80 : resource.type === "page" ? 150 : 60;
+    if (wordCount >= minimumWords && wordCount < deeperMinimum) add(3, issue("limited_content_depth", "Description could be more comprehensive", "Low", "Medium", `Add useful ${resource.type === "product" ? "benefits, materials, use and care details" : resource.type === "page" ? "answers to the questions visitors arrive with" : "context about the products and shopper intent"}.`));
     if (!/<h[2-4]\b/i.test(resource.descriptionHtml)) add(2, issue("missing_subheadings", "Description has no subheadings", "Low", "Low", "Use H2 or H3 headings to organize longer content."));
     if (!/<a\b[^>]*href=["'](?:\/[^"']*|https?:\/\/[^"']+)["']/i.test(resource.descriptionHtml)) add(3, issue("missing_internal_link", "Description has no contextual link", "Low", "Low", "Add a useful link to a related Shopify page or article."));
     if (hasLongParagraph(resource.descriptionHtml)) add(2, issue("long_paragraph", "A paragraph is difficult to scan", "Low", "Low", "Break long paragraphs into shorter sections for mobile shoppers."));
@@ -96,13 +105,15 @@ export function auditCatalogResource(resource: CatalogResourceInput): CatalogSeo
     const titleText = seoTitle.toLowerCase();
     const descriptionText = seoDescription.toLowerCase();
     const bodyText = text.toLowerCase();
-    if (!titleText.includes(focusKeyword)) add(5, issue("keyword_missing_title", "Focus keyword is missing from the SEO title", "Medium", "Low", "Use the focus keyword naturally in the SEO title."));
-    if (!descriptionText.includes(focusKeyword)) add(3, issue("keyword_missing_description", "Focus keyword is missing from the meta description", "Low", "Low", "Use the focus keyword naturally in the meta description."));
-    if (!bodyText.includes(focusKeyword)) add(5, issue("keyword_missing_content", "Focus keyword is missing from the description", "Medium", "Medium", `Explain the ${resource.type} using the focus keyword naturally.`));
+    if (!containsPhrase(titleText, focusKeyword)) add(5, issue("keyword_missing_title", "Focus keyword is missing from the SEO title", "Medium", "Low", "Use the focus keyword naturally in the SEO title."));
+    if (!containsPhrase(descriptionText, focusKeyword)) add(3, issue("keyword_missing_description", "Focus keyword is missing from the meta description", "Low", "Low", "Use the focus keyword naturally in the meta description."));
+    if (!containsPhrase(bodyText, focusKeyword)) add(5, issue("keyword_missing_content", "Focus keyword is missing from the description", "Medium", "Medium", `Explain the ${resource.type} using the focus keyword naturally.`));
     if (!resource.handle.toLowerCase().includes(slugify(focusKeyword))) add(2, issue("keyword_missing_url", "Focus keyword is missing from the URL", "Low", "Medium", "Include the primary topic in the Shopify URL handle when a redirect is acceptable."));
-    if (/<h[2-4]\b/i.test(resource.descriptionHtml) && !headingText(resource.descriptionHtml).includes(focusKeyword)) add(2, issue("keyword_missing_heading", "Focus keyword is missing from subheadings", "Low", "Low", "Use the focus keyword naturally in one relevant H2 or H3 heading."));
-    if (resource.imageAlt.trim() && !resource.imageAlt.toLowerCase().includes(focusKeyword)) add(2, issue("keyword_missing_image_alt", "Focus keyword is missing from image alt text", "Low", "Low", "Use the focus keyword in alt text only when it accurately describes the image."));
+    if (/<h[2-4]\b/i.test(resource.descriptionHtml) && !containsPhrase(headingText(resource.descriptionHtml), focusKeyword)) add(2, issue("keyword_missing_heading", "Focus keyword is missing from subheadings", "Low", "Low", "Use the focus keyword naturally in one relevant H2 or H3 heading."));
+    if (resource.imageAlt.trim() && !containsPhrase(resource.imageAlt, focusKeyword)) add(2, issue("keyword_missing_image_alt", "Focus keyword is missing from image alt text", "Low", "Low", "Use the focus keyword in alt text only when it accurately describes the image."));
   }
+
+  if (resource.seoHidden) score = Math.min(score, HIDDEN_SCORE_CAP);
 
   return {
     ...resource,
@@ -144,7 +155,7 @@ export function getCatalogContentHash(resource: CatalogResourceInput) {
     status: resource.status, seoTitle: resource.seoTitle, seoDescription: resource.seoDescription,
     imageUrl: resource.imageUrl, imageAlt: resource.imageAlt, imageWidth: resource.imageWidth,
     imageHeight: resource.imageHeight, itemCount: resource.itemCount,
-    focusKeyword: resource.focusKeyword || "",
+    focusKeyword: resource.focusKeyword || "", seoHidden: Boolean(resource.seoHidden),
   });
   // A fast deterministic fingerprint is sufficient here; this value only detects changed content.
   let hash = 2166136261;

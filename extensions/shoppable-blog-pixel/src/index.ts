@@ -36,7 +36,9 @@ register(({ analytics, browser, init, settings }) => {
 
   async function setAttribution(articleId: unknown, blockId: unknown, trackingToken?: unknown) {
     const normalizedArticleId = normalizeArticleId(articleId);
-    if (!normalizedArticleId) return;
+    // A token-less attribution cannot be recorded server-side; never let it
+    // replace a valid one.
+    if (!normalizedArticleId || !String(trackingToken || "")) return;
 
     try {
       await browser.localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -131,13 +133,17 @@ register(({ analytics, browser, init, settings }) => {
       const url = new URL(urlString);
       const utmMedium = url.searchParams.get("utm_medium");
       
-      // If the user came from the Shoppable Blog Widget
-      if (utmMedium === "shoppable_blog") {
+      // Legacy widget links carried the signed token in the URL. Current links
+      // only carry optional campaign UTMs; attribution then comes from the
+      // shoppable_blog:product_selected event below, and must not be
+      // overwritten by a token-less page view.
+      const legacyToken = url.searchParams.get("sbs_token");
+      if (utmMedium === "shoppable_blog" && legacyToken) {
         const articleId = normalizeArticleId(url.searchParams.get("utm_term"));
         const blockId = cleanBlockId(url.searchParams.get("utm_content"));
-        
+
         if (articleId) {
-          await setAttribution(articleId, blockId, url.searchParams.get("sbs_token"));
+          await setAttribution(articleId, blockId, legacyToken);
         }
       }
     } catch (e) {}

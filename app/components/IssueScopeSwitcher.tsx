@@ -1,12 +1,13 @@
 import { useNavigate } from "@remix-run/react";
 import { Button, ButtonGroup, InlineStack, Text } from "@shopify/polaris";
 
-export type IssueScope = "articles" | "products" | "collections";
+export type IssueScope = "articles" | "products" | "collections" | "pages";
 
 const SCOPES: { id: IssueScope; label: string; url: string }[] = [
   { id: "articles", label: "Blog posts", url: "/app/seo" },
   { id: "products", label: "Products", url: "/app/catalog-seo?view=issues&type=product" },
   { id: "collections", label: "Collections", url: "/app/catalog-seo?view=issues&type=collection" },
+  { id: "pages", label: "Pages & home", url: "/app/catalog-seo?view=issues&type=page" },
 ];
 
 /**

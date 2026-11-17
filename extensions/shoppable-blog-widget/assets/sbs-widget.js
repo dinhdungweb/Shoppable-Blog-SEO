@@ -191,6 +191,7 @@
         widget.dataset.styleLocked === "true" ? style : normalizeWidgetStyle(config.widgetStyle || style);
       if (effectiveStyle !== style) rebuildWidgetShell(widget, effectiveStyle);
       renderProducts(widget, payload.products, config, effectiveStyle);
+      injectItemListSchema(widget, payload.products);
       setupCarousel(widget, effectiveStyle, config);
       payload.products.forEach((product) => {
         trackEvent(appUrl, shop, articleId, blockId, product.productId, "impression", product.trackingToken);
@@ -221,6 +222,39 @@
     });
   }
 
+  // Describes the featured products as an ItemList of canonical product URLs
+  // (no UTM or tracking parameters). Product-level markup stays on product pages,
+  // where Shopify themes already publish it.
+  function injectItemListSchema(widget, products) {
+    try {
+      const previous = widget.querySelector("script[data-sbs-item-list]");
+      if (previous) previous.remove();
+      const root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
+      const items = products
+        .filter((product) => product && product.productHandle)
+        .map((product, index) => ({
+          "@type": "ListItem",
+          position: index + 1,
+          url: new URL(`${root.replace(/\/?$/, "/")}products/${encodeURIComponent(product.productHandle)}`, window.location.origin).href,
+          ...(product.productTitle ? { name: String(product.productTitle) } : {}),
+        }));
+      if (!items.length) return;
+      const script = document.createElement("script");
+      script.type = "application/ld+json";
+      script.setAttribute("data-sbs-item-list", "");
+      script.textContent = JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        name: "Products featured in this article",
+        numberOfItems: items.length,
+        itemListElement: items,
+      });
+      widget.appendChild(script);
+    } catch (error) {
+      // Structured data is optional; never break the widget.
+    }
+  }
+
   function createProductCard(widget, product, config) {
     const card = document.createElement("div");
     const cardLayout = normalizeCardLayout(config.productCardLayout);
@@ -228,7 +262,11 @@
     card.setAttribute("role", "article");
     card.setAttribute("aria-label", product.productTitle || "Product");
 
-    const productUrl = productUrlFor(product, config, widget);
+    // Search engines only see the clean canonical URL in href. Campaign UTMs
+    // (if enabled) are added at click time, and attribution travels through
+    // localStorage and the web pixel instead of URL parameters.
+    const productUrl = productUrlFor(product);
+    const navigationUrl = navigationUrlFor(productUrl, config, widget);
     const productLinkAttrs = productLinkAttributes(productUrl, product.productId, config);
     const ctaText = buttonText(config);
     let html = "";
@@ -284,28 +322,40 @@
         return;
       }
 
-      publishAttribution(widget, product.productId, product.trackingToken);
-      trackEvent(
-        widget.dataset.appUrl,
-        widget.dataset.shop,
-        widget.dataset.articleId,
-        cleanBlockId(widget.dataset.blockId),
-        product.productId,
-        "click",
-        product.trackingToken,
-      );
-      
+      recordProductClick(widget, product);
+
       event.preventDefault();
       event.stopPropagation();
-      
+
       if (config.openInNewTab === false) {
-        window.location.href = productUrl;
+        window.location.href = navigationUrl;
       } else {
-        window.open(productUrl, "_blank", "noopener,noreferrer");
+        window.open(navigationUrl, "_blank", "noopener,noreferrer");
+      }
+    });
+
+    // Middle-click opens the plain href in a new tab without a "click" event;
+    // record attribution so the product tab can still credit the article.
+    card.addEventListener("auxclick", (event) => {
+      if (event.button === 1 && event.target instanceof Element && event.target.closest("a[href]")) {
+        recordProductClick(widget, product);
       }
     });
 
     return card;
+  }
+
+  function recordProductClick(widget, product) {
+    publishAttribution(widget, product.productId, product.trackingToken);
+    trackEvent(
+      widget.dataset.appUrl,
+      widget.dataset.shop,
+      widget.dataset.articleId,
+      cleanBlockId(widget.dataset.blockId),
+      product.productId,
+      "click",
+      product.trackingToken,
+    );
   }
 
   function publishAttribution(widget, productId, trackingToken) {
@@ -612,22 +662,27 @@
     return text || "View product";
   }
 
-  function productUrlFor(product, config, widget) {
-    const baseUrl = `/products/${product.productHandle}`;
-    if (!shouldAppendUtm(config)) return baseUrl;
+  // Canonical product URL, locale-aware (Shopify Markets prefixes such as /fr/).
+  function productUrlFor(product) {
+    const root = ((window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/").replace(/\/?$/, "/");
+    return `${root}products/${encodeURIComponent(product.productHandle || "")}`;
+  }
+
+  // URL used when a shopper clicks: optional campaign UTMs for the merchant's
+  // analytics. Never contains the tracking token, which stays out of URLs.
+  function navigationUrlFor(productUrl, config, widget) {
+    if (!shouldAppendUtm(config)) return productUrl;
 
     const rawArticleId = (widget.dataset.articleId || "").split("/").pop() || "";
-
     const params = new URLSearchParams({
       utm_source: "blog",
       utm_medium: "shoppable_blog",
       utm_campaign: "shoppable_blog_products",
       utm_content: cleanBlockId(widget.dataset.blockId),
       ...(rawArticleId ? { utm_term: rawArticleId } : {}),
-      ...(product.trackingToken ? { sbs_token: product.trackingToken } : {})
     });
 
-    return `${baseUrl}?${params.toString()}`;
+    return `${productUrl}?${params.toString()}`;
   }
 
   function shouldAppendUtm(config) {

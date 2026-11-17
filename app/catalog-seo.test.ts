@@ -34,3 +34,21 @@ describe("catalog SEO audit", () => {
     expect(audits.every((audit) => audit.issues.some((entry) => entry.type === "duplicate_seo_title"))).toBe(true);
   });
 });
+
+describe("catalog SEO scope", () => {
+  it("audits online store pages without product image requirements", () => {
+    const audit = auditCatalogResource({ ...base, id: "gid://shopify/Page/3", type: "page", imageUrl: "", imageAlt: "", focusKeyword: "" });
+    expect(audit.issues.some((entry) => /image/.test(entry.type))).toBe(false);
+  });
+
+  it("caps resources hidden from search engines", () => {
+    const audit = auditCatalogResource({ ...base, seoHidden: true });
+    expect(audit.issues[0]?.type).toBe("hidden_from_search");
+    expect(audit.score).toBe(20);
+  });
+
+  it("matches focus keywords as whole words", () => {
+    const audit = auditCatalogResource({ ...base, focusKeyword: "ring", seoTitle: "Silver earrings for everyday wear", descriptionHtml: base.descriptionHtml.replace(/ring/gi, "earrings") });
+    expect(audit.issues.map((entry) => entry.type)).toEqual(expect.arrayContaining(["keyword_missing_title", "keyword_missing_content"]));
+  });
+});

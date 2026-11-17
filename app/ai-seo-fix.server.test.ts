@@ -315,6 +315,7 @@ describe("AI SEO Fix Copilot", () => {
     const result = await generateAiSeoFix({
       ...baseInput(),
       issues: [{ type: "external_links", label: "External links", message: "Add one.", severity: "warning" }],
+      verifyLink: async () => true,
     });
 
     expect(result.manualActions[0]?.suggestedLinks).toEqual([expect.objectContaining({
@@ -430,3 +431,36 @@ function stubResult(result: unknown) {
     choices: [{ message: { content: JSON.stringify(result) } }],
   }), { status: 200 })));
 }
+
+describe("AI SEO Fix source verification", () => {
+  it("removes suggested sources that do not respond as live pages", async () => {
+    process.env.NINE_ROUTER_BASE_URL = "https://router.test/v1";
+    process.env.NINE_ROUTER_API_KEY = "key";
+    process.env.NINE_ROUTER_MODEL = "model";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        summary: "Sources ready.",
+        changes: [],
+        manualActions: [{
+          issueType: "eeat_sources",
+          explanation: "Cite sources.",
+          action: "Review the sources.",
+          suggestedLinks: [
+            { url: "https://live.example/real", title: "Real", anchorText: "real study", reason: "Supports claim." },
+            { url: "https://live.example/invented", title: "Invented", anchorText: "made up", reason: "Hallucinated." },
+          ],
+        }],
+      }) } }],
+    }))));
+    const checked: string[] = [];
+    const result = await generateAiSeoFix({
+      issues: [{ type: "eeat_sources", label: "Sources", message: "Add sources.", severity: "info" }],
+      title: "Travel bags", body: "<p>Body text about bags.</p>", excerpt: "", metaTitle: "", metaDescription: "",
+      featuredImageAlt: "", hasFeaturedImage: false, focusKeyword: "",
+      verifyLink: async (url) => { checked.push(url); return url.endsWith("/real"); },
+    });
+    expect(checked).toHaveLength(2);
+    expect(result.manualActions[0].suggestedLinks.map((link) => link.url)).toEqual(["https://live.example/real"]);
+    expect(result.manualActions[0].action).toContain("1 suggested source(s) were removed");
+  });
+});

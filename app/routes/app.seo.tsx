@@ -37,7 +37,11 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
 import { getLimitsForPlan, type PlanLimits } from "../pricing-plans";
 import prisma from "../db.server";
-import { analyzeImageSeo, auditContentQuality, auditSeo as runSeoAudit, slugifySeoText } from "../seo-audit";
+import { auditSeo as runSeoAudit, toStoredSeoIssues } from "../seo-audit";
+import { articleSearchPath, buildImpressionsByPath, formatImpressions, issuePriority } from "../seo-priority";
+import { LIVE_ISSUE_PREFIX, auditStorePageSnapshot, livePenalty, type LivePageIssue } from "../live-page-audit";
+import { LIVE_PAGE_LIMIT, fetchPrimaryOrigin, runLiveChecks, type LiveCheckTarget } from "../live-page-audit.server";
+import { getCatalogContentHash } from "../catalog-seo";
 import { fetchShopDomains } from "../shopify-domains.server";
 import { normalizeContentNavConfig } from "../content-navigation";
 import { auditSeoPortfolio } from "../seo-portfolio-audit";
@@ -74,6 +78,7 @@ type ArticleInput = {
   blogTitle: string;
   blogHandle: string;
   authorName: string;
+  seoHidden: boolean;
 };
 
 type StoredSeoInput = {
@@ -94,6 +99,7 @@ type SeoIssue = {
   impact: Impact;
   effort: Effort;
   fix: string;
+  points?: number;
 };
 
 type AuditedPost = ArticleInput & {
@@ -114,7 +120,8 @@ type IssueGroup = {
   affected: number;
   impact: Impact;
   effort: Effort;
-  status: string;
+  /** Google Search Console impressions (28 days) on affected posts. */
+  impressions: number;
   fix: string;
   actionLabel: string;
   examples: string[];
@@ -140,8 +147,8 @@ const DONUT_COLORS = {
   Medium: "#FFC453",
   Low: "#29845A",
 };
-const SEO_AUDIT_VERSION = 7;
-const PORTFOLIO_ISSUE_TYPES = new Set(["duplicate_article_title", "duplicate_seo_title", "duplicate_meta_description", "keyword_cannibalization", "search_intent_overlap", "orphan_article", "near_duplicate_content"]);
+// v8: single engine (seo-audit.ts), Shopify-sourced metadata, area-based scoring.
+const SEO_AUDIT_VERSION = 8;
 
 function safeTokenEqual(supplied: string, expected: string) {
   const suppliedHash = crypto.createHash("sha256").update(supplied).digest();
@@ -237,14 +244,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const auditedPosts: AuditedPost[] = seoRows.map((row) => ({
     id: row.articleId, title: row.articleTitle || "Untitled post", handle: row.articleHandle, body: "", summary: "", publishedAt: null,
     imageUrl: row.imageUrl, imageAlt: row.imageAlt, imageWidth: 0, imageHeight: 0, updatedAt: "", seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
-    blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle, authorName: "", productCount: 0,
+    blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle, authorName: "", seoHidden: false, productCount: 0,
     score: row.seoScore, baseScore: row.auditVersion >= SEO_AUDIT_VERSION ? row.baseSeoScore : row.seoScore, issues: parseStoredIssues(row.issues), effectiveSeoTitle: row.metaTitle || row.articleTitle,
     effectiveSeoDescription: row.metaDescription || "", focusKeyword: row.focusKeyword || "",
     lastAnalyzedAt: row.lastAnalyzedAt?.toISOString() || null,
   }));
   auditedPosts.sort((a, b) => a.score - b.score || b.issues.length - a.issues.length || a.title.localeCompare(b.title));
 
-  const issueGroups = buildIssueGroups(auditedPosts);
+  const searchRows = searchConnection?.selectedSiteUrl
+    ? await prisma.searchConsoleMetric.groupBy({
+        by: ["pageUrl"],
+        where: { shop, siteUrl: searchConnection.selectedSiteUrl, windowDays: 28, period: "current" },
+        _sum: { impressions: true },
+      }).catch((error) => {
+        console.error("Search Console impressions unavailable for SEO priority:", error);
+        return [];
+      })
+    : [];
+  const impressionsByPath = buildImpressionsByPath(searchRows.map((row) => ({ pageUrl: row.pageUrl, impressions: row._sum.impressions || 0 })));
+  const issueGroups = buildIssueGroups(auditedPosts, impressionsByPath);
   const issueStats = getIssueStats(issueGroups);
   const averageScore = getAverageScore(auditedPosts);
   const averageOnPageScore = getAverageScore(auditedPosts.map((post) => ({ score: post.baseScore })));
@@ -402,6 +420,7 @@ async function runSeoScan({
         sourceUpdatedAt: true,
         contentHash: true,
         auditVersion: true,
+        liveCheckedAt: true,
       },
     }),
     prisma.resourceSEO.findMany({ where: { shop }, select: { resourceId: true, resourceType: true, contentHash: true, sourceUpdatedAt: true, focusKeyword: true } }),
@@ -434,31 +453,20 @@ async function runSeoScan({
     contentHashMap.set(article.id, contentHash);
     const sourceUpdatedAt = article.updatedAt ? new Date(article.updatedAt) : null;
     const unchanged = Boolean(stored && stored.auditVersion === SEO_AUDIT_VERSION && stored.contentHash === contentHash && datesEqual(stored.sourceUpdatedAt, sourceUpdatedAt));
-    const onPageScore = calculateBlogDetailSeoScore(
-      article,
-      productCountMap.get(article.id) || 0,
-      stored,
-      seoAuditConfig,
-      shop,
-      shopDomains,
-    );
-    const audit = unchanged
-      ? {
-          score: Math.max(0, onPageScore - calculateArticleTechnicalPenalty(article)),
-          issues: parseStoredIssues(stored!.issues).filter((issue) => !PORTFOLIO_ISSUE_TYPES.has(issue.type)),
-        }
-      : auditArticle(article, productCountMap.get(article.id) || 0, seoAuditConfig, stored, shop, shopDomains);
+    // The engine is cheap and deterministic, so every post is re-scored; the
+    // content hash only decides whether a post counts as newly analyzed.
+    const audit = auditArticle(article, productCountMap.get(article.id) || 0, seoAuditConfig, stored, shop, shopDomains);
     if (!unchanged) analyzedCount += 1;
-    baseScoreMap.set(article.id, onPageScore);
+    baseScoreMap.set(article.id, audit.score);
     audits.push({
       ...article,
       productCount: productCountMap.get(article.id) || 0,
       score: audit.score,
-      baseScore: onPageScore,
+      baseScore: audit.score,
       issues: audit.issues,
       lastAnalyzedAt: stored?.lastAnalyzedAt?.toISOString() || null,
-      effectiveSeoTitle: getEffectiveSeoTitle(stored?.metaTitle, article),
-      effectiveSeoDescription: getEffectiveSeoDescription(stored?.metaDescription, article),
+      effectiveSeoTitle: getEffectiveSeoTitle(article),
+      effectiveSeoDescription: getEffectiveSeoDescription(article),
       focusKeyword: textValue(stored?.focusKeyword),
     });
     const processedPosts = index + 1;
@@ -468,7 +476,42 @@ async function runSeoScan({
     }
   }
   await report({ phase: "Analyzing portfolio relationships", progress: 56, totalPosts: articles.length, processedPosts: articles.length, analyzedPosts: analyzedCount });
-  applyPortfolioIssues(audits);
+  // Orphan detection is only reliable when every post was scanned.
+  const scanCoversAllPosts = !Number.isFinite(limits.seoBlogPosts) || articles.length < limits.seoBlogPosts;
+  applyPortfolioIssues(audits, scanCoversAllPosts);
+
+  // ── Live storefront checks ──────────────────────────────────────────────
+  // What Google sees depends on the theme too, so a rotating sample of pages is
+  // fetched from the storefront each scan (least recently checked first).
+  const origin = await fetchPrimaryOrigin(admin);
+  const blogs = new Map(articles.filter((article) => article.blogId && article.blogHandle).map((article) => [article.blogId, { handle: article.blogHandle, title: article.blogTitle }]));
+  const storePageTargets: Array<LiveCheckTarget & { title: string; path: string }> = origin && limits.canCatalogSeo
+    ? [
+        { key: "homepage", url: `${origin}/`, expectArticleSchema: false, title: "Homepage", path: "/" },
+        ...[...blogs].slice(0, 5).map(([blogId, blog]) => ({ key: blogId, url: `${origin}/blogs/${blog.handle}`, expectArticleSchema: false, title: `${blog.title} (blog listing)`, path: `/blogs/${blog.handle}` })),
+      ]
+    : [];
+  const articleTargets: LiveCheckTarget[] = origin
+    ? audits
+        .filter((audit) => audit.publishedAt && !audit.seoHidden && audit.blogHandle && audit.handle)
+        .sort((a, b) => (storedSeoMap.get(a.id)?.liveCheckedAt?.getTime() || 0) - (storedSeoMap.get(b.id)?.liveCheckedAt?.getTime() || 0))
+        .slice(0, LIVE_PAGE_LIMIT)
+        .map((audit) => ({ key: audit.id, url: `${origin}/blogs/${audit.blogHandle}/${audit.handle}`, expectArticleSchema: true }))
+    : [];
+  const liveTargetCount = storePageTargets.length + articleTargets.length;
+  await report({ phase: `Checking live storefront pages (0/${liveTargetCount})`, progress: 57, totalPosts: articles.length, analyzedPosts: analyzedCount });
+  const live = await runLiveChecks([...storePageTargets, ...articleTargets], origin, async (done) => {
+    if (done % 5 === 0 || done === liveTargetCount) await report({ phase: `Checking live storefront pages (${done}/${liveTargetCount})`, progress: 57 + Math.round((done / Math.max(1, liveTargetCount)) * 2), totalPosts: articles.length, analyzedPosts: analyzedCount });
+  });
+  for (const audit of audits) {
+    const result = live.results.get(audit.id);
+    // Posts not checked this scan keep their previous live findings.
+    const liveIssues: SeoIssue[] = result
+      ? result.issues.map(toLiveSeoIssue)
+      : parseStoredIssues(storedSeoMap.get(audit.id)?.issues ?? null).filter((issue) => issue.type.startsWith(LIVE_ISSUE_PREFIX));
+    audit.issues.push(...liveIssues);
+    audit.score = Math.max(0, audit.score - livePenalty(liveIssues));
+  }
   await report({ phase: "Saving results", progress: 60, totalPosts: articles.length, analyzedPosts: analyzedCount });
   const auditDurationMs = Date.now() - scanStartedAt - fetchDurationMs;
 
@@ -480,20 +523,23 @@ async function runSeoScan({
     await prisma.articleSEO.deleteMany({
       where: { shop, articleId: { notIn: articleIds } },
     });
+    const scannedArticleIds = [...articleIds, ...articleIds.map((id) => id.replace(/^gid:\/\/shopify\/Article\//, ""))];
     await prisma.articleProduct.deleteMany({
-      where: { shop, articleId: { notIn: articleIds } },
+      where: { shop, articleId: { notIn: scannedArticleIds } },
     });
   }
 
   const saveAudit = (audit: AuditedPost) => {
       const article = audit;
-      const stored = storedSeoMap.get(audit.id);
-      const metaTitle = textValue(stored?.metaTitle) || null;
-      const metaDescription = textValue(stored?.metaDescription) || null;
+      // Shopify is the source of truth; merchants may edit SEO fields outside the app.
+      const metaTitle = textValue(audit.seoTitle) || null;
+      const metaDescription = textValue(audit.seoDescription) || null;
 
+      const liveCheckedAt = live.results.has(article.id) ? { liveCheckedAt: new Date() } : {};
       return prisma.articleSEO.upsert({
         where: { shop_articleId: { shop, articleId: article.id } },
         update: {
+          ...liveCheckedAt,
           shop,
           articleTitle: article.title,
           seoScore: audit.score,
@@ -513,6 +559,7 @@ async function runSeoScan({
           auditVersion: SEO_AUDIT_VERSION,
         },
         create: {
+          ...liveCheckedAt,
           shop,
           articleId: article.id,
           articleTitle: article.title,
@@ -551,6 +598,19 @@ async function runSeoScan({
   }));
   applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "product"));
   applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "collection"));
+  const storePageAudits: CatalogSeoAudit[] = storePageTargets.flatMap((target) => {
+    const result = live.results.get(target.key);
+    if (!result) return [];
+    const audit = auditStorePageSnapshot(result.snapshot, result.issues);
+    const resource = {
+      id: target.key, type: "page" as const, title: target.title, handle: target.path, descriptionHtml: "", updatedAt: "", status: "ACTIVE",
+      seoTitle: result.snapshot?.title || "", seoDescription: result.snapshot?.metaDescription || "",
+      imageUrl: "", imageAlt: "", imageWidth: 0, imageHeight: 0, itemCount: 0,
+    };
+    return [{ ...resource, score: audit.score, issues: audit.issues, effectiveSeoTitle: resource.seoTitle, effectiveSeoDescription: resource.seoDescription, contentHash: getCatalogContentHash(resource) }];
+  });
+  catalogAudits.push(...storePageAudits);
+  applyCatalogDuplicateIssues(catalogAudits.filter((audit) => audit.type === "page"));
   analyzedCount += catalogAudits.filter((audit) => {
     const stored = storedResourceMap.get(`${audit.type}:${audit.id}`);
     return !stored || stored.contentHash !== audit.contentHash || !datesEqual(stored.sourceUpdatedAt, audit.updatedAt ? new Date(audit.updatedAt) : null);
@@ -560,8 +620,10 @@ async function runSeoScan({
     await Promise.all(batch.map((audit) => saveCatalogAudit(shop, audit)));
   }
   if (limits.canCatalogSeo) {
-    for (const resourceType of ["product", "collection"] as const) {
-      await prisma.resourceSEO.deleteMany({ where: { shop, resourceType, resourceId: { notIn: catalogAudits.filter((audit) => audit.type === resourceType).map((audit) => audit.id) } } });
+    for (const resourceType of ["product", "collection", "page"] as const) {
+      // Store pages that could not be fetched this time keep their previous result.
+      const keep = [...catalogAudits.filter((audit) => audit.type === resourceType).map((audit) => audit.id), ...(resourceType === "page" ? storePageTargets.map((target) => target.key) : [])];
+      await prisma.resourceSEO.deleteMany({ where: { shop, resourceType, resourceId: { notIn: keep } } });
     }
   }
   await report({ phase: "Saving catalog SEO results", progress: 99, totalPosts: articles.length + catalogAudits.length, processedPosts: articles.length + catalogAudits.length, analyzedPosts: analyzedCount });
@@ -573,6 +635,10 @@ async function runSeoScan({
     analyzedCount,
     averageScore: getAverageScore([...audits, ...catalogAudits]),
   };
+}
+
+function toLiveSeoIssue(issue: LivePageIssue): SeoIssue {
+  return { type: issue.type, category: issue.category, label: issue.label, message: issue.message, severity: issue.severity, impact: issue.impact, effort: issue.effort, fix: issue.fix, points: issue.points };
 }
 
 function saveCatalogAudit(shop: string, audit: CatalogSeoAudit) {
@@ -712,7 +778,8 @@ export default function SEOOptimizer() {
     }
 
     if (issue.category === "schema") {
-      navigate("/app/settings");
+      // Structured data comes from the theme and the SEO Schema app block.
+      navigate("/app/theme-setup");
       return;
     }
 
@@ -882,7 +949,7 @@ export default function SEOOptimizer() {
                         { title: "Affected" },
                         { title: "Impact" },
                         { title: "Effort" },
-                        { title: "Status" },
+                        { title: "Impressions (28d)" },
                         { title: "Suggested fix" },
                         { title: "Action" },
                       ]}
@@ -908,7 +975,7 @@ export default function SEOOptimizer() {
                             <Badge tone={getEffortTone(issue.effort)}>{issue.effort}</Badge>
                           </IndexTable.Cell>
                           <IndexTable.Cell>
-                            <Badge tone={issue.status === "Done" ? "success" : issue.status === "Saved scan" ? "info" : undefined}>{issue.status}</Badge>
+                            <Text as="span" variant="bodyMd" tone={issue.impressions ? undefined : "subdued"}>{formatImpressions(issue.impressions)}</Text>
                           </IndexTable.Cell>
                           <IndexTable.Cell>
                             <div className="bp-seo-fix-cell">
@@ -1185,6 +1252,7 @@ async function fetchShopifyArticles(admin: any, limit: number, onPage?: (loadedP
           nodes { id title handle updatedAt publishedAt author { name } body summary image { url altText width height }
             seoTitle: metafield(namespace: "global", key: "title_tag") { value }
             seoDescription: metafield(namespace: "global", key: "description_tag") { value }
+            seoHidden: metafield(namespace: "seo", key: "hidden") { value }
             blog { id title handle }
           }
           pageInfo { hasNextPage endCursor }
@@ -1212,6 +1280,7 @@ async function fetchShopifyArticles(admin: any, limit: number, onPage?: (loadedP
       blogTitle: article.blog?.title || "Blog",
       blogHandle: article.blog?.handle || "",
       authorName: article.author?.name || "",
+      seoHidden: article.seoHidden?.value === "1",
       });
     }
     hasNextPage = Boolean(connection?.pageInfo?.hasNextPage) && (!Number.isFinite(limit) || articles.length < limit);
@@ -1229,689 +1298,11 @@ function auditArticle(
   storedSeo?: StoredSeoInput | null,
   shopDomain?: string,
   shopDomains: string[] = [],
-) {
-  const issues: SeoIssue[] = [];
-  const seoTitle = getEffectiveSeoTitle(storedSeo?.metaTitle, article);
-  const seoDescription = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
-  const body = article.body || "";
-  const bodyText = stripHtml(body);
-  const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
-  const linkStats = analyzeLinks(body, shopDomain, shopDomains);
-  const headings = getHeadingTexts(body);
-  const hasToc =
-    Boolean(config.canContentNavigation) &&
-    Boolean(config.tocEnabled) &&
-    (hasTableOfContents(body) || (Boolean(config.tocAutoInsertEnabled) && headings.length >= 3));
-  const bodyImageAltText = getBodyImageAltText(body);
-  const allImageAltText = `${article.imageAlt || ""} ${bodyImageAltText}`.trim();
-  const hasAnyImage = Boolean(article.imageUrl) || /<img\b/i.test(body);
-  const hasMediaInBody = productCount > 0 || /<img|<iframe|<video/i.test(body);
-  const imageStats = analyzeImageSeo(body);
-  const markupStats = analyzeTechnicalMarkup(body);
-  const focusKeyword = textValue(storedSeo?.focusKeyword);
-  const keywords = focusKeyword
-    .split(",")
-    .map((keyword) => keyword.trim().toLowerCase())
-    .filter(Boolean);
-  const primaryKeyword = keywords[0] || "";
-  const titleLower = seoTitle.toLowerCase();
-  const summaryLower = seoDescription.toLowerCase();
-  const handleLower = (article.handle || "").toLowerCase();
-  const bodyLower = bodyText.toLowerCase();
-  const first10Words = bodyText
-    .split(/\s+/)
-    .slice(0, Math.max(20, Math.floor(wordCount * 0.1)))
-    .join(" ")
-    .toLowerCase();
-
-  const addIssue = (issue: SeoIssue, _penalty: number) => {
-    issues.push(issue);
-  };
-
-  if (!seoDescription) {
-    addIssue(
-      {
-        type: "missing_meta_description",
-        category: "on_page",
-        label: "Missing meta descriptions",
-        message: "Meta descriptions help search engines and shoppers understand each post.",
-        severity: "critical",
-        impact: "High",
-        effort: "Low",
-        fix: "Add a unique 120-160 character meta description.",
-      },
-      18,
-    );
-  } else if (seoDescription.length < 70) {
-    addIssue(
-      {
-        type: "short_meta_description",
-        category: "on_page",
-        label: "Short meta descriptions",
-        message: "Short descriptions may underperform in search results.",
-        severity: "warning",
-        impact: "Medium",
-        effort: "Low",
-        fix: "Expand the meta description with a clearer benefit.",
-      },
-      6,
-    );
-  } else if (seoDescription.length > 165) {
-    addIssue(
-      {
-        type: "long_meta_description",
-        category: "on_page",
-        label: "Long meta descriptions",
-        message: "Long descriptions can be truncated in search results.",
-        severity: "warning",
-        impact: "Low",
-        effort: "Low",
-        fix: "Trim the meta description under 165 characters.",
-      },
-      4,
-    );
-  }
-
-  if (!seoTitle) {
-    addIssue(
-      {
-        type: "missing_seo_title",
-        category: "on_page",
-        label: "Missing SEO titles",
-        message: "SEO titles should be unique and descriptive.",
-        severity: "warning",
-        impact: "Medium",
-        effort: "Low",
-        fix: "Add a unique SEO title for each post.",
-      },
-      12,
-    );
-  } else if (seoTitle.length > 70) {
-    addIssue(
-      {
-        type: "long_seo_title",
-        category: "on_page",
-        label: "Long SEO titles",
-        message: "Long SEO titles can be cut off on search results pages.",
-        severity: "warning",
-        impact: "Low",
-        effort: "Low",
-        fix: "Keep SEO titles under 70 characters.",
-      },
-      4,
-    );
-  }
-
-  if (article.imageUrl && !article.imageAlt.trim()) {
-    addIssue(
-      {
-        type: "missing_image_alt",
-        category: "image",
-        label: "Missing image alt text",
-        message: "Alt text improves accessibility and image search visibility.",
-        severity: "warning",
-        impact: "Medium",
-        effort: "Low",
-        fix: "Add descriptive alt text to blog images.",
-      },
-      8,
-    );
-  }
-
-  if (imageStats.missingAlt > 0) {
-    addIssue({
-      type: "inline_images_missing_alt",
-      category: "image",
-      label: "Inline images missing alt text",
-      message: `${imageStats.missingAlt} inline image(s) have no alt attribute.`,
-      severity: "warning",
-      impact: "Medium",
-      effort: "Low",
-      fix: "Add concise descriptive alt text, or alt=\"\" for decorative images.",
-    }, 5);
-  }
-
-  if (imageStats.missingDimensions > 0) {
-    addIssue({
-      type: "images_missing_dimensions",
-      category: "image",
-      label: "Images missing dimensions",
-      message: `${imageStats.missingDimensions} inline image(s) are missing width or height attributes.`,
-      severity: "warning",
-      impact: "Medium",
-      effort: "Low",
-      fix: "Set intrinsic width and height to reduce layout shift.",
-    }, 3);
-  }
-
-  if (imageStats.genericFilenames > 0) {
-    addIssue({
-      type: "generic_image_filenames",
-      category: "image",
-      label: "Generic image filenames",
-      message: `${imageStats.genericFilenames} image(s) use a generic filename that provides little context.`,
-      severity: "info",
-      impact: "Low",
-      effort: "Medium",
-      fix: "Use short descriptive filenames when uploading replacement images.",
-    }, 1);
-  }
-
-  if (imageStats.stuffedAlt > 0) {
-    addIssue({ type: "image_alt_stuffing", category: "image", label: "Over-optimized alt text", message: `${imageStats.stuffedAlt} image alt value(s) are overly long or repeat terms.`, severity: "warning", impact: "Medium", effort: "Low", fix: "Use one concise, natural description of each image." }, 3);
-  }
-  if (imageStats.decorativeWithAlt > 0) {
-    addIssue({ type: "decorative_image_alt", category: "image", label: "Decorative image alt text", message: `${imageStats.decorativeWithAlt} decorative image(s) contain descriptive alt text.`, severity: "warning", impact: "Low", effort: "Low", fix: "Use alt=\"\" for decorative or aria-hidden images." }, 1);
-  }
-  if (imageStats.uncrawlableSources > 0) {
-    addIssue({ type: "uncrawlable_image_urls", category: "image", label: "Uncrawlable image URLs", message: `${imageStats.uncrawlableSources} image(s) use a source search engines cannot reliably crawl.`, severity: "critical", impact: "High", effort: "Medium", fix: "Upload the image through Shopify and use its HTTPS CDN URL." }, 5);
-  }
-  const featuredImageTooSmall = Boolean(article.imageUrl && article.imageWidth && article.imageHeight && article.imageWidth * article.imageHeight < 50_000);
-  if (imageStats.tooSmall > 0 || featuredImageTooSmall) {
-    const count = imageStats.tooSmall + (featuredImageTooSmall ? 1 : 0);
-    addIssue({ type: "small_article_images", category: "image", label: "Small article images", message: `${count} image(s) have known dimensions below 50,000 pixels.`, severity: "warning", impact: "Medium", effort: "Medium", fix: "Replace important images with higher-resolution Shopify-hosted images." }, 3);
-  }
-
-  if (!article.authorName.trim()) {
-    addIssue({
-      type: "missing_author",
-      category: "content",
-      label: "Missing author attribution",
-      message: "The article has no author information in Shopify data.",
-      severity: "warning",
-      impact: "Medium",
-      effort: "Low",
-      fix: "Assign an accurate author and expose a useful author profile in the theme.",
-    }, 4);
-  }
-
-  auditContentQuality({
-    body,
-    summary: seoDescription,
-    authorName: article.authorName,
-    publishedAt: article.publishedAt,
-    updatedAt: article.updatedAt,
-    productCount,
-    shopDomain,
-    shopDomains,
-  })
-    .filter((issue) => issue.severity === "warning" && issue.type !== "eeat_author")
-    .forEach((issue) => addIssue({
-      type: issue.type,
-      category: "content",
-      label: issue.label,
-      message: issue.message,
-      severity: issue.severity,
-      impact: issue.impact || "Low",
-      effort: issue.effort || "Low",
-      fix: issue.fix || "Review this item and improve it only when it helps readers.",
-    }, 0));
-
-  if (markupStats.unsafeLinks > 0) {
-    addIssue({
-      type: "unsafe_or_uncrawlable_links",
-      category: "on_page",
-      label: "Uncrawlable links",
-      message: `${markupStats.unsafeLinks} link(s) use an empty or JavaScript URL.`,
-      severity: "critical",
-      impact: "High",
-      effort: "Low",
-      fix: "Replace empty and JavaScript href values with real crawlable URLs or buttons.",
-    }, 8);
-  }
-
-  if (markupStats.skippedHeadingLevels > 0) {
-    addIssue({
-      type: "heading_hierarchy",
-      category: "content",
-      label: "Heading hierarchy",
-      message: `${markupStats.skippedHeadingLevels} heading transition(s) skip a level.`,
-      severity: "warning",
-      impact: "Low",
-      effort: "Low",
-      fix: "Keep the outline sequential, such as H2 followed by H3 rather than H4.",
-    }, 2);
-  }
-
-  if (markupStats.duplicateHeadingIds > 0) {
-    addIssue({
-      type: "duplicate_heading_ids",
-      category: "on_page",
-      label: "Duplicate heading anchors",
-      message: `${markupStats.duplicateHeadingIds} heading id(s) are duplicated and can break TOC links.`,
-      severity: "warning",
-      impact: "Medium",
-      effort: "Low",
-      fix: "Give every heading a unique id value.",
-    }, 3);
-  }
-
-  if (productCount === 0) {
-    addIssue(
-      {
-        type: "no_linked_products",
-        category: "product_linking",
-        label: "No linked products",
-        message: "Posts without products cannot drive shoppable engagement.",
-        severity: "critical",
-        impact: "High",
-        effort: "Medium",
-        fix: "Link relevant products to the post.",
-      },
-      18,
-    );
-  }
-
-  if (wordCount < 250) {
-    addIssue(
-      {
-        type: "thin_content",
-        category: "content",
-        label: "Thin content",
-        message: `Content is ${wordCount} words long. Confirm that it completely answers the intended reader need; there is no required SEO word count.`,
-        severity: wordCount < 80 ? "critical" : "warning",
-        impact: wordCount < 80 ? "High" : "Medium",
-        effort: "Medium",
-        fix: "Add original evidence, examples, comparisons, or missing answers—not filler text.",
-      },
-      8,
-    );
-  } else if (wordCount < 600) {
-    addIssue(
-      {
-        type: "short_content",
-        category: "content",
-        label: "Short content",
-        message: `Content is ${wordCount} words long. Expand it only if important questions or evidence are missing.`,
-        severity: "info",
-        impact: "Low",
-        effort: "Medium",
-        fix: "Review search intent and add only information that improves the reader's outcome.",
-      },
-      5,
-    );
-  }
-
-  if (!hasMediaInBody && !article.imageUrl) {
-    addIssue(
-      {
-        type: "missing_media",
-        category: "content",
-        label: "Missing media",
-        message: "Add images, products, or videos to improve content readability.",
-        severity: "warning",
-        impact: "Medium",
-        effort: "Medium",
-        fix: "Add a featured image, inline media, or a linked product block.",
-      },
-      5,
-    );
-  }
-
-  const longParagraphs = body.split(/<\/p>/i).filter((paragraph) => stripHtml(paragraph).split(/\s+/).length > 120);
-  if (longParagraphs.length > 0) {
-    addIssue(
-      {
-        type: "long_paragraphs",
-        category: "content",
-        label: "Long paragraphs",
-        message: "Some paragraphs are too long. Keep paragraphs short and easy to scan.",
-        severity: "warning",
-        impact: "Low",
-        effort: "Low",
-        fix: "Split long paragraphs into shorter sections.",
-      },
-      3,
-    );
-  }
-
-  if (!hasToc) {
-    addIssue(
-      {
-        type: "missing_toc",
-        category: "content",
-        label: "Missing table of contents",
-        message: config.canContentNavigation
-          ? "You don't seem to be using a Table of Contents."
-          : "Table of Contents is not available on your current plan.",
-        severity: "warning",
-        impact: "Low",
-        effort: "Low",
-        fix: config.canContentNavigation
-          ? "Enable Table of Contents in Settings, or add a TOC shortcode/block."
-          : "Upgrade your plan to use Table of Contents.",
-      },
-      2,
-    );
-  }
-
-  if (headings.length === 0) {
-    addIssue(
-      {
-        type: "missing_subheadings",
-        category: "content",
-        label: "Missing subheadings",
-        message: "Subheadings make posts easier to scan and understand.",
-        severity: "info",
-        impact: "Low",
-        effort: "Low",
-        fix: "Add clear H2/H3 sections to structure the article.",
-      },
-      4,
-    );
-  }
-
-  if (!article.handle || article.handle.length > 75) {
-    addIssue(
-      {
-        type: "long_url",
-        category: "on_page",
-        label: "URL length",
-        message: "URL is too long. Consider shortening it.",
-        severity: "warning",
-        impact: "Low",
-        effort: "Low",
-        fix: "Use a short descriptive URL handle.",
-      },
-      2,
-    );
-  }
-
-  if (linkStats.external < 1) {
-    addIssue(
-      {
-        type: "missing_external_links",
-        category: "content",
-        label: "Missing external links",
-        message: "Link out to external resources.",
-        severity: "warning",
-        impact: "Medium",
-        effort: "Low",
-        fix: "Add a relevant external reference link.",
-      },
-      3,
-    );
-  }
-
-  if (linkStats.dofollowExternal < 1) {
-    addIssue(
-      {
-        type: "missing_dofollow_external_links",
-        category: "content",
-        label: "External link qualification",
-        message: "No standard external reference link was found. This is optional when no citation would help readers.",
-        severity: "info",
-        impact: "Low",
-        effort: "Low",
-        fix: "When citing evidence, use a relevant source and qualify sponsored or user-generated links appropriately.",
-      },
-      2,
-    );
-  }
-
-  if (linkStats.internal < 1) {
-    addIssue(
-      {
-        type: "missing_internal_links",
-        category: "content",
-        label: "Missing internal links",
-        message: "Add internal links in your content.",
-        severity: "warning",
-        impact: "Medium",
-        effort: "Low",
-        fix: "Link to another blog post, collection, product, or page on the store.",
-      },
-      3,
-    );
-  }
-
-  if (!/\d/.test(seoTitle)) {
-    addIssue(
-      {
-        type: "title_number",
-        category: "on_page",
-        label: "Title format opportunity",
-        message: "A number may improve clarity for list or comparison posts, but it is not an SEO requirement.",
-        severity: "info",
-        impact: "Low",
-        effort: "Low",
-        fix: "Use a number only when the content genuinely follows a numbered format.",
-      },
-      2,
-    );
-  }
-
-  if (primaryKeyword) {
-    const occurrences = bodyLower.split(primaryKeyword).length - 1;
-    const density = wordCount > 0 ? ((occurrences * primaryKeyword.split(" ").length) / wordCount) * 100 : 0;
-    const inTitle = titleLower.includes(primaryKeyword);
-    const inSummary = summaryLower.includes(primaryKeyword);
-    const inHandle = handleLower.includes(slugifyKeyword(primaryKeyword));
-    const inFirst10 = first10Words.includes(primaryKeyword);
-    const inHeading = headings.some((heading) => heading.toLowerCase().includes(primaryKeyword));
-    const inImageAlt = hasAnyImage && allImageAltText.toLowerCase().includes(primaryKeyword);
-
-    if (!inTitle) {
-      addIssue(
-        {
-          type: "focus_keyword_title",
-          category: "on_page",
-          label: "Focus keyword in title",
-          message: "Add Focus Keyword to the SEO title.",
-          severity: "critical",
-          impact: "High",
-          effort: "Low",
-          fix: "Add the primary focus keyword to the SEO title.",
-        },
-        10,
-      );
-    } else if (titleLower.indexOf(primaryKeyword) >= 20) {
-      addIssue(
-        {
-          type: "focus_keyword_title_position",
-          category: "on_page",
-          label: "Focus keyword position",
-          message: "Use the Focus Keyword near the beginning of SEO title.",
-          severity: "warning",
-          impact: "Low",
-          effort: "Low",
-          fix: "Move the focus keyword closer to the start of the SEO title.",
-        },
-        1,
-      );
-    }
-
-    if (!inSummary) {
-      addIssue(
-        {
-          type: "focus_keyword_meta",
-          category: "on_page",
-          label: "Focus keyword in meta",
-          message: "Add Focus Keyword to your SEO Meta Description.",
-          severity: "warning",
-          impact: "Medium",
-          effort: "Low",
-          fix: "Include the focus keyword naturally in the meta description.",
-        },
-        5,
-      );
-    }
-
-    if (!inHandle) {
-      addIssue(
-        {
-          type: "focus_keyword_url",
-          category: "on_page",
-          label: "Focus keyword in URL",
-          message: "Use Focus Keyword in the URL.",
-          severity: "warning",
-          impact: "Medium",
-          effort: "Low",
-          fix: "Add the focus keyword to the article handle.",
-        },
-        5,
-      );
-    }
-
-    if (!inFirst10) {
-      addIssue(
-        {
-          type: "focus_keyword_beginning",
-          category: "content",
-          label: "Focus keyword at start",
-          message: "Use Focus Keyword at the beginning of your content.",
-          severity: "warning",
-          impact: "Medium",
-          effort: "Low",
-          fix: "Mention the focus keyword in the opening paragraph.",
-        },
-        5,
-      );
-    }
-
-    if (occurrences === 0) {
-      addIssue(
-        {
-          type: "focus_keyword_content",
-          category: "content",
-          label: "Focus keyword in content",
-          message: "Use Focus Keyword in the content.",
-          severity: "critical",
-          impact: "High",
-          effort: "Medium",
-          fix: "Mention the focus keyword naturally in the article body.",
-        },
-        15,
-      );
-    } else if (density > 4) {
-      addIssue(
-        {
-          type: "keyword_density",
-          category: "content",
-          label: "Keyword density",
-          message: `The exact phrase appears at ${density.toFixed(2)}% density and may read repetitively.`,
-          severity: "warning",
-          impact: "Low",
-          effort: "Medium",
-          fix: "Replace repetitive exact matches with natural language and useful topic variants.",
-        },
-        2,
-      );
-    }
-
-    if (!inHeading) {
-      addIssue(
-        {
-          type: "focus_keyword_heading",
-          category: "content",
-          label: "Focus keyword in subheadings",
-          message: "Use Focus Keyword in subheading(s) like H2, H3, H4, etc.",
-          severity: "warning",
-          impact: "Low",
-          effort: "Medium",
-          fix: "Add the focus keyword to one useful H2 or H3.",
-        },
-        2,
-      );
-    }
-
-    if (!inImageAlt) {
-      addIssue(
-        {
-          type: "focus_keyword_image_alt",
-          category: "image",
-          label: "Focus keyword in image alt",
-          message: "Add an image with your Focus Keyword as alt text.",
-          severity: "warning",
-          impact: "Low",
-          effort: "Low",
-          fix: "Add the focus keyword to a relevant image alt text.",
-        },
-        2,
-      );
-    }
-
-    keywords.slice(1).forEach((keyword, index) => {
-      if (bodyLower.split(keyword).length - 1 === 0) {
-        addIssue(
-          {
-            type: `secondary_keyword_${index + 1}`,
-            category: "content",
-            label: "Secondary keyword in content",
-            message: `Secondary keyword "${keyword}" does not appear in the content.`,
-            severity: "warning",
-            impact: "Low",
-            effort: "Low",
-            fix: "Mention the secondary keyword naturally if it fits the article.",
-          },
-          3,
-        );
-      }
-    });
-  } else {
-    addIssue(
-      {
-        type: "missing_focus_keyword",
-        category: "on_page",
-        label: "Focus keyword not set",
-        message: "Set a focus keyword to complete keyword placement, relevance, and cannibalization checks.",
-        severity: "warning",
-        impact: "Medium",
-        effort: "Low",
-        fix: "Choose the primary search topic for this article, then review the keyword checks without forcing unnatural repetition.",
-      },
-      30,
-    );
-  }
-
-  if (!config.addBlogSchema || (productCount > 0 && !config.addProductSchema)) {
-    addIssue(
-      {
-        type: "schema_disabled",
-        category: "schema",
-        label: "Schema settings disabled",
-        message: "Structured data can help eligible rich results.",
-        severity: "info",
-        impact: "Low",
-        effort: "Low",
-        fix: "Enable blog and product schema in Settings.",
-      },
-      3,
-    );
-  }
-
-  return {
-    score: Math.max(
-      0,
-      calculateBlogDetailSeoScore(article, productCount, storedSeo, config, shopDomain, shopDomains) -
-        calculateArticleTechnicalPenalty(article),
-    ),
-    issues,
-  };
-}
-
-function calculateArticleTechnicalPenalty(article: Pick<ArticleInput, "body" | "authorName">) {
-  const markupStats = analyzeTechnicalMarkup(article.body || "");
-  return (
-    (article.authorName.trim() ? 0 : 4) +
-    Math.min(10, markupStats.unsafeLinks * 5 + markupStats.skippedHeadingLevels + markupStats.duplicateHeadingIds * 2)
-  );
-}
-
-function calculateBlogDetailSeoScore(
-  article: ArticleInput,
-  productCount: number,
-  storedSeo?: StoredSeoInput | null,
-  config: SeoAuditConfig = {},
-  shopDomain?: string,
-  shopDomains: string[] = [],
-) {
-  const title = getEffectiveSeoTitle(storedSeo?.metaTitle, article);
-  const summary = getEffectiveSeoDescription(storedSeo?.metaDescription, article);
-  return runSeoAudit({
-    title,
+): { score: number; issues: SeoIssue[] } {
+  const result = runSeoAudit({
+    title: getEffectiveSeoTitle(article),
     handle: article.handle || "",
-    summary,
+    summary: getEffectiveSeoDescription(article),
     body: article.body || "",
     hasImage: Boolean(article.imageUrl),
     imageAlt: article.imageAlt || "",
@@ -1927,119 +1318,26 @@ function calculateBlogDetailSeoScore(
     canUseTableOfContents: Boolean(config.canContentNavigation),
     tocEnabled: Boolean(config.tocEnabled),
     tocAutoInsertEnabled: Boolean(config.tocAutoInsertEnabled),
-  }).score;
-}
-
-function analyzeLinks(body: string, shopDomain?: string, shopDomains: string[] = []) {
-  const stats = { internal: 0, external: 0, dofollowExternal: 0 };
-  const shopHosts = buildShopHosts(shopDomain, shopDomains);
-  const anchorRegex = /<a\b([^>]*)>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = anchorRegex.exec(body || "")) !== null) {
-    const attrs = match[1] || "";
-    const href = getHtmlAttribute(attrs, "href").trim();
-    if (!href || /^(mailto:|tel:|sms:|javascript:)/i.test(href)) continue;
-
-    const rel = getHtmlAttribute(attrs, "rel").toLowerCase();
-    const isNoFollow = /\b(nofollow|sponsored|ugc)\b/i.test(rel);
-
-    if (isInternalHref(href, shopHosts)) {
-      stats.internal += 1;
-    } else {
-      stats.external += 1;
-      if (!isNoFollow) stats.dofollowExternal += 1;
-    }
-  }
-
-  return stats;
-}
-
-function getHtmlAttribute(attrs: string, name: string) {
-  const match = attrs.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
-  return match?.[2] || match?.[3] || match?.[4] || "";
-}
-
-function isInternalHref(href: string, shopHosts: Set<string>) {
-  const trimmed = href.trim();
-  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("/")) return true;
-
-  try {
-    const url = new URL(trimmed);
-    const host = normalizeHost(url.hostname);
-    return Array.from(shopHosts).some((shopHost) => host === shopHost || host.endsWith(`.${shopHost}`));
-  } catch {
-    return true;
-  }
-}
-
-function buildShopHosts(shopDomain?: string, shopDomains: string[] = []) {
-  const hosts = new Set<string>();
-
-  [shopDomain, ...shopDomains].forEach((domain) => {
-    const host = normalizeHost(domain || "");
-    if (host) hosts.add(host);
+    hiddenFromSearch: article.seoHidden,
   });
-
-  return hosts;
-}
-
-function normalizeHost(value: string) {
-  return value
-    .replace(/^https?:\/\//i, "")
-    .split(/[/?#]/)[0]
-    .replace(/^www\./i, "")
-    .toLowerCase();
-}
-
-function getHeadingTexts(body: string) {
-  const headings: string[] = [];
-  const headingRegex = /<h[2-6][^>]*>(.*?)<\/h[2-6]>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = headingRegex.exec(body || "")) !== null) {
-    headings.push(stripHtml(match[1] || ""));
+  const issues: SeoIssue[] = toStoredSeoIssues(result.issues);
+  if (productCount === 0) {
+    // A shoppable-blog metric, not an SEO problem: listed for convenience, never scored.
+    issues.push({
+      type: "no_linked_products",
+      category: "product_linking",
+      label: "No linked products",
+      message: "This post has no shoppable products. This does not affect the SEO score.",
+      severity: "info",
+      impact: "Low",
+      effort: "Medium",
+      fix: "Link products that readers of this post are likely to buy.",
+    });
   }
-
-  return headings;
+  return { score: result.score, issues };
 }
 
-function hasTableOfContents(body: string) {
-  return /\[\[SBS_TOC(?::[^\]]+)?\]\]/i.test(body) || /data-bp-content-nav=["']toc["']|class=["'][^"']*\bbp-toc\b/i.test(body);
-}
-
-function getBodyImageAltText(body: string) {
-  const alts: string[] = [];
-  const imageRegex = /<img\b([^>]*)>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = imageRegex.exec(body || "")) !== null) {
-    const alt = getHtmlAttribute(match[1] || "", "alt");
-    if (alt) alts.push(alt);
-  }
-
-  return alts.join(" ");
-}
-
-function analyzeTechnicalMarkup(body: string) {
-  let unsafeLinks = 0;
-  for (const match of body.matchAll(/<a\b([^>]*)>/gi)) {
-    const href = getHtmlAttribute(match[1] || "", "href").trim();
-    if (!href || /^javascript:/i.test(href)) unsafeLinks += 1;
-  }
-
-  const levels = Array.from(body.matchAll(/<h([2-6])\b/gi), (match) => Number(match[1]));
-  let skippedHeadingLevels = 0;
-  levels.forEach((level, index) => {
-    if (index > 0 && level > levels[index - 1] + 1) skippedHeadingLevels += 1;
-  });
-
-  const ids = Array.from(body.matchAll(/<h[2-6]\b([^>]*)>/gi), (match) => getHtmlAttribute(match[1] || "", "id")).filter(Boolean);
-  const duplicateHeadingIds = ids.length - new Set(ids).size;
-  return { unsafeLinks, skippedHeadingLevels, duplicateHeadingIds };
-}
-
-function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
+function buildIssueGroups(posts: AuditedPost[], impressionsByPath: Map<string, number> = new Map()): IssueGroup[] {
   const map = new Map<string, IssueGroup>();
 
   posts.forEach((post) => {
@@ -2051,7 +1349,7 @@ function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
         affected: 0,
         impact: issue.impact,
         effort: issue.effort,
-        status: "Needs review",
+        impressions: 0,
         fix: issue.fix,
         actionLabel: getActionLabel(issue.category),
         examples: [],
@@ -2060,18 +1358,20 @@ function buildIssueGroups(posts: AuditedPost[]): IssueGroup[] {
       };
 
       group.affected += 1;
+      group.impressions += impressionsByPath.get(articleSearchPath(post.blogHandle, post.handle)) || 0;
       if (group.examples.length < 3) group.examples.push(post.title);
       group.affectedPosts.push({ id: post.id, title: post.title, blogTitle: post.blogTitle });
       map.set(issue.type, group);
     });
   });
 
+  // Severity first, scaled by how much search traffic the affected posts already get.
   return Array.from(map.values()).sort(
-    (a, b) => getImpactWeight(b.impact) - getImpactWeight(a.impact) || b.affected - a.affected || a.issue.localeCompare(b.issue),
+    (a, b) => issuePriority(b.impact, b.impressions) - issuePriority(a.impact, a.impressions) || b.affected - a.affected || a.issue.localeCompare(b.issue),
   );
 }
 
-function applyPortfolioIssues(posts: AuditedPost[]) {
+function applyPortfolioIssues(posts: AuditedPost[], includeOrphans: boolean) {
   const portfolioIssues = auditSeoPortfolio(posts.map((post) => ({
     id: post.id,
     title: post.title,
@@ -2082,7 +1382,7 @@ function applyPortfolioIssues(posts: AuditedPost[]) {
     blogHandle: post.blogHandle,
     handle: post.handle,
     publishedAt: post.publishedAt,
-  })));
+  })), { includeOrphans });
 
   posts.forEach((post) => {
     const additions = portfolioIssues.get(post.id) || [];
@@ -2135,7 +1435,7 @@ function getBulkFixRoute(issue: Pick<IssueGroup, "id" | "affectedPosts">) {
 function getActionLabel(category: SeoCategory) {
   if (category === "product_linking") return "Add products";
   if (category === "image") return "Add alt text";
-  if (category === "schema") return "Open settings";
+  if (category === "schema") return "Theme setup";
   if (category === "content") return "Edit content";
   return "Review";
 }
@@ -2183,10 +1483,6 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-function stripHtml(value: string) {
-  return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
 function textValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -2204,24 +1500,16 @@ function isLikelyStaleAutoMetaTitle(metaTitle: string, articleTitle: string) {
   );
 }
 
-function getEffectiveSeoTitle(metaTitle: unknown, article: ArticleInput) {
-  const meta = textValue(metaTitle);
+function getEffectiveSeoTitle(article: ArticleInput) {
   const title = textValue(article.title);
-
-  if (meta && !isLikelyStaleAutoMetaTitle(meta, title)) return meta;
-
   const shopifySeoTitle = textValue(article.seoTitle);
   if (shopifySeoTitle && !isLikelyStaleAutoMetaTitle(shopifySeoTitle, title)) return shopifySeoTitle;
-
   return title;
 }
 
-function getEffectiveSeoDescription(metaDescription: unknown, article: ArticleInput) {
-  return textValue(metaDescription) || textValue(article.seoDescription) || textValue(article.summary);
-}
-
-function slugifyKeyword(value: string) {
-  return slugifySeoText(value);
+function getEffectiveSeoDescription(article: ArticleInput) {
+  // Shopify themes fall back to the excerpt when no SEO description is saved.
+  return textValue(article.seoDescription) || textValue(article.summary).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function cleanText(value: unknown) {

@@ -10,6 +10,7 @@ import type { ContentDecayReport, DecayArticle, DecayIssue, DecayProduct } from 
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
+import { isPublicHostname, isPublicUrlReachable } from "../safe-fetch.server";
 import { loadSearchConsoleView } from "../search-console-view.server";
 import { SearchConsoleCard } from "../components/SearchConsoleCard";
 import {
@@ -219,49 +220,16 @@ async function checkExternalLinks(articles: DecayArticle[], shopDomains: string[
   const candidates: Array<{ articleId: string; href: string }> = [];
   for (const article of articles) for (const match of article.body.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']/gi)) {
     const href = match[1].replace(/&amp;/gi, "&").trim();
-    try { const url = new URL(href); if (["http:", "https:"].includes(url.protocol) && !internalHosts.has(url.hostname.toLowerCase()) && isPublicHost(url.hostname)) candidates.push({ articleId: article.id, href: url.href }); } catch { /* Relative links are internal. */ }
+    try { const url = new URL(href); if (["http:", "https:"].includes(url.protocol) && !internalHosts.has(url.hostname.toLowerCase()) && isPublicHostname(url.hostname)) candidates.push({ articleId: article.id, href: url.href }); } catch { /* Relative links are internal. */ }
   }
   const unique = [...new Map(candidates.map((item) => [`${item.articleId}|${item.href}`, item])).values()];
   const selected = unique.slice(0, MAX_EXTERNAL_LINKS);
   const brokenByArticle = new Map<string, string[]>();
   for (let index = 0; index < selected.length; index += 10) {
-    const results = await Promise.all(selected.slice(index, index + 10).map(async (item) => ({ item, ok: await isReachable(item.href) })));
+    const results = await Promise.all(selected.slice(index, index + 10).map(async (item) => ({ item, ok: await isPublicUrlReachable(item.href, 3000) })));
     results.filter((result) => !result.ok).forEach(({ item }) => brokenByArticle.set(item.articleId, [...(brokenByArticle.get(item.articleId) || []), item.href]));
   }
   return { brokenByArticle, checked: selected.length, skipped: Math.max(0, unique.length - selected.length) };
-}
-
-async function isReachable(url: string) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3000);
-  try {
-    let response = await safeExternalFetch(url, "HEAD", controller.signal);
-    if (response.status === 405 || response.status === 403) response = await safeExternalFetch(url, "GET", controller.signal);
-    return response.status < 400 || [401, 403, 429].includes(response.status);
-  } catch { return false; }
-  finally { clearTimeout(timer); }
-}
-
-async function safeExternalFetch(initialUrl: string, method: "HEAD" | "GET", signal: AbortSignal) {
-  let currentUrl = initialUrl;
-  for (let redirects = 0; redirects <= 3; redirects += 1) {
-    const parsed = new URL(currentUrl);
-    if (!["http:", "https:"].includes(parsed.protocol) || !isPublicHost(parsed.hostname)) throw new Error("Unsafe external URL");
-    const response = await fetch(parsed, { method, redirect: "manual", signal, headers: { "user-agent": "ShoppableBlogSEO/1.0", ...(method === "GET" ? { range: "bytes=0-0" } : {}) } });
-    if (response.status < 300 || response.status >= 400) return response;
-    const location = response.headers.get("location");
-    if (!location) return response;
-    currentUrl = new URL(location, parsed).href;
-  }
-  throw new Error("Too many redirects");
-}
-
-function isPublicHost(hostname: string) {
-  const host = hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".local")) return false;
-  if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return false;
-  if (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:")) return false;
-  return true;
 }
 
 function articleEditorUrl(articleId: string, refresh = false) { return `/app/blogs/${encodeURIComponent(articleId.split("/").pop() || articleId)}${refresh ? "?refresh=1" : ""}`; }

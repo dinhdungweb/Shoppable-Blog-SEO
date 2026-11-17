@@ -2,6 +2,9 @@ import type { PerformancePageType, PerformanceTarget, StorefrontPerformanceRepor
 
 const LABELS: Record<PerformancePageType, string> = {
   homepage: "Homepage",
+  article: "Blog post",
+  product: "Product page",
+  collection: "Collection page",
   other: "Other page",
 };
 
@@ -9,6 +12,9 @@ export async function discoverPerformanceTargets(admin: any): Promise<Performanc
   const response = await admin.graphql(`#graphql
     query StorefrontPerformanceTargets {
       shop { primaryDomain { url } }
+      articles(first: 1, sortKey: PUBLISHED_AT, reverse: true, query: "published_status:published") { nodes { title handle blog { handle } } }
+      products(first: 1, sortKey: UPDATED_AT, reverse: true, query: "status:active published_status:published") { nodes { title handle } }
+      collections(first: 1, sortKey: UPDATED_AT, reverse: true, query: "published_status:published") { nodes { title handle } }
     }
   `);
   const payload: any = await response.json();
@@ -17,8 +23,16 @@ export async function discoverPerformanceTargets(admin: any): Promise<Performanc
   const data = payload.data || {};
   const origin = normalizeOrigin(data.shop?.primaryDomain?.url);
 
+  const article = data.articles?.nodes?.[0];
+  const product = data.products?.nodes?.[0];
+  const collection = data.collections?.nodes?.[0];
+  const path = (...parts: string[]) => (origin && parts.every(Boolean) ? `${origin}/${parts.map(encodeURIComponent).join("/")}` : "");
+
   return [
     target("homepage", LABELS.homepage, origin ? `${origin}/` : ""),
+    target("article", article?.title || LABELS.article, path("blogs", article?.blog?.handle, article?.handle)),
+    target("product", product?.title || LABELS.product, path("products", product?.handle)),
+    target("collection", collection?.title || LABELS.collection, path("collections", collection?.handle)),
     target("other", LABELS.other, ""),
   ];
 }
