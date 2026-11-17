@@ -8,9 +8,11 @@ export type TrackingTokenPayload = {
   exp: number;
 };
 
-// Keep signed attribution valid for the same seven-day window used by the
-// Shopify Web Pixel. A shorter token lifetime silently dropped delayed carts.
-export const TRACKING_ATTRIBUTION_WINDOW_SECONDS = 60 * 60 * 24 * 7;
+// Tokens must outlive the longest attribution window a merchant can choose
+// (Settings → Tracking). The chosen window itself is applied by the widget and
+// pixel from the click time.
+export const MAX_ATTRIBUTION_WINDOW_DAYS = 30;
+export const TRACKING_ATTRIBUTION_WINDOW_SECONDS = 60 * 60 * 24 * MAX_ATTRIBUTION_WINDOW_DAYS;
 
 function secret() {
   const value = process.env.SHOPIFY_API_SECRET;

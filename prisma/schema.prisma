@@ -112,6 +112,10 @@ model ShopConfig {
   contentNavPrimaryColor      String  @default("#6366f1")
   contentNavCustomCss         String?
 
+  // Cached shop locale (refreshed from the Admin API) for analytics day buckets and money.
+  timezone     String @default("")
+  currencyCode String @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -235,8 +239,13 @@ model WidgetEvent {
   blockId   String   @default("default")
   eventType String
   sessionId String?
+  /// Referrer hostname only (never the full URL, which can contain personal data).
   referrer  String?
   eventKey  String?  @unique
+  /// Units and amount actually paid (purchase events), in `currency`.
+  quantity  Int      @default(1)
+  revenue   Decimal  @default(0) @db.Decimal(14, 2)
+  currency  String   @default("")
   createdAt DateTime @default(now())
 
   @@index([shop, createdAt])
@@ -257,9 +266,17 @@ model AnalyticsDaily {
   addToCarts  Int      @default(0)
   purchases   Int      @default(0)
   sessions    Int      @default(0)
+  /// Article views (rows with productId "" track the article itself).
+  views       Int      @default(0)
+  /// Readers who saw the shoppable products (once per session per article).
+  seen        Int      @default(0)
+  /// Units purchased and revenue actually paid, in `currency` ("" for non-revenue rows).
+  units       Int      @default(0)
+  revenue     Decimal  @default(0) @db.Decimal(14, 2)
+  currency    String   @default("")
   updatedAt   DateTime @updatedAt
 
-  @@unique([shop, date, articleId, productId, source])
+  @@unique([shop, date, articleId, productId, source, currency])
   @@index([shop, date])
   @@index([shop, articleId, date])
   @@index([shop, productId, date])

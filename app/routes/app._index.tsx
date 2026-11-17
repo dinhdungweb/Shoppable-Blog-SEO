@@ -47,6 +47,8 @@ import {
 } from "recharts";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
+import { analyticsWindow, bucketByDay, emptyMetrics as emptyCoreMetrics, formatMoney as formatCurrency, groupRows, normalizeProductGid, parseMoney, sumRows, type DailyRow, type Metrics } from "../analytics-core";
+import { canonicalArticleId, getShopLocale, loadDailyRows, priceLookup } from "../analytics.server";
 import { auditMetaTags } from "../meta-tag-audit";
 import { buildHomeTasks, computeStoreSeoScore, type HomeTask, type StoreSeoScore } from "../home-tasks";
 
@@ -91,11 +93,10 @@ type ChartPoint = PeriodMetrics & {
   date: string;
 };
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const startedAt = Date.now();
-  const { session, billing } = await authenticate.admin(request);
+  const { admin, session, billing } = await authenticate.admin(request);
   const shop = session.shop;
 
   // Resolve plan limits to determine the analytics window
@@ -103,8 +104,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const windowDays = limits.analyticsWindowDays; // e.g. 7, 30, or 90
 
   const now = new Date();
-  const currentStart = startOfDay(new Date(now.getTime() - (windowDays - 1) * DAY_MS));
-  const previousStart = startOfDay(new Date(now.getTime() - (windowDays * 2 - 1) * DAY_MS));
+  // Home and Insights read the same daily aggregates in the shop's time zone.
+  const locale = await getShopLocale(admin, shop);
+  const { today, currentStart, previousStart } = analyticsWindow(now, windowDays, locale.timezone);
 
   const shopifyError = "";
   let baseArticles: any[] = [];
@@ -132,13 +134,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop },
       select: { articleId: true, articleTitle: true, seoScore: true, metaDescription: true, metaTitle: true, articleHandle: true, imageUrl: true, imageAlt: true, blogTitle: true, blogHandle: true, sourceUpdatedAt: true, publishedAt: true, lastAnalyzedAt: true },
     }),
-    prisma.$queryRaw<Array<{ articleId: string; productId: string; eventType: string; createdAt: Date; count: number }>>`
-      SELECT "articleId", "productId", "eventType", date_trunc('day', "createdAt") AS "createdAt", COUNT(*)::int AS "count"
-      FROM "WidgetEvent"
-      WHERE "shop" = ${shop} AND "createdAt" >= ${previousStart}
-      GROUP BY "articleId", "productId", "eventType", date_trunc('day', "createdAt")
-      ORDER BY "createdAt" ASC
-    `,
+    loadDailyRows(shop, previousStart),
     prisma.widgetEvent.count({ where: { shop } }),
   ]);
 
@@ -154,13 +150,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const webPixelError = "Checking…";
 
   const productCountMap = new Map<string, number>();
-  const productPriceMap = new Map<string, number>();
   const productInfoMap = new Map<string, { title: string; image: string; price: number }>();
 
   linkedProducts.forEach((product) => {
     const price = parseMoney(product.productPrice);
     productCountMap.set(product.articleId, (productCountMap.get(product.articleId) || 0) + 1);
-    productPriceMap.set(`${product.articleId}:${product.productId}`, price);
 
     if (!productInfoMap.has(product.productId)) {
       productInfoMap.set(product.productId, {
@@ -212,15 +206,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const seoMap = new Map(seoRows.map((row) => [row.articleId, row.seoScore]));
   const seoDescriptionMap = new Map(seoRows.map((row) => [row.articleId, row.metaDescription || ""]));
-  const currentEvents = allEvents.filter((event) => event.createdAt >= currentStart);
-  const previousEvents = allEvents.filter((event) => event.createdAt < currentStart);
-  const currentMetrics = getMetrics(currentEvents, productPriceMap);
-  const previousMetrics = getMetrics(previousEvents, productPriceMap);
-  const chartData = buildChartData(currentEvents, productPriceMap, currentStart, now);
-  const productRows = buildDashboardProductRows(currentEvents, productPriceMap, productInfoMap);
+  const currency = locale.currencyCode;
+  const priceOf = priceLookup(linkedProducts.map((product) => ({ ...product, articleId: canonicalArticleId(product.articleId), productId: normalizeProductGid(product.productId) })));
+  const currentEvents = allEvents.filter((row) => row.date >= currentStart);
+  const previousEvents = allEvents.filter((row) => row.date < currentStart);
+  const currentMetrics = toPeriod(sumRows(currentEvents, currency, priceOf));
+  const previousMetrics = toPeriod(sumRows(previousEvents, currency, priceOf));
+  const chartData: ChartPoint[] = bucketByDay(currentEvents, currentStart, today, currency, priceOf).map((day) => ({ date: formatShortDate(day.date), ...toPeriod(day) }));
+  const productRows = buildDashboardProductRows(currentEvents, currency, priceOf, productInfoMap);
   const topAddToCartProducts = sortDashboardProductRows(productRows, "addToCarts").slice(0, 4);
   const topPurchasedProducts = sortDashboardProductRows(productRows, "purchases").slice(0, 4);
-  const articleMetricsMap = getArticleMetricsMap(currentEvents, productPriceMap);
+  const articleMetricsMap = new Map([...groupRows(currentEvents, (row) => row.articleId, currency, priceOf)].map(([id, metrics]) => [id, toPeriod(metrics)]));
   const articleSources = baseArticles.length ? baseArticles : Array.from(fallbackArticleMap.values());
 
   const articles: DashboardArticle[] = articleSources
@@ -333,12 +329,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     { label: "First shoppable post published", done: shoppablePublishedCount > 0 },
   ];
   const setupDone = setupItems.filter((item) => item.done).length;
-  console.info("Dashboard loader timing", { shop, articles: articles.length, events: allEvents.length, durationMs: Date.now() - startedAt });
+  console.info("Dashboard loader timing", { shop, articles: articles.length, aggregateRows: allEvents.length, durationMs: Date.now() - startedAt });
 
   return json({
     shop,
     shopifyError,
     generatedAt: now.toISOString(),
+    currency,
     planKey,
     analyticsWindowDays: windowDays,
     metrics: currentMetrics,
@@ -447,6 +444,7 @@ export default function Dashboard() {
     homeTasks,
     storeScore,
     lastScanAt,
+    currency,
   } = data as typeof data & { homeTasks: HomeTask[]; storeScore: StoreSeoScore; lastScanAt: string | null };
   const setup = mergeSetupStatus(initialSetup, setupFetcher.data, pixelFetcher.data?.error);
 
@@ -537,8 +535,8 @@ export default function Dashboard() {
           />
           <MetricCard
             title="Estimated revenue"
-            value={formatMoney(metrics.revenue)}
-            detail="Purchase events x linked product price"
+            value={formatCurrency(metrics.revenue, currency)}
+            detail="Paid for products clicked in blog posts"
             iconTone="success"
             icon={CashDollarIcon}
           />
@@ -596,12 +594,14 @@ export default function Dashboard() {
 
               <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
                 <CompactProductLeaderboard
+                  currency={currency}
                   title="Top add to cart products"
                   products={topAddToCartProducts}
                   metricKey="addToCarts"
                   metricLabel="add to carts"
                 />
                 <CompactProductLeaderboard
+                  currency={currency}
                   title="Top purchased products"
                   products={topPurchasedProducts}
                   metricKey="purchases"
@@ -673,7 +673,7 @@ export default function Dashboard() {
                     </Text>
                   </IndexTable.Cell>
                   <IndexTable.Cell>{formatNumber(post.clicks)}</IndexTable.Cell>
-                  <IndexTable.Cell>{formatMoney(post.revenue)}</IndexTable.Cell>
+                  <IndexTable.Cell>{formatCurrency(post.revenue, currency)}</IndexTable.Cell>
                   <IndexTable.Cell>
                     <Text as="span" variant="bodyMd" tone="subdued">
                       {formatDate(post.updatedAt || post.publishedAt)}
@@ -931,7 +931,9 @@ function CompactProductLeaderboard({
   products,
   metricKey,
   metricLabel,
+  currency,
 }: {
+  currency: string;
   title: string;
   products: DashboardProduct[];
   metricKey: "addToCarts" | "purchases";
@@ -964,7 +966,7 @@ function CompactProductLeaderboard({
                       {product.title}
                     </Text>
                     <Text as="span" variant="bodySm" tone="subdued">
-                      {formatMoney(product.revenue)} revenue
+                      {formatCurrency(product.revenue, currency)} revenue
                     </Text>
                   </BlockStack>
                 </div>
@@ -1007,140 +1009,31 @@ function mergeSetupStatus(setup: any, status: any, pixelActionError?: string) {
   return { ...setup, items, done, progress: Math.round((done / items.length) * 100) };
 }
 
-function getMetrics(events: Array<{ articleId: string; productId: string; eventType: string; count?: number }>, priceMap: Map<string, number>) {
-  return events.reduce((acc, event) => addEventToMetrics(acc, event, priceMap), emptyMetrics());
+function toPeriod(metrics: Metrics): PeriodMetrics {
+  return { impressions: metrics.impressions, clicks: metrics.clicks, addToCarts: metrics.addToCarts, purchases: metrics.purchases, revenue: metrics.revenue };
 }
 
-function getArticleMetricsMap(
-  events: Array<{ articleId: string; productId: string; eventType: string; count?: number }>,
-  priceMap: Map<string, number>,
-) {
-  const map = new Map<string, PeriodMetrics>();
-
-  events.forEach((event) => {
-    const metrics = map.get(event.articleId) || emptyMetrics();
-    map.set(event.articleId, addEventToMetrics(metrics, event, priceMap));
-  });
-
-  return map;
+function emptyMetrics(): PeriodMetrics {
+  return toPeriod(emptyCoreMetrics());
 }
 
 function buildDashboardProductRows(
-  events: Array<{ articleId: string; productId: string; eventType: string; count?: number }>,
-  priceMap: Map<string, number>,
+  rows: DailyRow[],
+  currency: string,
+  priceOf: Parameters<typeof sumRows>[2],
   productInfoMap: Map<string, { title: string; image: string; price: number }>,
 ) {
-  const map = new Map<string, DashboardProduct>();
-
-  productInfoMap.forEach((info, productId) => {
-    map.set(productId, {
-      id: productId,
-      title: info.title,
-      image: info.image,
-      price: info.price,
-      ...emptyMetrics(),
-    });
+  const grouped = groupRows(rows.filter((row) => row.productId), (row) => normalizeProductGid(row.productId), currency, priceOf);
+  return [...new Set([...productInfoMap.keys()].map(normalizeProductGid).concat([...grouped.keys()]))].map((id): DashboardProduct => {
+    const info = productInfoMap.get(id) || productInfoMap.get(id.split("/").pop() || "");
+    return { id, title: info?.title || "Untitled product", image: info?.image || "", price: info?.price || 0, ...toPeriod(grouped.get(id) || emptyCoreMetrics()) };
   });
-
-  events.forEach((event) => {
-    if (event.productId === "all") return;
-    const productId = normalizeProductId(event.productId);
-    const existing = map.get(productId) || {
-      id: productId,
-      title: "Untitled product",
-      image: "",
-      price: 0,
-      ...emptyMetrics(),
-    };
-
-    addEventToMetrics(existing, { ...event, productId }, priceMap);
-    map.set(productId, existing);
-  });
-
-  return Array.from(map.values());
 }
 
 function sortDashboardProductRows(products: DashboardProduct[], metricKey: "addToCarts" | "purchases") {
   return products
     .filter((product) => product[metricKey] > 0)
-    .sort(
-      (a, b) =>
-        b[metricKey] - a[metricKey] ||
-        b.revenue - a.revenue ||
-        b.purchases - a.purchases ||
-        b.addToCarts - a.addToCarts ||
-        b.clicks - a.clicks ||
-        a.title.localeCompare(b.title),
-    );
-}
-
-function addEventToMetrics(
-  metrics: PeriodMetrics,
-  event: { articleId: string; productId: string; eventType: string; count?: number },
-  priceMap: Map<string, number>,
-) {
-  const count = event.count || 1;
-  if (event.eventType === "impression") metrics.impressions += count;
-  if (event.eventType === "click") metrics.clicks += count;
-  if (event.eventType === "add_to_cart") metrics.addToCarts += count;
-  if (event.eventType === "purchase" || event.eventType === "order") {
-    metrics.purchases += count;
-    
-    let normalizedProductId = event.productId;
-    if (normalizedProductId && /^\d+$/.test(normalizedProductId)) {
-      normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
-    } else if (normalizedProductId && !normalizedProductId.startsWith("gid://")) {
-      normalizedProductId = `gid://shopify/Product/${normalizedProductId}`;
-    }
-    
-    metrics.revenue += (priceMap.get(`${event.articleId}:${normalizedProductId}`) || 0) * count;
-  }
-
-  return metrics;
-}
-
-function normalizeProductId(value: string) {
-  if (/^\d+$/.test(value)) return `gid://shopify/Product/${value}`;
-  if (!value.startsWith("gid://")) return `gid://shopify/Product/${value}`;
-  return value;
-}
-
-function buildChartData(
-  events: Array<{ articleId: string; productId: string; eventType: string; createdAt: Date; count?: number }>,
-  priceMap: Map<string, number>,
-  start: Date,
-  end: Date,
-) {
-  const days: ChartPoint[] = [];
-  const normalizedStart = startOfDay(start).getTime();
-  const normalizedEnd = startOfDay(end).getTime();
-
-  for (let time = normalizedStart; time <= normalizedEnd; time += DAY_MS) {
-    days.push({
-      date: formatShortDate(new Date(time)),
-      ...emptyMetrics(),
-    });
-  }
-
-  events.forEach((event) => {
-    const index = Math.floor((startOfDay(event.createdAt).getTime() - normalizedStart) / DAY_MS);
-    if (index >= 0 && index < days.length) {
-      addEventToMetrics(days[index], event, priceMap);
-    }
-  });
-
-  return days;
-}
-
-
-function emptyMetrics(): PeriodMetrics {
-  return {
-    impressions: 0,
-    clicks: 0,
-    addToCarts: 0,
-    purchases: 0,
-    revenue: 0,
-  };
+    .sort((a, b) => b[metricKey] - a[metricKey] || b.revenue - a.revenue || b.purchases - a.purchases || b.addToCarts - a.addToCarts || b.clicks - a.clicks || a.title.localeCompare(b.title));
 }
 
 function getAverageSeoScore(articles: DashboardArticle[]) {
@@ -1155,19 +1048,6 @@ function getAverageSeoScore(articles: DashboardArticle[]) {
 
 function getCtr(clicks: number, impressions: number) {
   return impressions > 0 ? (clicks / impressions) * 100 : 0;
-}
-
-function parseMoney(value: string) {
-  const number = Number((value || "0").replace(/[^0-9.]/g, ""));
-  return Number.isFinite(number) ? number : 0;
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: value % 1 === 0 ? 0 : 2,
-  }).format(value || 0);
 }
 
 function formatNumber(value: number) {
@@ -1206,14 +1086,7 @@ function formatDate(value: string | null) {
 }
 
 function formatShortDate(value: Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-  }).format(value);
-}
-
-function startOfDay(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(value);
 }
 
 function getTimeValue(value: string | null) {

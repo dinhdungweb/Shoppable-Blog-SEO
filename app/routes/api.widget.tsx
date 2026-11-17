@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import { createTrackingToken } from "../tracking-token.server";
+import { attributionWindowDays } from "../analytics-core";
 
 const DEFAULT_WIDGET_CONFIG = {
   appStatus: true,
@@ -29,6 +30,7 @@ const DEFAULT_WIDGET_CONFIG = {
   utmRules: "Auto-append to product links",
   seoAutoSchema: true,
   maxProducts: 6,
+  attributionWindow: "7 days",
 };
 
 const WIDGET_HEADERS = {
@@ -80,6 +82,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         utmRules: true,
         seoAutoSchema: true,
         maxProducts: true,
+        attributionWindow: true,
       },
     })) || DEFAULT_WIDGET_CONFIG;
 
@@ -108,18 +111,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
+  const canonicalArticleId = articleIds.find((id) => id.startsWith("gid://shopify/Article/")) || articleIds[0];
   return json(
     {
       products: products.slice(0, config.maxProducts || DEFAULT_WIDGET_CONFIG.maxProducts).map((product) => ({
         ...product,
         trackingToken: createTrackingToken({
           shop,
-          articleId: articleIds.find((id) => id.startsWith("gid://shopify/Article/")) || articleIds[0],
+          articleId: canonicalArticleId,
           productId: product.productId,
           blockId,
         }),
       })),
-      config,
+      // Signed for the article itself so readers (views) can be counted once per session.
+      viewToken: createTrackingToken({ shop, articleId: canonicalArticleId, productId: "", blockId: "view" }),
+      config: { ...config, attributionWindowDays: attributionWindowDays(config.attributionWindow) },
     },
     { headers: WIDGET_HEADERS },
   );

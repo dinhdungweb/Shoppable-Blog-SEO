@@ -32,6 +32,7 @@ import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceT
 import { SearchConsoleCard } from "../components/SearchConsoleCard";
 import { loadSearchConsoleView } from "../search-console-view.server";
 import { getAiUsageStatus } from "../ai-usage.server";
+import { ATTRIBUTION_WINDOW_OPTIONS } from "../analytics-core";
 import { isNineRouterConfigured } from "../ai-seo.server";
 import {
   BRAND_TONES,
@@ -149,6 +150,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ...(limits.canCustomCss ? { customCss: cleanSettingText(formData.get("customCss"), 20000, "") } : {}),
       utmRules: pickSettingChoice(formData, "utmRules", ["Auto-append to product links", "Do not append"], "Auto-append to product links"),
       enableConversionTracking: formData.get("enableConversionTracking") === "true",
+      attributionWindow: pickSettingChoice(formData, "attributionWindow", ATTRIBUTION_WINDOW_OPTIONS, "7 days"),
       brandTone: pickSettingChoice(formData, "brandTone", BRAND_TONES, "Professional"),
       forbiddenWords: parseForbiddenWords(String(formData.get("forbiddenWords") || "")).join(", "),
       defaultContentStructure: cleanSettingText(formData.get("defaultContentStructure"), 300, DEFAULT_CONTENT_STRUCTURE),
@@ -901,6 +903,13 @@ export default function Settings() {
                     <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} helpText="UTMs are added only when a shopper clicks, for your analytics. Search engines always see clean product links, and conversion tracking works either way." />
                     <Text as="p" variant="bodySm" tone="subdued">Appends UTM parameters to outbound links</Text>
                   </BlockStack>
+                  <Select
+                    label="Attribution window"
+                    options={ATTRIBUTION_WINDOW_OPTIONS.map((option) => ({ label: option, value: option }))}
+                    value={ATTRIBUTION_WINDOW_OPTIONS.includes(formState.attributionWindow as (typeof ATTRIBUTION_WINDOW_OPTIONS)[number]) ? formState.attributionWindow : '7 days'}
+                    onChange={(v) => handleChange('attributionWindow', v)}
+                    helpText="How long after a product click in a blog post an add-to-cart or order is credited to that post. Applies to new clicks."
+                  />
                 </InlineGrid>
 
                 <Divider />

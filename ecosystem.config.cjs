@@ -25,5 +25,16 @@ module.exports = {
         NODE_OPTIONS: '--dns-result-order=ipv4first',
       },
     },
+    {
+      // Daily retention job for raw analytics events (see scripts/prune-widget-events.mjs).
+      name: 'shoppable-blog-seo-prune',
+      script: 'npm',
+      args: 'run analytics:prune',
+      cron_restart: '30 3 * * *',
+      autorestart: false,
+      env: {
+        NODE_ENV: 'production',
+      },
+    },
   ],
 };

@@ -4,66 +4,113 @@ register(({ analytics, browser, init, settings }) => {
   const TRACK_API_URL = "https://shopable-blog.bluepeaks.top/api/track";
   const STORAGE_KEY = "sbs_attribution";
   const ATTRIBUTION_EVENT = "shoppable_blog:product_selected";
+  // Used when a click did not carry its own expiry (older widget versions).
+  const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+  const MAX_ENTRIES = 25;
 
-  // Configuration for attribution window (7 days in milliseconds)
-  const ATTRIBUTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+  type Attribution = {
+    articleId: string;
+    blockId: string;
+    trackingToken: string;
+    sessionId: string;
+    referrer: string;
+    timestamp: number;
+    expiresAt: number;
+  };
+  type AttributionMap = Record<string, Attribution>;
 
-  async function getAttribution() {
+  // ── Storage: one attribution per product ──────────────────────────────────
+  // Each signed token is valid for exactly one product, so a single shared
+  // slot lost the credit for products clicked earlier in the journey.
+
+  async function readMap(): Promise<AttributionMap> {
     try {
-      const data = await browser.localStorage.getItem(STORAGE_KEY);
-      if (!data) return null;
-      
-      const parsed = JSON.parse(String(data));
-      // Check if expired
-      if (parsed.timestamp && (Date.now() - parsed.timestamp > ATTRIBUTION_WINDOW_MS)) {
-        await browser.localStorage.removeItem(STORAGE_KEY);
-        return null;
+      const raw = await browser.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(String(raw));
+      const map: AttributionMap = parsed && typeof parsed.trackingToken === "string"
+        ? legacyToMap(parsed)
+        : parsed && typeof parsed === "object" ? parsed : {};
+      const now = Date.now();
+      for (const key of Object.keys(map)) {
+        const entry = map[key];
+        if (!entry?.trackingToken || !entry.expiresAt || entry.expiresAt < now) delete map[key];
       }
-
-      const articleId = normalizeArticleId(parsed.articleId);
-      if (!articleId) return null;
-
-      return {
-        ...parsed,
-        articleId,
-        blockId: cleanBlockId(parsed.blockId),
-        trackingToken: String(parsed.trackingToken || ""),
-      };
+      return map;
     } catch (e) {
-      return null;
+      return {};
     }
   }
 
-  async function setAttribution(articleId: unknown, blockId: unknown, trackingToken?: unknown) {
-    const normalizedArticleId = normalizeArticleId(articleId);
-    // A token-less attribution cannot be recorded server-side; never let it
-    // replace a valid one.
-    if (!normalizedArticleId || !String(trackingToken || "")) return;
+  // The previous single-slot format did not store the product; it is inside the token.
+  function legacyToMap(entry: any): AttributionMap {
+    const productKey = productKeyOf(tokenProductId(entry.trackingToken));
+    if (!productKey) return {};
+    const timestamp = Number(entry.timestamp) || Date.now();
+    return {
+      [productKey]: {
+        articleId: normalizeArticleId(entry.articleId),
+        blockId: cleanBlockId(entry.blockId),
+        trackingToken: String(entry.trackingToken),
+        sessionId: "",
+        referrer: "",
+        timestamp,
+        expiresAt: timestamp + DEFAULT_WINDOW_MS,
+      },
+    };
+  }
 
+  async function saveAttribution(productId: unknown, data: any) {
+    const productKey = productKeyOf(productId) || productKeyOf(tokenProductId(data?.trackingToken));
+    const articleId = normalizeArticleId(data?.articleId);
+    const trackingToken = String(data?.trackingToken || "");
+    // A token-less attribution cannot be recorded server-side; never store it.
+    if (!productKey || !articleId || !trackingToken) return;
+
+    const map = await readMap();
+    const now = Date.now();
+    const expiresAt = Number(data?.expiresAt);
+    map[productKey] = {
+      articleId,
+      blockId: cleanBlockId(data?.blockId),
+      trackingToken,
+      sessionId: String(data?.sessionId || ""),
+      referrer: String(data?.referrer || ""),
+      timestamp: now,
+      expiresAt: Number.isFinite(expiresAt) && expiresAt > now ? expiresAt : now + DEFAULT_WINDOW_MS,
+    };
+    const keys = Object.keys(map).sort((a, b) => map[b].timestamp - map[a].timestamp);
+    keys.slice(MAX_ENTRIES).forEach((key) => delete map[key]);
     try {
-      await browser.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        articleId: normalizedArticleId,
-        blockId: cleanBlockId(blockId),
-        trackingToken: String(trackingToken || ""),
-        timestamp: Date.now()
-      }));
+      await browser.localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
     } catch (e) {
-      // Ignore
+      // Storage can be unavailable; tracking is best effort.
     }
   }
 
-  async function sendTrackEvent(eventType: string, productId: string, attribution: any, eventId?: string) {
+  // ── Sending ───────────────────────────────────────────────────────────────
+
+  async function sendTrackEvent(
+    eventType: "add_to_cart" | "purchase",
+    productKey: string,
+    attribution: Attribution,
+    details: { eventId: string; quantity?: number; revenue?: number; currency?: string },
+  ) {
     const shop = getCanonicalShop();
-    const articleId = normalizeArticleId(attribution.articleId);
-    if (!shop || !articleId || !productId || !attribution.trackingToken) return false;
-    
+    if (!shop || !attribution.articleId || !productKey || !attribution.trackingToken) return false;
+
     const requestBody = JSON.stringify({
       shop,
-      articleId,
+      articleId: attribution.articleId,
       blockId: cleanBlockId(attribution.blockId),
-      productId,
+      productId: productKey,
       eventType,
-      sessionId: String(eventId || ""),
+      eventId: details.eventId,
+      sessionId: attribution.sessionId,
+      referrer: attribution.referrer,
+      quantity: details.quantity,
+      revenue: details.revenue,
+      currency: details.currency,
       token: attribution.trackingToken,
     });
 
@@ -73,22 +120,40 @@ register(({ analytics, browser, init, settings }) => {
       try {
         const response = await fetch(TRACK_API_URL, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: requestBody,
           keepalive: true,
         });
         if (response.ok) return true;
-
         // Authentication and validation failures are deterministic.
         if (response.status >= 400 && response.status < 500) return false;
       } catch (e) {
         // Retry once for a transient network or sandbox lifecycle failure.
       }
     }
-
     return false;
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function productKeyOf(value: unknown) {
+    const key = String(value || "").split("/").pop() || "";
+    return /^\d+$/.test(key) ? key : "";
+  }
+
+  function tokenProductId(token: unknown) {
+    try {
+      const payload = String(token || "").split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+      const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
+      return JSON.parse(atob(padded)).productId || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function money(value: any) {
+    const amount = Number(value?.amount);
+    return Number.isFinite(amount) && amount > 0 ? amount : 0;
   }
 
   function getCanonicalShop() {
@@ -102,11 +167,8 @@ register(({ analytics, browser, init, settings }) => {
   function normalizeShopDomain(value: unknown) {
     const rawValue = String(value || "").trim().toLowerCase();
     if (!rawValue) return "";
-
     try {
-      const url = rawValue.startsWith("http://") || rawValue.startsWith("https://")
-        ? new URL(rawValue)
-        : null;
+      const url = rawValue.startsWith("http://") || rawValue.startsWith("https://") ? new URL(rawValue) : null;
       return (url ? url.hostname : rawValue).replace(/^\/+/, "").split("/")[0];
     } catch (e) {
       return rawValue.replace(/^https?:\/\//, "").split("/")[0];
@@ -126,69 +188,73 @@ register(({ analytics, browser, init, settings }) => {
     return blockId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) || "default";
   }
 
-  // 1. Listen to page view to extract UTM parameters and set attribution
-  analytics.subscribe('page_viewed', async (event) => {
-    const urlString = event.context.document.location.href;
-    try {
-      const url = new URL(urlString);
-      const utmMedium = url.searchParams.get("utm_medium");
-      
-      // Legacy widget links carried the signed token in the URL. Current links
-      // only carry optional campaign UTMs; attribution then comes from the
-      // shoppable_blog:product_selected event below, and must not be
-      // overwritten by a token-less page view.
-      const legacyToken = url.searchParams.get("sbs_token");
-      if (utmMedium === "shoppable_blog" && legacyToken) {
-        const articleId = normalizeArticleId(url.searchParams.get("utm_term"));
-        const blockId = cleanBlockId(url.searchParams.get("utm_content"));
+  // ── Subscriptions ─────────────────────────────────────────────────────────
 
-        if (articleId) {
-          await setAttribution(articleId, blockId, legacyToken);
-        }
+  // Legacy widget links carried the signed token in the URL. Current links only
+  // carry optional campaign UTMs; attribution comes from the click event below.
+  analytics.subscribe("page_viewed", async (event) => {
+    try {
+      const url = new URL(event.context.document.location.href);
+      const legacyToken = url.searchParams.get("sbs_token");
+      if (url.searchParams.get("utm_medium") === "shoppable_blog" && legacyToken) {
+        await saveAttribution(tokenProductId(legacyToken), {
+          articleId: url.searchParams.get("utm_term"),
+          blockId: url.searchParams.get("utm_content"),
+          trackingToken: legacyToken,
+          referrer: event.context.document.referrer,
+        });
       }
     } catch (e) {}
   });
 
-  // 1b. Capture direct widget interactions before the customer leaves the blog page.
+  // Product clicks in the widget, published before the shopper leaves the article.
   analytics.subscribe(ATTRIBUTION_EVENT, async (event) => {
     const data = (event as any).customData || {};
-    await setAttribution(data.articleId, data.blockId, data.trackingToken);
+    await saveAttribution(data.productId, data);
   });
 
-  // 2. Listen to add to cart
-  analytics.subscribe('product_added_to_cart', async (event) => {
-    const attribution = await getAttribution();
+  analytics.subscribe("product_added_to_cart", async (event) => {
+    const cartLine = event.data?.cartLine;
+    const productKey = productKeyOf(cartLine?.merchandise?.product?.id);
+    if (!productKey) return;
+    const attribution = (await readMap())[productKey];
     if (!attribution) return;
 
-    const productId = event.data?.cartLine?.merchandise?.product?.id;
-    if (productId) {
-      // The format is usually gid://shopify/Product/123456789
-      const idStr = String(productId).split('/').pop() || "";
-      const deduplicationId = `sbs-atc-${idStr}-${Math.floor(Date.now() / 5000)}`;
-      await sendTrackEvent("add_to_cart", idStr, attribution, deduplicationId);
+    await sendTrackEvent("add_to_cart", productKey, attribution, {
+      // Same id as the widget's fallback so both sources de-duplicate.
+      eventId: `sbs-atc-${productKey}-${Math.floor(Date.now() / 5000)}`,
+      quantity: Number(cartLine?.quantity) || 1,
+    });
+  });
+
+  analytics.subscribe("checkout_completed", async (event) => {
+    const checkout: any = event.data?.checkout;
+    if (!checkout) return;
+    const map = await readMap();
+    if (!Object.keys(map).length) return;
+
+    // One event per attributed product with summed quantity and amount paid.
+    const totals = new Map<string, { quantity: number; revenue: number; currency: string }>();
+    for (const item of checkout.lineItems || []) {
+      const productKey = productKeyOf(item?.variant?.product?.id);
+      if (!productKey || !map[productKey]) continue;
+      const quantity = Number(item.quantity) || 1;
+      const paid = money(item.finalLinePrice) || money(item.variant?.price) * quantity;
+      const currency = String(item.finalLinePrice?.currencyCode || checkout.currencyCode || item.variant?.price?.currencyCode || "");
+      const total = totals.get(productKey) || { quantity: 0, revenue: 0, currency };
+      total.quantity += quantity;
+      total.revenue += paid;
+      totals.set(productKey, total);
     }
-  });
 
-  // 3. Listen to checkout completed (purchase)
-  analytics.subscribe('checkout_completed', async (event) => {
-    const attribution = await getAttribution();
-    if (!attribution) return;
-
-    const lineItems = event.data?.checkout?.lineItems || [];
-    const processedProductIds = new Set<string>();
-
-    for (const item of lineItems) {
-      const productId = item.variant?.product?.id;
-      if (productId) {
-        const idStr = String(productId).split('/').pop() || "";
-        
-        // Avoid sending duplicate events if the same product is in the cart multiple times
-        if (!processedProductIds.has(idStr)) {
-          processedProductIds.add(idStr);
-          await sendTrackEvent("purchase", idStr, attribution, String((event as any).id || ""));
-        }
-      }
+    const orderKey = String(checkout.order?.id || checkout.token || (event as any).id || "");
+    for (const [productKey, total] of totals) {
+      await sendTrackEvent("purchase", productKey, map[productKey], {
+        eventId: `${orderKey}:${productKey}`,
+        quantity: total.quantity,
+        revenue: Math.round(total.revenue * 100) / 100,
+        currency: total.currency,
+      });
     }
   });
 });
-

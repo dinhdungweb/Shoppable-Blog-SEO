@@ -10,6 +10,26 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.11.18",
+    date: "2026-11-18",
+    title: "Insights you can trust: real revenue and the full reader funnel",
+    summary: "Insights now reports what shoppers actually paid, follows each reader from Google to the order, and gives recommendations based on measured behaviour.",
+    tags: ["New", "Improved", "Fixed"],
+    changes: [
+      { type: "New", text: "Revenue is the amount actually paid, including quantity, variant and discounts, shown in your store currency. Orders from before this update keep an estimate that is clearly labelled." },
+      { type: "New", text: "Readers are counted for every post with a shoppable widget, so you can see the full funnel: Google impressions, Google clicks, readers, readers who saw the products, clicks, add to carts and orders." },
+      { type: "New", text: "Revenue per 1,000 readers and conversion per reader make posts and periods comparable." },
+      { type: "New", text: "Recommendations are based on your data: products placed too low, products seen but not clicked, carts that did not convert, money posts that Google under-clicks, and your best earner per reader." },
+      { type: "New", text: "Choose a date range, export every post's funnel to CSV, and open any post for its own funnel, products, traffic sources and top Google queries." },
+      { type: "New", text: "Set the attribution window (1, 7, 14 or 30 days) in Settings › Tracking." },
+      { type: "Fixed", text: "Clicking several products no longer loses credit for the first ones; each product keeps its own attribution." },
+      { type: "Fixed", text: "Add-to-carts and orders keep the traffic source and session of the reading visit instead of appearing as Direct, and are no longer counted as extra sessions." },
+      { type: "Fixed", text: "Product impressions are counted only when products are actually visible, and bot traffic is filtered out." },
+      { type: "Fixed", text: "Home and Insights now show the same numbers, days follow your store time zone, and prices such as 1.299,50 are read correctly." },
+      { type: "Improved", text: "Only the referring website is stored, never the full referrer URL." },
+    ],
+  },
+  {
     version: "2026.11.17",
     date: "2026-11-17",
     title: "A more accurate SEO score and live page checks",

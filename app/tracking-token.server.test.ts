@@ -34,7 +34,7 @@ describe("tracking tokens", () => {
     expect(verifyTrackingToken("not-a-token")).toBeNull();
   });
 
-  it("matches the Web Pixel seven-day attribution window", () => {
+  it("outlives the longest (30-day) attribution window", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
     const token = createTrackingToken({
@@ -44,10 +44,10 @@ describe("tracking tokens", () => {
       blockId: "default",
     });
 
-    vi.setSystemTime(new Date("2026-07-28T23:59:59.000Z"));
+    vi.setSystemTime(new Date("2026-08-20T23:59:59.000Z"));
     expect(verifyTrackingToken(token)).not.toBeNull();
 
-    vi.setSystemTime(new Date("2026-07-29T00:00:01.000Z"));
+    vi.setSystemTime(new Date("2026-08-21T00:00:01.000Z"));
     expect(verifyTrackingToken(token)).toBeNull();
   });
 });

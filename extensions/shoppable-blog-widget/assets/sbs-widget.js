@@ -181,6 +181,9 @@
       }
 
       const config = payload.config || {};
+      // Count the reader even when the post has no products yet, so Insights can
+      // point out popular posts that have nothing to buy.
+      trackArticleEvent(appUrl, shop, articleId, payload.viewToken, "view");
       if (!payload.products || payload.products.length === 0) {
         hideWidget(widget);
         return;
@@ -190,11 +193,16 @@
       const effectiveStyle =
         widget.dataset.styleLocked === "true" ? style : normalizeWidgetStyle(config.widgetStyle || style);
       if (effectiveStyle !== style) rebuildWidgetShell(widget, effectiveStyle);
+      widget._sbsAttributionWindowDays = Number(config.attributionWindowDays) || 7;
       renderProducts(widget, payload.products, config, effectiveStyle);
       injectItemListSchema(widget, payload.products);
       setupCarousel(widget, effectiveStyle, config);
-      payload.products.forEach((product) => {
-        trackEvent(appUrl, shop, articleId, blockId, product.productId, "impression", product.trackingToken);
+      // Count impressions only once shoppers can actually see the products.
+      whenVisible(widget, () => {
+        trackArticleEvent(appUrl, shop, articleId, payload.viewToken, "seen");
+        payload.products.forEach((product) => {
+          trackEvent(appUrl, shop, articleId, blockId, product.productId, "impression", product.trackingToken);
+        });
       });
     } catch (error) {
       console.error("[SBS Widget] Failed to load products", error);
@@ -359,26 +367,59 @@
   }
 
   function publishAttribution(widget, productId, trackingToken) {
-    saveStorefrontAttribution({
+    const windowDays = widget._sbsAttributionWindowDays || 7;
+    const attribution = {
       shop: widget.dataset.shop || "",
       articleId: widget.dataset.articleId || "",
       blockId: cleanBlockId(widget.dataset.blockId),
       productId: productId || "",
       trackingToken: trackingToken || "",
-    });
+      // The reader's session and traffic source travel with the click, so
+      // add-to-carts and purchases stay in the same session and channel.
+      sessionId: getSessionId(),
+      referrer: document.referrer || "",
+      expiresAt: Date.now() + windowDays * 24 * 60 * 60 * 1000,
+    };
+    saveStorefrontAttribution(attribution);
 
     try {
       const analytics = window.Shopify && window.Shopify.analytics;
       if (!analytics || typeof analytics.publish !== "function") return;
-
-      analytics.publish("shoppable_blog:product_selected", {
-        shop: widget.dataset.shop || "",
-        articleId: widget.dataset.articleId || "",
-        blockId: cleanBlockId(widget.dataset.blockId),
-        productId: productId || "",
-        trackingToken: trackingToken || "",
-      });
+      analytics.publish("shoppable_blog:product_selected", attribution);
     } catch (error) {}
+  }
+
+  // Article-level events ("view" on load, "seen" when products become visible),
+  // sent once per page even when the article contains several widgets.
+  function trackArticleEvent(appUrl, shop, articleId, viewToken, eventType) {
+    if (!viewToken) return;
+    window.__sbsArticleEvents = window.__sbsArticleEvents || {};
+    const key = `${eventType}:${articleId}`;
+    if (window.__sbsArticleEvents[key]) return;
+    window.__sbsArticleEvents[key] = true;
+    trackEvent(appUrl, shop, articleId, "view", "", eventType, viewToken);
+  }
+
+  // Runs `callback` once the element has been at least 50% visible for 1 second.
+  function whenVisible(element, callback) {
+    if (typeof IntersectionObserver !== "function") {
+      callback();
+      return;
+    }
+    let timer = null;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.5);
+      if (visible && !timer) {
+        timer = setTimeout(() => {
+          observer.disconnect();
+          callback();
+        }, 1000);
+      } else if (!visible && timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    }, { threshold: [0, 0.5, 1] });
+    observer.observe(element);
   }
 
   function initStorefrontAttribution() {
@@ -409,33 +450,47 @@
     } catch (error) {}
   }
 
+  // Attribution is kept per product: clicking product B must not erase the
+  // credit for product A clicked earlier (each token is valid for one product).
+  function productKey(productId) {
+    return String(productId || "").split("/").pop();
+  }
+
+  function readAttributionMap() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(STOREFRONT_ATTRIBUTION_KEY) || "{}");
+      // Legacy format stored a single attribution object.
+      const map = parsed && parsed.trackingToken ? { [productKey(parsed.productId)]: parsed } : parsed || {};
+      const now = Date.now();
+      Object.keys(map).forEach((key) => {
+        const entry = map[key];
+        const expiresAt = entry && (entry.expiresAt || (entry.timestamp || 0) + ATTRIBUTION_WINDOW_MS);
+        if (!entry || !entry.trackingToken || !expiresAt || expiresAt < now) delete map[key];
+      });
+      return map;
+    } catch (error) {
+      return {};
+    }
+  }
+
   function saveStorefrontAttribution(attribution) {
     if (!attribution.articleId || !attribution.productId || !attribution.trackingToken) return;
 
     try {
-      localStorage.setItem(STOREFRONT_ATTRIBUTION_KEY, JSON.stringify({
+      const map = readAttributionMap();
+      map[productKey(attribution.productId)] = {
         ...attribution,
         timestamp: Date.now(),
-      }));
+        expiresAt: attribution.expiresAt || Date.now() + ATTRIBUTION_WINDOW_MS,
+      };
+      const keys = Object.keys(map).sort((a, b) => (map[b].timestamp || 0) - (map[a].timestamp || 0));
+      keys.slice(25).forEach((key) => delete map[key]);
+      localStorage.setItem(STOREFRONT_ATTRIBUTION_KEY, JSON.stringify(map));
     } catch (error) {}
   }
 
   function getStorefrontAttribution(productId) {
-    try {
-      const raw = localStorage.getItem(STOREFRONT_ATTRIBUTION_KEY);
-      if (!raw) return null;
-
-      const attribution = JSON.parse(raw);
-      if (!attribution.timestamp || Date.now() - attribution.timestamp > ATTRIBUTION_WINDOW_MS) {
-        localStorage.removeItem(STOREFRONT_ATTRIBUTION_KEY);
-        return null;
-      }
-
-      if (String(attribution.productId) !== String(productId)) return null;
-      return attribution;
-    } catch (error) {
-      return null;
-    }
+    return readAttributionMap()[productKey(productId)] || null;
   }
 
   function installCartAddFallback(config) {
@@ -455,7 +510,11 @@
         productId,
         "add_to_cart",
         attribution.trackingToken,
-        addToCartEventId(productId),
+        {
+          eventId: addToCartEventId(productId),
+          sessionId: attribution.sessionId,
+          referrer: attribution.referrer,
+        },
       );
     };
 
@@ -759,19 +818,22 @@
     style.textContent = customCss;
   }
 
-  function trackEvent(appUrl, shop, articleId, blockId, productId, eventType, trackingToken, eventId) {
+  // options.sessionId / options.referrer carry the original reading session for
+  // events that happen later on another page; options.eventId de-duplicates.
+  function trackEvent(appUrl, shop, articleId, blockId, productId, eventType, trackingToken, options) {
     try {
-      const sessionId = eventId || getSessionId();
+      const extra = options || {};
       const params = new URLSearchParams({
         shop,
         articleId,
-        blockId: cleanBlockId(blockId),
+        blockId: eventType === "view" || eventType === "seen" ? "view" : cleanBlockId(blockId),
         productId,
         eventType,
-        sessionId,
-        referrer: document.referrer || "",
+        sessionId: extra.sessionId || getSessionId(),
+        referrer: extra.referrer !== undefined ? extra.referrer : document.referrer || "",
         token: trackingToken || "",
       });
+      if (extra.eventId) params.set("eventId", extra.eventId);
       const beacon = new Image();
       beacon.src = `${trackUrl(appUrl)}?${params.toString()}`;
     } catch (error) {}
@@ -806,12 +868,18 @@
   }
 
   function getSessionId() {
-    let sessionId = sessionStorage.getItem("bp_sid");
-    if (!sessionId) {
-      sessionId = `bp_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
-      sessionStorage.setItem("bp_sid", sessionId);
+    try {
+      let sessionId = sessionStorage.getItem("bp_sid");
+      if (!sessionId) {
+        sessionId = `bp_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+        sessionStorage.setItem("bp_sid", sessionId);
+      }
+      return sessionId;
+    } catch (error) {
+      // Storage can be blocked (private mode, strict cookie settings).
+      window.__sbsSessionId = window.__sbsSessionId || `bp_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+      return window.__sbsSessionId;
     }
-    return sessionId;
   }
 
   function hideWidget(widget) {
