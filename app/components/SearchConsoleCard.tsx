@@ -12,6 +12,7 @@ import {
   InlineStack,
   Select,
   Text,
+  IndexTable,
 } from "@shopify/polaris";
 import { ChartVerticalFilledIcon } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -176,35 +177,28 @@ export function SearchConsoleCard({ data, mode, planKey }: { data: SearchConsole
               {!data.opportunities.length ? (
                 <Text as="p" variant="bodySm" tone="subdued">No opportunities yet. Sync again after Google has collected more data.</Text>
               ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
-                    <thead>
-                      <tr style={{ color: "var(--p-color-text-secondary)" }}>
-                        <th style={{ padding: "0 8px 8px 0", fontWeight: 600 }}>Query / page</th>
-                        <th style={{ padding: "0 8px 8px", fontWeight: 600 }}>Opportunity</th>
-                        <th style={{ padding: "0 8px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>Previous</th>
-                        <th style={{ padding: "0 8px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>Current</th>
-                        <th style={{ padding: "0 8px 8px", fontWeight: 600 }}>Change</th>
-                        <th aria-label="Action" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleOpportunities.map((item) => (
-                        <tr key={item.id} style={{ borderTop: "1px solid var(--p-color-border-secondary)" }}>
-                          <td style={{ padding: "10px 8px 10px 0", minWidth: 160 }}>
-                            <Text as="span" variant="bodySm" fontWeight="semibold">{item.query || "Page total"}</Text><br />
-                            <Text as="span" variant="bodySm" tone="subdued">{item.title}</Text>
-                          </td>
-                          <td style={{ padding: "10px 8px", minWidth: 180 }}><Text as="span" variant="bodySm">{item.detail}</Text></td>
-                          <td style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>{item.previousValue}</td>
-                          <td style={{ padding: "10px 8px", whiteSpace: "nowrap", fontWeight: 600 }}>{item.currentValue}</td>
-                          <td style={{ padding: "10px 8px", whiteSpace: "nowrap", color: item.type === "decay" ? "var(--p-color-text-critical)" : undefined }}>{item.changeValue}</td>
-                          <td style={{ padding: "10px 0 10px 8px" }}><Button size="micro" url={item.pageUrl} target="_blank">Open</Button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <IndexTable
+                  resourceName={{ singular: "opportunity", plural: "opportunities" }}
+                  itemCount={visibleOpportunities.length}
+                  selectable={false}
+                  headings={[{ title: "Query / page" }, { title: "Opportunity" }, { title: "Previous", alignment: "end" }, { title: "Current", alignment: "end" }, { title: "Change", alignment: "end" }, { title: "" }]}
+                >
+                  {visibleOpportunities.map((item, index) => (
+                    <IndexTable.Row id={item.id} key={item.id} position={index}>
+                      <IndexTable.Cell>
+                        <BlockStack gap="050">
+                          <Text as="span" variant="bodySm" fontWeight="semibold">{item.query || "Page total"}</Text>
+                          <Text as="span" variant="bodySm" tone="subdued">{item.title}</Text>
+                        </BlockStack>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell><Text as="span" variant="bodySm">{item.detail}</Text></IndexTable.Cell>
+                      <IndexTable.Cell><Text as="span" variant="bodySm" alignment="end" numeric>{item.previousValue}</Text></IndexTable.Cell>
+                      <IndexTable.Cell><Text as="span" variant="bodySm" alignment="end" numeric fontWeight="semibold">{item.currentValue}</Text></IndexTable.Cell>
+                      <IndexTable.Cell><Text as="span" variant="bodySm" alignment="end" numeric tone={item.type === "decay" ? "critical" : undefined}>{item.changeValue}</Text></IndexTable.Cell>
+                      <IndexTable.Cell><Button size="micro" url={item.pageUrl} target="_blank">Open</Button></IndexTable.Cell>
+                    </IndexTable.Row>
+                  ))}
+                </IndexTable>
               )}
               {data.opportunities.length > 5 && (
                 <InlineStack>

@@ -3,7 +3,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, InlineGrid, InlineStack, Select, Text } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, IndexTable, InlineGrid, InlineStack, Select, Text } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { analyzeContentDecay } from "../content-decay";
 import type { ContentDecayReport, DecayArticle, DecayIssue, DecayProduct } from "../content-decay";
@@ -126,9 +126,17 @@ export default function ContentDecayPage() {
         {!report.inventoryDataAvailable && <Banner tone="info" title="Inventory-level checks are limited"><p>The current Shopify installation does not provide inventory quantities. Deleted and inactive products are still checked; out-of-stock checks will run only when inventory access is available.</p></Banner>}
         {report.externalLinksSkipped > 0 && <Banner tone="info"><p>{report.externalLinksSkipped} additional external links were skipped because each manual analysis checks at most {MAX_EXTERNAL_LINKS} unique article links.</p></Banner>}
         <Card padding="0">
-          <Box padding="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">Priority queue</Text><Text as="p" variant="bodySm" tone="subdued">Updated {formatDate(analyzedAt)} · Review high-priority rows first. No changes are published automatically.</Text></BlockStack><div style={{ minWidth: 230 }}><Select label="Issue type" labelHidden value={filter} onChange={setFilter} options={filterOptions(report)} /></div></InlineStack></Box>
+          <Box padding="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">Priority queue</Text><Text as="p" variant="bodySm" tone="subdued">Updated {formatDate(analyzedAt)} · Review high-priority rows first. No changes are published automatically.</Text></BlockStack><Box minWidth="230px"><Select label="Issue type" labelHidden value={filter} onChange={setFilter} options={filterOptions(report)} /></Box></InlineStack></Box>
           <Divider />
-          {visibleIssues.length ? <><div style={{ overflowX: "auto" }}><table style={tableStyle}><colgroup><col style={{ width: "17%" }} /><col style={{ width: "17%" }} /><col style={{ width: "20%" }} /><col style={{ width: "11%" }} /><col style={{ width: "21%" }} /><col style={{ width: "7%" }} /><col style={{ width: "7%" }} /></colgroup><thead><tr><Header>Article</Header><Header>Issue</Header><Header>Previous</Header><Header>Current</Header><Header>Recommended action</Header><Header>Priority</Header><Header>Action</Header></tr></thead><tbody>{pagedIssues.map((issue) => <IssueRow key={issue.id} issue={issue} />)}</tbody></table></div><Divider /><Box padding="300"><InlineStack align="center" blockAlign="center" gap="300"><Button size="micro" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button><Text as="span" variant="bodySm" tone="subdued">Page {page} of {totalPages} · {visibleIssues.length} issues</Text><Button size="micro" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</Button></InlineStack></Box></> : <Box padding="500"><Text as="p" tone="subdued">No content decay issues match this filter.</Text></Box>}
+          {visibleIssues.length ? <IndexTable
+            resourceName={{ singular: "issue", plural: "issues" }}
+            itemCount={pagedIssues.length}
+            selectable={false}
+            headings={[{ title: "Article" }, { title: "Issue" }, { title: "Previous" }, { title: "Current" }, { title: "Recommended action" }, { title: "Priority" }, { title: "" }]}
+            pagination={totalPages > 1 ? { hasPrevious: page > 1, onPrevious: () => setPage((current) => Math.max(1, current - 1)), hasNext: page < totalPages, onNext: () => setPage((current) => Math.min(totalPages, current + 1)), label: `Page ${page} of ${totalPages} · ${visibleIssues.length} issues` } : undefined}
+          >
+            {pagedIssues.map((issue, index) => <IssueRow key={issue.id} issue={issue} index={index} />)}
+          </IndexTable> : <Box padding="500"><Text as="p" tone="subdued">No content decay issues match this filter.</Text></Box>}
         </Card>
       </>}
     </BlockStack>
@@ -139,14 +147,22 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
   return <Card><BlockStack gap="150"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><InlineStack align="space-between" blockAlign="center"><Text as="p" variant="heading2xl" fontWeight="bold">{value}</Text><Badge tone={tone}>{value ? "Measured" : "Clear"}</Badge></InlineStack></BlockStack></Card>;
 }
 
-function IssueRow({ issue }: { issue: DecayIssue }) {
+function IssueRow({ issue, index }: { issue: DecayIssue; index: number }) {
   const showDetail = issue.detail && issue.type !== "broken_outbound" && issue.type !== "unavailable_product";
-  return <tr style={rowStyle}><Cell><strong>{issue.articleTitle}</strong>{showDetail && <><br /><span style={subduedStyle}>{issue.detail}</span></>}</Cell><Cell><strong>{issue.message}</strong></Cell><Cell><CompactValue value={issue.previousValue} isUrl={issue.type === "broken_outbound"} /></Cell><Cell>{issue.currentValue}</Cell><Cell>{issue.recommendation}</Cell><Cell><Badge tone={issue.severity === "high" ? "critical" : issue.severity === "medium" ? "warning" : "info"}>{issue.severity === "high" ? "High" : issue.severity === "medium" ? "Medium" : "Low"}</Badge></Cell><Cell><Button size="micro" url={articleEditorUrl(issue.articleId, true)}>AI refresh</Button></Cell></tr>;
+  return <IndexTable.Row id={issue.id} position={index}>
+    <IndexTable.Cell><BlockStack gap="050"><Text as="span" variant="bodySm" fontWeight="semibold">{issue.articleTitle}</Text>{showDetail && <Text as="span" variant="bodySm" tone="subdued" breakWord>{issue.detail}</Text>}</BlockStack></IndexTable.Cell>
+    <IndexTable.Cell><Text as="span" variant="bodySm" fontWeight="semibold">{issue.message}</Text></IndexTable.Cell>
+    <IndexTable.Cell><CompactValue value={issue.previousValue} isUrl={issue.type === "broken_outbound"} /></IndexTable.Cell>
+    <IndexTable.Cell><Text as="span" variant="bodySm">{issue.currentValue}</Text></IndexTable.Cell>
+    <IndexTable.Cell><Box maxWidth="280px"><Text as="span" variant="bodySm" breakWord>{issue.recommendation}</Text></Box></IndexTable.Cell>
+    <IndexTable.Cell><Badge tone={issue.severity === "high" ? "critical" : issue.severity === "medium" ? "warning" : "info"}>{issue.severity === "high" ? "High" : issue.severity === "medium" ? "Medium" : "Low"}</Badge></IndexTable.Cell>
+    <IndexTable.Cell><Button size="micro" url={articleEditorUrl(issue.articleId, true)}>AI refresh</Button></IndexTable.Cell>
+  </IndexTable.Row>;
 }
 
 function CompactValue({ value, isUrl }: { value: string; isUrl: boolean }) {
   if (!isUrl) return <>{value}</>;
-  return <span title={value} style={{ display: "block", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{compactUrl(value)}</span>;
+  return <Box maxWidth="240px"><Text as="span" variant="bodySm" truncate>{compactUrl(value)}</Text></Box>;
 }
 
 function filterOptions(report: ContentDecayReport) {
@@ -233,8 +249,3 @@ async function checkExternalLinks(articles: DecayArticle[], shopDomains: string[
 function articleEditorUrl(articleId: string, refresh = false) { return `/app/blogs/${encodeURIComponent(articleId.split("/").pop() || articleId)}${refresh ? "?refresh=1" : ""}`; }
 function compactUrl(value: string) { try { const url = new URL(value); const text = `${url.hostname}${url.pathname}`; return text.length > 58 ? `${text.slice(0, 55)}...` : text; } catch { return value.length > 58 ? `${value.slice(0, 55)}...` : value; } }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleString() : "not yet"; }
-function Header({ children }: { children: React.ReactNode }) { return <th style={{ padding: "12px 16px", textAlign: "left", whiteSpace: "nowrap", color: "var(--p-color-text-secondary)", fontSize: 12 }}>{children}</th>; }
-function Cell({ children }: { children: React.ReactNode }) { return <td style={{ padding: "12px 16px", verticalAlign: "middle", overflowWrap: "anywhere" }}>{children}</td>; }
-const tableStyle: React.CSSProperties = { width: "100%", minWidth: 1180, tableLayout: "fixed", borderCollapse: "collapse" };
-const rowStyle: React.CSSProperties = { borderTop: "1px solid var(--p-color-border-secondary)" };
-const subduedStyle: React.CSSProperties = { color: "var(--p-color-text-secondary)", fontSize: 12, wordBreak: "break-all" };

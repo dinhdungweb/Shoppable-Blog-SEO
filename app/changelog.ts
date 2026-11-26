@@ -26,6 +26,10 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "New", text: "SEO Analyzer opens with an overall score and counts of failed checks, warnings, passing posts and quick wins. Each check shows its status, and product and collection checks can be fixed in bulk." },
       { type: "Improved", text: "The post, product and collection editors show the SEO score, focus keyword and full checklist at the top of the sidebar, next to your content, and use the standard page header with Save, Preview and an AI Copilot menu." },
       { type: "Fixed", text: "The product and collection editor no longer shows two save bars at once." },
+      { type: "Improved", text: "Shopify's loading bar shows while the next page loads, so every click gets immediate feedback." },
+      { type: "Fixed", text: "Switching to the Free plan now asks for confirmation before your subscription is cancelled." },
+      { type: "Improved", text: "Keyword opportunities and the content decay queue use the same tables as the rest of the app, and plan cards, dashboard products and focus keyword chips use standard Shopify components that work with a keyboard." },
+      { type: "Fixed", text: "Long editor sidebars scroll with the page instead of staying fixed and hiding their lower cards." },
     ],
   },
   {

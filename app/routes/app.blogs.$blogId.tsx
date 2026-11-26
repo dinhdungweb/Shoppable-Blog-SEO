@@ -66,6 +66,7 @@ import {
   TextUnderlineIcon,
   ViewIcon,
   InfoIcon,
+  XSmallIcon,
 } from "@shopify/polaris-icons";
 import { SaveBar, TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
@@ -6116,11 +6117,10 @@ function SeoSidebar({
               {focusKeyword.split(',').map(k => k.trim()).filter(Boolean).map((kw, index) => {
                 const score = keywordScores[kw.toLowerCase()] || "critical";
                 return (
-                  <span key={index} style={{ cursor: 'pointer', display: 'inline-block' }} onClick={() => handleRemove(kw)} title="Click to remove">
-                    <Badge tone={score === "success" ? "success" : score === "warning" ? "warning" : "critical"}>
-                      {`${kw} ✕`}
-                    </Badge>
-                  </span>
+                  <InlineStack key={index} gap="050" blockAlign="center" wrap={false}>
+                    <Badge tone={score === "success" ? "success" : score === "warning" ? "warning" : "critical"}>{kw}</Badge>
+                    <Button variant="tertiary" size="micro" icon={XSmallIcon} accessibilityLabel={`Remove focus keyword ${kw}`} onClick={() => handleRemove(kw)} />
+                  </InlineStack>
                 );
               })}
             </InlineStack>

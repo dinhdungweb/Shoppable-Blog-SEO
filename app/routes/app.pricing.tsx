@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import type { CSSProperties } from "react";
+import { useState } from "react";
 import { json } from "@remix-run/node";
-import { Form, useActionData, useLoaderData } from "@remix-run/react";
+import { Form, useActionData, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import {
   Badge,
   Banner,
@@ -13,6 +13,8 @@ import {
   InlineGrid,
   InlineStack,
   Text,
+  Card,
+  Modal,
 } from "@shopify/polaris";
 import {
   ChartVerticalIcon,
@@ -359,91 +361,84 @@ function PricingPlanCard({
   isCurrent: boolean;
   isFeatured: boolean;
 }) {
-  return (
-    <div
-      id={plan.key}
-      style={{
-        ...planCardStyle,
-        borderColor: isFeatured ? "#303030" : "#D4D4D4",
-        boxShadow: isFeatured
-          ? "0 12px 28px rgba(31, 33, 36, 0.12)"
-          : "0 1px 0 rgba(0, 0, 0, 0.04)",
-      }}
-    >
-      <div
-        style={{
-          background: isFeatured ? "#303030" : "#F7F7F7",
-          borderBottom: isFeatured ? "0" : "1px solid #E3E3E3",
-          color: isFeatured ? "#FFFFFF" : "#303030",
-          fontSize: "12px",
-          fontWeight: 650,
-          lineHeight: "16px",
-          padding: "8px 16px",
-          textAlign: "center",
-        }}
-      >
-        {plan.topLabel}
-      </div>
+  const submit = useSubmit();
+  const navigation = useNavigation();
+  const [confirmFree, setConfirmFree] = useState(false);
+  const isFree = !plan.billingPlan;
+  const submitting = navigation.state === "submitting" && navigation.formData?.get("plan") === (plan.billingPlan || plan.key);
 
-      <Box padding="500">
-        <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="start" gap="300">
+  return (
+    <Card padding="0">
+      <div id={plan.key}>
+        <Box padding="200" background={isFeatured ? "bg-fill-brand" : "bg-surface-secondary"}>
+          <Text as="p" variant="bodySm" fontWeight="semibold" alignment="center" tone={isFeatured ? "text-inverse" : undefined}>
+            {plan.topLabel}
+          </Text>
+        </Box>
+        <Box padding="500">
+          <BlockStack gap="400">
             <InlineStack gap="300" blockAlign="center" wrap={false}>
-              <span style={iconFrameStyle(isFeatured ? "#EAF4FF" : "#F1F1F1", "#303030")}>
+              <Box padding="200" borderRadius="200" background={isFeatured ? "bg-fill-info-secondary" : "bg-surface-secondary"}>
                 <Icon source={plan.icon} tone={isFeatured ? "info" : "base"} />
-              </span>
+              </Box>
               <BlockStack gap="050">
                 <InlineStack gap="200" blockAlign="center">
-                  <Text as="h3" variant="headingLg" fontWeight="bold">
-                    {plan.name}
-                  </Text>
+                  <Text as="h3" variant="headingLg" fontWeight="bold">{plan.name}</Text>
                   {plan.badge && <Badge tone={isFeatured ? "info" : "new"}>{plan.badge}</Badge>}
                 </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {plan.description}
-                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">{plan.description}</Text>
               </BlockStack>
             </InlineStack>
-          </InlineStack>
 
-          <BlockStack gap="200">
-            <InlineStack gap="200" blockAlign="end">
-              <Text as="span" variant="heading2xl" fontWeight="bold">
-                {plan.price}
-              </Text>
-              <Text as="span" variant="bodyMd" tone="subdued">
-                {plan.interval}
-              </Text>
-            </InlineStack>
-            <Form method="post">
-              <input type="hidden" name="plan" value={plan.billingPlan || plan.key} />
-              <Button
-                submit
-                fullWidth
-                variant={isFeatured ? "primary" : "secondary"}
-                disabled={isCurrent}
-              >
-                {isCurrent ? "Current plan" : plan.billingPlan ? "Choose plan" : "Switch to Free"}
-              </Button>
-            </Form>
-          </BlockStack>
-
-          <Divider />
-
-          <BlockStack gap="150">
-            <Text as="p" variant="headingSm" fontWeight="semibold">
-              Included
-            </Text>
             <BlockStack gap="200">
-              {plan.features.map((feature) => (
-                <FeatureRow key={feature} icon={CheckCircleIcon} tone="success" label={feature} />
-              ))}
+              <InlineStack gap="200" blockAlign="end">
+                <Text as="span" variant="heading2xl" fontWeight="bold">{plan.price}</Text>
+                <Text as="span" variant="bodyMd" tone="subdued">{plan.interval}</Text>
+              </InlineStack>
+              {isFree ? (
+                <Button fullWidth disabled={isCurrent} loading={submitting} onClick={() => setConfirmFree(true)}>
+                  {isCurrent ? "Current plan" : "Switch to Free"}
+                </Button>
+              ) : (
+                <Form method="post">
+                  <input type="hidden" name="plan" value={plan.billingPlan} />
+                  <Button submit fullWidth variant={isFeatured ? "primary" : "secondary"} disabled={isCurrent} loading={submitting}>
+                    {isCurrent ? "Current plan" : "Choose plan"}
+                  </Button>
+                </Form>
+              )}
+            </BlockStack>
+
+            <Divider />
+
+            <BlockStack gap="150">
+              <Text as="p" variant="headingSm" fontWeight="semibold">Included</Text>
+              <BlockStack gap="200">
+                {plan.features.map((feature) => (
+                  <FeatureRow key={feature} icon={CheckCircleIcon} tone="success" label={feature} />
+                ))}
+              </BlockStack>
             </BlockStack>
           </BlockStack>
-
-        </BlockStack>
-      </Box>
-    </div>
+        </Box>
+      </div>
+      {isFree && (
+        <Modal
+          open={confirmFree}
+          onClose={() => setConfirmFree(false)}
+          title="Switch to the Free plan?"
+          primaryAction={{ content: "Cancel subscription and switch", destructive: true, loading: submitting, onAction: () => { setConfirmFree(false); submit({ plan: "free" }, { method: "post" }); } }}
+          secondaryActions={[{ content: "Keep my plan", onAction: () => setConfirmFree(false) }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="200">
+              <Text as="p">Your paid subscription is cancelled in Shopify right away, with a prorated refund handled by Shopify.</Text>
+              <Text as="p" tone="subdued">Your settings are kept. Features outside the Free plan stop working until you upgrade again.</Text>
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+      )}
+    </Card>
   );
 }
 
@@ -459,35 +454,9 @@ function FeatureRow({
   subdued?: boolean;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", minWidth: 0 }}>
-      <span style={{ display: "flex", flexShrink: 0, width: "18px", height: "18px" }}>
-        <Icon source={icon} tone={tone} />
-      </span>
-      <Text as="span" variant={subdued ? "bodySm" : "bodyMd"} tone={subdued ? "subdued" : undefined}>
-        {label}
-      </Text>
-    </div>
+    <InlineStack gap="200" blockAlign="start" wrap={false}>
+      <div style={{ flexShrink: 0 }}><Icon source={icon} tone={tone} /></div>
+      <Text as="span" variant={subdued ? "bodySm" : "bodyMd"} tone={subdued ? "subdued" : undefined}>{label}</Text>
+    </InlineStack>
   );
-}
-
-const planCardStyle = {
-  height: "100%",
-  backgroundColor: "#FFFFFF",
-  border: "1px solid #D4D4D4",
-  borderRadius: "8px",
-  overflow: "hidden",
-} satisfies CSSProperties;
-
-function iconFrameStyle(backgroundColor: string, color: string) {
-  return {
-    alignItems: "center",
-    backgroundColor,
-    borderRadius: "8px",
-    color,
-    display: "inline-flex",
-    flexShrink: 0,
-    height: "40px",
-    justifyContent: "center",
-    width: "40px",
-  } satisfies CSSProperties;
 }

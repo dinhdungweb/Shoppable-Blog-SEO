@@ -20,6 +20,7 @@ import {
   Spinner,
   Text,
   Layout,
+  Thumbnail,
 } from "@shopify/polaris";
 import {
   ArrowDownIcon,
@@ -843,37 +844,7 @@ function PerformanceStat({
 }
 
 function DashboardThumbnail({ source, alt }: { source?: string | null; alt: string }) {
-  return (
-    <div
-      style={{
-        width: "40px",
-        height: "40px",
-        borderRadius: "6px",
-        overflow: "hidden",
-        background: "#f1f1f1",
-        border: "1px solid #e3e3e3",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-      }}
-    >
-      {source ? (
-        <img
-          src={source}
-          alt={alt}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            display: "block",
-          }}
-        />
-      ) : (
-        <Icon source={ImageIcon} tone="subdued" />
-      )}
-    </div>
-  );
+  return <Thumbnail source={source || ImageIcon} alt={alt} size="small" />;
 }
 
 function CompactProductLeaderboard({
@@ -898,19 +869,9 @@ function CompactProductLeaderboard({
         {products.length ? (
           <BlockStack gap="300">
             {products.map((product) => (
-              <div
-                key={`${title}-${product.id}`}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "40px minmax(0, 1fr) auto",
-                  alignItems: "center",
-                  columnGap: "10px",
-                  minHeight: "48px",
-                  padding: "4px 0",
-                }}
-              >
+              <InlineStack key={`${title}-${product.id}`} gap="300" blockAlign="center" wrap={false}>
                 <DashboardThumbnail source={product.image} alt={product.title} />
-                <div style={{ minWidth: 0 }}>
+                <Box minWidth="0" width="100%">
                   <BlockStack gap="050">
                     <Text as="span" variant="bodySm" fontWeight="semibold" truncate>
                       {product.title}
@@ -919,13 +880,11 @@ function CompactProductLeaderboard({
                       {formatCurrency(product.revenue, currency)} revenue
                     </Text>
                   </BlockStack>
-                </div>
-                <div style={{ whiteSpace: "nowrap", textAlign: "right" }}>
-                  <Text as="span" variant="bodySm" fontWeight="bold">
-                    {formatNumber(product[metricKey])} {metricLabel}
-                  </Text>
-                </div>
-              </div>
+                </Box>
+                <Text as="span" variant="bodySm" fontWeight="bold" alignment="end">
+                  {formatNumber(product[metricKey])}&nbsp;{metricLabel}
+                </Text>
+              </InlineStack>
             ))}
           </BlockStack>
         ) : (

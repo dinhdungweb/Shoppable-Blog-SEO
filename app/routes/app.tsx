@@ -1,9 +1,9 @@
 import { useEffect } from "react";
 import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
-import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
+import { Link, Outlet, useLoaderData, useNavigation, useRouteError } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
-import { NavMenu } from "@shopify/app-bridge-react";
+import { NavMenu, useAppBridge } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../shopify.server";
@@ -20,6 +20,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
+/** Shopify admin's own loading bar while the next page loads. */
+function NavigationLoading() {
+  const navigation = useNavigation();
+  const shopify = useAppBridge();
+  const loading = navigation.state === "loading";
+  useEffect(() => {
+    shopify.loading(loading);
+  }, [loading, shopify]);
+  return null;
+}
+
 function CrispChatLoader({ shop }: { shop?: string }) {
   useEffect(() => {
     return scheduleCrispChatLoad(shop);
@@ -34,6 +45,7 @@ export default function App() {
   return (
     <AppProvider isEmbeddedApp apiKey={apiKey}>
       <CrispChatLoader shop={shop} />
+      <NavigationLoading />
       <NavMenu>
         {/* Keep in sync with the tab sets in components/WorkspaceTabs.tsx. */}
         <Link to="/app" rel="home">
