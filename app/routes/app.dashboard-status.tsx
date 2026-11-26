@@ -79,6 +79,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     appEmbedError: "error" in theme ? "Could not check theme status" : "",
     webPixelEnabled: pixel === true,
     webPixelError: pixel === null ? "Could not check Web Pixel status" : "",
+    themeBlocks: "blocks" in theme ? theme.blocks : null,
   });
 };
 

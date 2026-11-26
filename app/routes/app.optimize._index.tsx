@@ -11,16 +11,15 @@ import {
   EmptyState,
   IndexTable,
   InlineStack,
-  Page,
   Select,
   Text,
   useIndexResourceState,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import { OPTIMIZE_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
+import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { META_TAG_PROBLEM_LABELS, auditMetaTags, type MetaTagProblem } from "../meta-tag-audit";
+import { AppPage } from "../components/AppPage";
 
 const MAX_BULK_SELECTION = 50;
 const MAX_ROWS = 250;
@@ -96,19 +95,12 @@ export default function MetaTagsOptimizer() {
   ];
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Bulk Optimize" />
-      <BlockStack gap="500">
-        <InlineStack align="space-between" blockAlign="end" gap="300">
-          <BlockStack gap="100">
-            <Text as="h1" variant="headingXl" fontWeight="bold">Bulk Optimize</Text>
-            <Text as="p" tone="subdued">
-              Fix many posts at once. Every tool follows the same steps: select → generate with AI → review → apply. Every change can be undone from Change history.
-            </Text>
-          </BlockStack>
-        </InlineStack>
-
-        <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="meta" />
+    <AppPage
+      title="Meta tags"
+      subtitle="Fix SEO titles, meta descriptions and featured image alt text for many posts at once: select → generate with AI → review → apply. Every change can be undone from Change history."
+      fullWidth
+      tabs={{ items: SEO_WORKSPACE_TABS, activeId: "meta" }}
+    >
 
         {!data.canBulkReview && (
           <Banner
@@ -124,7 +116,7 @@ export default function MetaTagsOptimizer() {
           <Card>
             <EmptyState
               heading="Run an SEO scan first"
-              action={{ content: "Go to SEO Audit", url: "/app/seo" }}
+              action={{ content: "Open SEO Analyzer", url: "/app/seo" }}
               image={EMPTY_IMAGE}
             >
               <p>Meta tag suggestions are built from your latest SEO scan of blog posts.</p>
@@ -202,8 +194,7 @@ export default function MetaTagsOptimizer() {
             </BlockStack>
           </Card>
         )}
-      </BlockStack>
-    </Page>
+    </AppPage>
   );
 }
 

@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Banner,
@@ -22,7 +22,6 @@ import {
   Layout,
 } from "@shopify/polaris";
 import {
-  AlertCircleIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   CashDollarIcon,
@@ -34,7 +33,10 @@ import {
   NoteIcon,
   LockIcon,
 } from "@shopify/polaris-icons";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { AppPage } from "../components/AppPage";
+import { SetupGuide, type SetupStep } from "../components/SetupGuide";
+import { ModuleGrid, type AppModule, type ModuleStatus } from "../components/ModuleGrid";
+import { getAiUsageStatus } from "../ai-usage.server";
 import {
   CartesianGrid,
   Legend,
@@ -143,12 +145,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     updatedAt: row.sourceUpdatedAt?.toISOString() || null, seoTitle: row.metaTitle || "", seoDescription: row.metaDescription || "",
     blogId: "", blogTitle: row.blogTitle || "Blog", blogHandle: row.blogHandle }));
 
-  // Slow theme and pixel checks are loaded after the dashboard renders.
-  const appEmbedEnabled = false;
-  const appEmbedError = "Checking…";
-  const webPixelEnabled = false;
-  const webPixelError = "Checking…";
-
   const productCountMap = new Map<string, number>();
   const productInfoMap = new Map<string, { title: string; image: string; price: number }>();
 
@@ -244,13 +240,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const averageSeoScore = getAverageSeoScore(articles);
 
   // ── Cross-workspace signals for the "What to do next" queue ──────────────
-  const [catalogAverages, catalogIssueCounts, speedScans, decayAnalysis, linkAnalysis, searchConnection] = await Promise.all([
+  const [catalogAverages, catalogIssueCounts, speedScans, decayAnalysis, linkAnalysis, searchConnection, moduleConfig, aiUsage] = await Promise.all([
     prisma.resourceSEO.groupBy({ by: ["resourceType"], where: { shop, lastAnalyzedAt: { not: null } }, _avg: { seoScore: true }, _count: { _all: true } }),
     prisma.resourceSEO.groupBy({ by: ["resourceType"], where: { shop, issueCount: { gt: 0 } }, _count: { _all: true } }),
     prisma.storefrontPerformanceScan.findMany({ where: { shop, status: "completed", scannedAt: { not: null } }, select: { mobileScore: true } }),
     prisma.contentDecayAnalysis.findUnique({ where: { shop }, select: { report: true } }),
     prisma.internalLinkAnalysis.findUnique({ where: { shop }, select: { report: true } }),
     prisma.searchConsoleConnection.findUnique({ where: { shop }, select: { selectedSiteUrl: true } }),
+    prisma.shopConfig.findUnique({ where: { shop }, select: { appStatus: true, enableConversionTracking: true, breadcrumbsEnabled: true, tocEnabled: true, seoAutoScanEnabled: true } }),
+    getAiUsageStatus(shop, limits.aiRequestsPerMonth),
   ]);
 
   const scannedSeoRows = seoRows.filter((row) => row.lastAnalyzedAt);
@@ -297,38 +295,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     limits,
   });
 
-  type SetupItem = {
-    label: string;
-    done: boolean;
-    actionUrl?: string;
-    actionLabel?: string;
-    actionError?: string;
-  };
-
-  const setupItems: SetupItem[] = [
-    { label: "Blog connected", done: baseArticles.length > 0 },
-    { 
-      label: "App enabled in theme", 
-      done: appEmbedEnabled,
-      actionUrl: "/app/theme-setup",
-      actionLabel: appEmbedError === "Checking…" ? "Checking…" : "View setup guide",
-      actionError: appEmbedError && appEmbedError !== "Checking…" ? appEmbedError : undefined,
-    },
-    {
-      label: "Conversion tracking (Web Pixel) active",
-      done: webPixelEnabled,
-      actionLabel: webPixelError === "Checking…" ? "Checking…" : "Activate",
-      actionError: webPixelError && webPixelError !== "Checking…" ? webPixelError : undefined,
-    },
-    { label: "First SEO scan completed", done: Boolean(lastScanAt), actionUrl: "/app/seo", actionLabel: "Run scan" },
+  // Theme and pixel steps are checked after render (slow Shopify calls) and merged on the client.
+  const setupSteps: Array<Omit<SetupStep, "action"> & { actionUrl?: string; actionLabel?: string }> = [
+    { id: "embed", title: "Turn on the app in your theme", description: "Enable the Shoppable Blog Markers app embed so products, breadcrumbs and the table of contents can appear on your storefront.", done: false, checking: true, actionUrl: "/app/theme-setup", actionLabel: "Open theme setup" },
+    { id: "pixel", title: "Connect conversion tracking", description: "The checkout pixel credits add-to-carts and orders to the post that sent the shopper.", done: false, checking: true, actionLabel: "Connect pixel" },
+    { id: "products", title: "Link products to a post", description: "Open a post and add the products it mentions. They appear as a carousel or grid inside the article.", done: linkedProducts.length > 0, actionUrl: "/app/blogs", actionLabel: "Open posts" },
+    { id: "publish", title: "Publish a shoppable post", description: "Publish a post with linked products so shoppers can discover and buy from your content.", done: shoppablePublishedCount > 0, actionUrl: "/app/blogs", actionLabel: "Open posts" },
+    { id: "scan", title: "Run your first SEO scan", description: "Scores every post, product and collection and lists the fixes that matter most.", done: Boolean(lastScanAt), actionUrl: "/app/seo", actionLabel: "Open SEO Analyzer" },
     ...(limits.canSearchConsole
-      ? [{ label: "Google Search Console connected", done: Boolean(searchConnection?.selectedSiteUrl), actionUrl: "/app/settings?tab=integrations", actionLabel: "Connect" }]
+      ? [{ id: "gsc", title: "Connect Google Search Console", description: "See the searches that bring readers to each post and spot posts losing traffic.", done: Boolean(searchConnection?.selectedSiteUrl), actionUrl: "/app/settings?tab=integrations", actionLabel: "Connect" }]
       : []),
-    { label: "Products linked to posts", done: linkedProducts.length > 0, actionUrl: "/app/blogs", actionLabel: "Link products" },
-    { label: "Tracking events received", done: everEventCount > 0 },
-    { label: "First shoppable post published", done: shoppablePublishedCount > 0 },
+    { id: "events", title: "Receive your first tracking events", description: "This completes automatically once shoppers view a post with linked products.", done: everEventCount > 0 },
   ];
-  const setupDone = setupItems.filter((item) => item.done).length;
   console.info("Dashboard loader timing", { shop, articles: articles.length, aggregateRows: allEvents.length, durationMs: Date.now() - startedAt });
 
   return json({
@@ -355,11 +333,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       activeProductLinks: linkedProducts.length,
       everEventCount,
     },
-    setup: {
-      items: setupItems,
-      done: setupDone,
-      total: setupItems.length,
-      progress: Math.round((setupDone / setupItems.length) * 100),
+    setupSteps,
+    modules: {
+      config: {
+        appStatus: moduleConfig?.appStatus ?? true,
+        enableConversionTracking: moduleConfig?.enableConversionTracking ?? true,
+        breadcrumbsEnabled: moduleConfig?.breadcrumbsEnabled ?? true,
+        tocEnabled: moduleConfig?.tocEnabled ?? true,
+        seoAutoScanEnabled: moduleConfig?.seoAutoScanEnabled ?? false,
+      },
+      limits: {
+        canContentNavigation: limits.canContentNavigation,
+        canAutoSeoScan: limits.canAutoSeoScan,
+        canSearchConsole: limits.canSearchConsole,
+        canCatalogSeo: limits.canCatalogSeo,
+        canBulkReview: limits.canBulkReview,
+        canInternalLinking: limits.canInternalLinking,
+        canContentDecay: limits.canContentDecay,
+        canContentBriefs: limits.canContentBriefs,
+      },
+      searchConnected: Boolean(searchConnection?.selectedSiteUrl),
+      catalogScanned: catalogAverages.some((row) => row._count._all > 0),
+      linkedProducts: linkedProducts.length,
+      aiUsed: aiUsage.used,
+      aiLimit: aiUsage.limit,
     },
     recentPosts: articles.slice(0, 5),
     homeTasks,
@@ -378,6 +375,8 @@ export default function Dashboard() {
   const data = useLoaderData<any>();
   const setupFetcher = useFetcher<any>();
   const pixelFetcher = useFetcher<any>();
+  const moduleFetcher = useFetcher<{ success?: boolean; module?: string; enabled?: boolean; error?: string }>();
+  const [moduleOverrides, setModuleOverrides] = useState<Record<string, boolean>>({});
   const pixelAutoActivationAttempted = useRef(false);
   const pixelSuccessHandled = useRef(false);
   const navigate = useNavigate();
@@ -439,77 +438,53 @@ export default function Dashboard() {
     topAddToCartProducts,
     topPurchasedProducts,
     counts,
-    setup: initialSetup,
+    setupSteps: initialSteps,
+    modules: moduleState,
     recentPosts,
     homeTasks,
     storeScore,
     lastScanAt,
     currency,
   } = data as typeof data & { homeTasks: HomeTask[]; storeScore: StoreSeoScore; lastScanAt: string | null };
-  const setup = mergeSetupStatus(initialSetup, setupFetcher.data, pixelFetcher.data?.error);
+  const setupSteps = buildSetupSteps(initialSteps, setupFetcher.data, pixelFetcher, navigate);
+  const toggleModule = (id: string, enabled: boolean) => {
+    setModuleOverrides((current) => ({ ...current, [id]: enabled }));
+    moduleFetcher.submit({ module: id, enabled: String(enabled) }, { method: "post", action: "/app/modules" });
+  };
+  const modules = buildModules(moduleState, moduleOverrides, setupFetcher.data, moduleFetcher.state !== "idle" ? String(moduleFetcher.formData?.get("module") || "") : "", toggleModule);
 
   const productCtr = getCtr(metrics.clicks, metrics.impressions);
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Home" />
-      <BlockStack gap="600">
-        <InlineStack align="space-between" blockAlign="end">
-          <BlockStack gap="100">
-            <Text as="h1" variant="headingLg" fontWeight="bold">
-              Home
-            </Text>
-            <Text as="p" variant="bodyMd" tone="subdued">
-              Your store&apos;s SEO health and the most valuable fixes to make next.
-            </Text>
-          </BlockStack>
-          <InlineStack gap="200">
-            <Button onClick={() => navigate("/app/seo")}>SEO Audit</Button>
-            <Button variant="primary" onClick={() => navigate("/app/blogs/new")}>
-              Create post
-            </Button>
-          </InlineStack>
-        </InlineStack>
-
+    <AppPage
+      title="Dashboard"
+      subtitle="Your store's SEO health, setup progress and the fixes worth making next."
+      fullWidth
+      primaryAction={{ content: "Create post", onAction: () => navigate("/app/blogs/new") }}
+      secondaryActions={[{ content: "Open SEO Analyzer", onAction: () => navigate("/app/seo") }]}
+    >
+      <BlockStack gap="500">
         {shopifyError && (
           <Banner tone="warning" title="Shopify blog posts could not be loaded">
             <p>{shopifyError} The dashboard below will only show data already stored by the app.</p>
           </Banner>
         )}
+        {moduleFetcher.data?.error && <Banner tone="critical"><p>{moduleFetcher.data.error}</p></Banner>}
+
+        <SetupGuide steps={setupSteps} />
 
         <InlineGrid columns={{ xs: 1, md: "1fr 2fr" }} gap="400">
-          <BlockStack gap="400">
           <StoreScoreCard storeScore={storeScore} lastScanAt={lastScanAt} onScan={() => navigate("/app/seo")} />
-          {setup.progress < 100 && (
-          <Card padding="400">
-            <BlockStack gap="400">
-              <InlineStack align="space-between">
-                <Text as="h2" variant="headingMd" fontWeight="bold">
-                  Setup checklist
-                </Text>
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {setup.done} of {setup.total} completed
-                </Text>
-              </InlineStack>
-              <ProgressBar progress={setup.progress} tone={setup.progress === 100 ? "success" : "primary"} size="small" />
-              <BlockStack gap="300">
-                {setup.items.map((item: any) => (
-                  <ProgressItem
-                    key={item.label} label={item.label} done={item.done} actionUrl={item.actionUrl} actionLabel={item.actionLabel} actionError={item.actionError}
-                    loading={item.label === "Conversion tracking (Web Pixel) active" && pixelFetcher.state !== "idle"}
-                    onAction={item.label === "Conversion tracking (Web Pixel) active"
-                      ? () => pixelFetcher.submit({ intent: "activate_pixel" }, { method: "post", action: "/app/dashboard-status" })
-                      : undefined}
-                  />
-                ))}
-              </BlockStack>
-            </BlockStack>
-          </Card>
-          )}
-          </BlockStack>
-
           <HomeTaskList tasks={homeTasks} planKey={planKey} onNavigate={(url) => navigate(url)} />
         </InlineGrid>
+
+        <BlockStack gap="300">
+          <BlockStack gap="100">
+            <Text as="h2" variant="headingMd">Modules</Text>
+            <Text as="p" variant="bodySm" tone="subdued">Every feature of the app in one place. Switch modules on or off, or open them to configure.</Text>
+          </BlockStack>
+          <ModuleGrid modules={modules} planKey={planKey} />
+        </BlockStack>
 
         <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
           <MetricCard
@@ -585,7 +560,7 @@ export default function Dashboard() {
                   <EmptyState
                     heading="No tracking events yet"
                     image={PLACEHOLDER_IMAGE}
-                    action={{ content: "Check tracking settings", onAction: () => navigate("/app/settings") }}
+                    action={{ content: "Check tracking settings", onAction: () => navigate("/app/settings?tab=tracking") }}
                   >
                     <p>Events will appear after storefront visitors view or click linked products in blog posts.</p>
                   </EmptyState>
@@ -702,32 +677,7 @@ export default function Dashboard() {
           )}
         </Card>
       </BlockStack>
-    </Page>
-  );
-}
-
-function ProgressItem({ label, done, actionUrl, actionLabel, actionError, onAction, loading }: { label: string; done: boolean; actionUrl?: string; actionLabel?: string; actionError?: string; onAction?: () => void; loading?: boolean }) {
-  return (
-    <InlineStack align="space-between" blockAlign="center">
-      <InlineStack gap="200" blockAlign="center">
-        <Icon source={done ? CheckIcon : AlertCircleIcon} tone={done ? "success" : "subdued"} />
-        <Text as="span" variant="bodyMd" tone={done ? "base" : "subdued"}>
-          {label}
-        </Text>
-      </InlineStack>
-      {done ? (
-        <Badge tone="success">Done</Badge>
-      ) : actionLabel === "Checking…" ? (
-        <Badge tone="info">Checking…</Badge>
-      ) : actionUrl || onAction ? (
-        <InlineStack gap="200" blockAlign="center">
-          {actionError ? <Badge tone="critical">{`Error: ${actionError}`}</Badge> : null}
-          <Button size="micro" url={actionUrl} onClick={onAction} loading={loading}>{actionError ? "Retry" : actionLabel || "Enable"}</Button>
-        </InlineStack>
-      ) : (
-        <Badge tone="new">Pending</Badge>
-      )}
-    </InlineStack>
+    </AppPage>
   );
 }
 
@@ -781,7 +731,7 @@ function HomeTaskList({ tasks, planKey, onNavigate }: { tasks: HomeTask[]; planK
       <BlockStack gap="400">
         <BlockStack gap="100">
           <Text as="h2" variant="headingMd" fontWeight="bold">What to do next</Text>
-          <Text as="p" variant="bodySm" tone="subdued">Highest-impact fixes across SEO Audit, Bulk Optimize, Content and Catalog.</Text>
+          <Text as="p" variant="bodySm" tone="subdued">Highest-impact fixes across posts, products, collections and store setup.</Text>
         </BlockStack>
         {tasks.length ? (
           <BlockStack gap="0">
@@ -988,25 +938,68 @@ function CompactProductLeaderboard({
   );
 }
 
-function mergeSetupStatus(setup: any, status: any, pixelActionError?: string) {
-  if (!status || status.error) return setup;
-  const items = setup.items.map((item: any) => {
-    if (item.label === "App enabled in theme") return {
-      ...item,
-      done: Boolean(status.appEmbedEnabled),
-      actionLabel: "View setup guide",
-      actionError: status.appEmbedError || undefined,
-    };
-    if (item.label === "Conversion tracking (Web Pixel) active") return {
-      ...item,
-      done: Boolean(status.webPixelEnabled),
-      actionLabel: status.webPixelEnabled ? undefined : "Activate",
-      actionError: pixelActionError || status.webPixelError || undefined,
-    };
-    return item;
+type LoaderSetupStep = Omit<SetupStep, "action"> & { actionUrl?: string; actionLabel?: string };
+
+/** Loader steps + the deferred theme/pixel checks + actions. */
+function buildSetupSteps(steps: LoaderSetupStep[], status: any, pixelFetcher: any, navigate: (url: string) => void): SetupStep[] {
+  return steps.map((step) => {
+    let next: SetupStep = { ...step };
+    if (step.id === "embed" && status) {
+      next = { ...next, checking: false, done: Boolean(status.appEmbedEnabled), error: status.appEmbedError || undefined };
+    }
+    if (step.id === "pixel" && status) {
+      next = { ...next, checking: false, done: Boolean(status.webPixelEnabled), error: pixelFetcher.data?.error || status.webPixelError || undefined };
+    }
+    if (step.id === "pixel") {
+      next.action = { content: next.error ? "Retry" : step.actionLabel || "Connect", loading: pixelFetcher.state !== "idle", onAction: () => pixelFetcher.submit({ intent: "activate_pixel" }, { method: "post", action: "/app/dashboard-status" }) };
+    } else if (step.actionUrl) {
+      const url = step.actionUrl;
+      next.action = { content: step.actionLabel || "Open", onAction: () => navigate(url) };
+    }
+    return next;
   });
-  const done = items.filter((item: any) => item.done).length;
-  return { ...setup, items, done, progress: Math.round((done / items.length) * 100) };
+}
+
+type ModuleState = {
+  config: { appStatus: boolean; enableConversionTracking: boolean; breadcrumbsEnabled: boolean; tocEnabled: boolean; seoAutoScanEnabled: boolean };
+  limits: Record<"canContentNavigation" | "canAutoSeoScan" | "canSearchConsole" | "canCatalogSeo" | "canBulkReview" | "canInternalLinking" | "canContentDecay" | "canContentBriefs", boolean>;
+  searchConnected: boolean;
+  catalogScanned: boolean;
+  linkedProducts: number;
+  aiUsed: number;
+  aiLimit: number | null;
+};
+
+/** Dashboard › Modules, in the order merchants usually set them up. */
+function buildModules(state: ModuleState, overrides: Record<string, boolean>, themeStatus: any, pendingId: string, onToggle: (id: string, enabled: boolean) => void): AppModule[] {
+  const { config, limits } = state;
+  const value = (id: string, fallback: boolean) => (id in overrides ? overrides[id] : fallback);
+  const toggleable = (id: string, enabled: boolean) => ({ checked: enabled, pending: pendingId === id, onChange: (checked: boolean) => onToggle(id, checked) });
+  const onOff = (enabled: boolean): ModuleStatus => (enabled ? "active" : "off");
+  const gated = (allowed: boolean, status: ModuleStatus): ModuleStatus => (allowed ? status : "locked");
+  const tracking = value("tracking", config.enableConversionTracking);
+  const breadcrumbs = value("breadcrumbs", config.breadcrumbsEnabled);
+  const toc = value("toc", config.tocEnabled);
+  const autoScan = value("auto-scan", config.seoAutoScanEnabled);
+  // undefined while the theme check runs; null when the theme could not be read.
+  const schemaInstalled: boolean | null | undefined = themeStatus ? (themeStatus.themeBlocks ? Boolean(themeStatus.themeBlocks.seoSchema) : null) : undefined;
+
+  return [
+    { id: "shoppable", title: "Shoppable products", description: "Show the products you link inside blog posts as a carousel or grid.", status: !config.appStatus ? "off" : state.linkedProducts ? "active" : "setup", detail: state.linkedProducts ? `${state.linkedProducts} product links` : undefined, url: "/app/settings?tab=display" },
+    { id: "tracking", title: "Conversion tracking", description: "Credit clicks, add-to-carts and orders to the post that sent the shopper.", status: onOff(tracking), url: "/app/settings?tab=tracking", toggle: toggleable("tracking", tracking) },
+    { id: "schema", title: "SEO schema (JSON-LD)", description: "BlogPosting and breadcrumb structured data for rich results.", status: schemaInstalled === undefined ? "checking" : schemaInstalled ? "active" : "setup", detail: schemaInstalled === false ? "Add the SEO Schema block to your blog post template." : schemaInstalled === null ? "Could not read your theme." : undefined, url: "/app/theme-setup" },
+    { id: "breadcrumbs", title: "Breadcrumbs", description: "Home › Blog › Post navigation with breadcrumb schema.", status: gated(limits.canContentNavigation, onOff(breadcrumbs)), requiredPlan: "Pro", url: "/app/settings?tab=content-navigation", toggle: toggleable("breadcrumbs", breadcrumbs) },
+    { id: "toc", title: "Table of contents", description: "Automatic, clickable table of contents built from your headings.", status: gated(limits.canContentNavigation, onOff(toc)), requiredPlan: "Pro", url: "/app/settings?tab=content-navigation", toggle: toggleable("toc", toc) },
+    { id: "auto-scan", title: "Scheduled SEO scans", description: "Rescan posts, products and collections every week.", status: gated(limits.canAutoSeoScan, onOff(autoScan)), requiredPlan: "Pro", url: "/app/seo", toggle: toggleable("auto-scan", autoScan) },
+    { id: "catalog", title: "Product & collection SEO", description: "Scores, search listings, descriptions and image alt text for your catalog.", status: gated(limits.canCatalogSeo, state.catalogScanned ? "active" : "setup"), requiredPlan: "Plus", url: "/app/catalog-seo?view=manager&type=product" },
+    { id: "search-console", title: "Google Search Console", description: "Queries, clicks and rankings for every post.", status: gated(limits.canSearchConsole, state.searchConnected ? "active" : "setup"), requiredPlan: "Pro", url: "/app/settings?tab=integrations" },
+    { id: "internal-links", title: "Internal links", description: "Find orphan posts and add relevant links between articles.", status: gated(limits.canInternalLinking, "active"), requiredPlan: "Pro", url: "/app/internal-links" },
+    { id: "briefs", title: "AI content briefs", description: "Keyword clusters and outlines before you write.", status: gated(limits.canContentBriefs, "active"), requiredPlan: "Pro", url: "/app/content-briefs" },
+    { id: "image-seo", title: "Image SEO", description: "Write alt text for featured and inline images in bulk.", status: gated(limits.canBulkReview, "active"), requiredPlan: "Growth", url: "/app/image-seo" },
+    { id: "decay", title: "Content decay", description: "Spot posts that are losing clicks and refresh them.", status: gated(limits.canContentDecay, "active"), requiredPlan: "Growth", url: "/app/content-decay" },
+    { id: "speed", title: "Site speed", description: "PageSpeed scores for your storefront's key pages.", status: "active", url: "/app/performance" },
+    { id: "ai", title: "AI writing", description: "Drafts, rewrites, SEO fixes and alt text that follow your rules.", status: "active", detail: state.aiLimit === null ? `${state.aiUsed} generations this month` : `${state.aiUsed} of ${state.aiLimit} generations used this month`, url: "/app/settings?tab=rules" },
+  ];
 }
 
 function toPeriod(metrics: Metrics): PeriodMetrics {

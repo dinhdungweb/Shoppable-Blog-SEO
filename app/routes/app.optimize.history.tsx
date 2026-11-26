@@ -5,19 +5,18 @@ import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
   Badge,
   Banner,
-  BlockStack,
   Button,
   Card,
   EmptyState,
   IndexTable,
   InlineStack,
-  Page,
   Text,
 } from "@shopify/polaris";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
-import { OPTIMIZE_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
+import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
+import { AppPage } from "../components/AppPage";
 
 const PER_TOOL = 30;
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
@@ -147,15 +146,12 @@ export default function ChangeHistory() {
   };
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Bulk Optimize" />
-      <BlockStack gap="500">
-        <BlockStack gap="100">
-          <Text as="h1" variant="headingXl" fontWeight="bold">Bulk Optimize</Text>
-          <Text as="p" tone="subdued">Every bulk change applied to Shopify, newest first. Undo restores the exact previous values.</Text>
-        </BlockStack>
-
-        <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="history" />
+    <AppPage
+      title="Change history"
+      subtitle="Every bulk change applied to Shopify, newest first. Undo restores the exact previous values."
+      fullWidth
+      tabs={{ items: SEO_WORKSPACE_TABS, activeId: "history" }}
+    >
 
         {fetcher.data?.error && <Banner tone="critical" title="Could not undo this change"><p>{fetcher.data.error}</p></Banner>}
 
@@ -201,7 +197,6 @@ export default function ChangeHistory() {
             </IndexTable>
           </Card>
         )}
-      </BlockStack>
-    </Page>
+    </AppPage>
   );
 }

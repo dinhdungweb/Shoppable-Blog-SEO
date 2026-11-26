@@ -15,12 +15,11 @@ import {
   FormLayout,
   InlineGrid,
   InlineStack,
-  Page,
   Select,
   Text,
   TextField,
 } from "@shopify/polaris";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 
 import {
   CONTENT_BRIEF_SECTIONS,
@@ -41,12 +40,10 @@ import {
 import prisma from "../db.server";
 import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import {
-  CONTENT_WORKSPACE_TABS,
-  WorkspaceTabs,
-} from "../components/WorkspaceTabs";
+import { CONTENT_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 import { isAiQuotaExceededError, runWithAiUsage } from "../ai-usage.server";
+import { AppPage } from "../components/AppPage";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 type SerializedBrief = {
@@ -309,7 +306,7 @@ export default function ContentBriefsPage() {
   const activeSection = String(fetcher.formData?.get("section") || "");
 
   if (!initial.canUse) {
-    return <Page><TitleBar title="Content briefs" /><BlockStack gap="500"><WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="briefs" /><Card><EmptyState heading="AI Content Brief is a Pro feature" action={{ content: "Upgrade plan", url: `/app/pricing?reason=content_brief&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Build keyword clusters, outlines, internal-link plans and product-placement ideas before drafting an article.</p></EmptyState></Card></BlockStack></Page>;
+    return <AppPage title="Content briefs" tabs={{ items: CONTENT_WORKSPACE_TABS, activeId: "briefs" }}><Card><EmptyState heading="AI Content Brief is a Pro feature" action={{ content: "Upgrade plan", url: `/app/pricing?reason=content_brief&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Build keyword clusters, outlines, internal-link plans and product-placement ideas before drafting an article.</p></EmptyState></Card></AppPage>;
   }
 
   const generate = () => fetcher.submit(
@@ -321,17 +318,14 @@ export default function ContentBriefsPage() {
     fetcher.submit({ intent, id: selected.id, ...extra }, { method: "post" });
   };
 
-  return <Page fullWidth>
-    <TitleBar title="Content briefs" />
+  return <AppPage
+    title="Content briefs"
+    subtitle="Turn a topic into an evidence-backed keyword cluster, outline, linking plan and editable article draft."
+    fullWidth
+    tabs={{ items: CONTENT_WORKSPACE_TABS, activeId: "briefs" }}
+    primaryAction={selected ? { content: "Generate article draft", onAction: () => submitBriefAction("generate_draft"), loading: busy && activeIntent === "generate_draft", disabled: busy || !initial.aiEnabled } : undefined}
+  >
     <BlockStack gap="500">
-      <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="briefs" />
-      <InlineStack align="space-between" blockAlign="end" gap="400">
-        <BlockStack gap="100">
-          <Text as="h1" variant="headingXl" fontWeight="bold">Plan before you publish</Text>
-          <Text as="p" tone="subdued">Turn a topic into an evidence-backed keyword cluster, outline, linking plan and editable article draft.</Text>
-        </BlockStack>
-        {selected && <Button variant="primary" loading={busy && activeIntent === "generate_draft"} disabled={busy || !initial.aiEnabled} onClick={() => submitBriefAction("generate_draft")}>Generate article draft</Button>}
-      </InlineStack>
 
       {!initial.aiEnabled && <Banner tone="critical" title="9Router is not configured"><p>Add the 9Router base URL, API key and model to the server environment before generating briefs.</p></Banner>}
       {!initial.searchConsoleConnected && <Banner tone="info" title="Keyword evidence is limited"><p>Connect and sync Google Search Console in Settings → Integrations. Briefs still work, but will not include store-specific query metrics until data is available.</p></Banner>}
@@ -363,7 +357,7 @@ export default function ContentBriefsPage() {
         {!selected ? <Card><EmptyState heading="Create your first content brief" action={{ content: "Generate brief", onAction: generate, disabled: !initial.aiEnabled || (!topic.trim() && !seedKeyword.trim()) }} image={EMPTY_IMAGE}><p>Start with a topic or seed keyword. Nothing is published automatically.</p></EmptyState></Card> : <BriefWorkspace brief={selected} busy={busy} activeSection={activeSection} regenerate={(section) => submitBriefAction("regenerate_section", { section })} generateDraft={() => submitBriefAction("generate_draft")} remove={() => { if (window.confirm("Delete this saved content brief? This cannot be undone.")) submitBriefAction("delete"); }} />}
       </InlineGrid>
     </BlockStack>
-  </Page>;
+  </AppPage>;
 }
 
 function BriefWorkspace({ brief: saved, busy, activeSection, regenerate, generateDraft, remove }: {

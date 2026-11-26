@@ -4,8 +4,8 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, InlineGrid, InlineStack, Layout, Modal, Page, Tabs, Text } from "@shopify/polaris";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, InlineGrid, InlineStack, Layout, Modal, Tabs, Text } from "@shopify/polaris";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { analyzeInternalLinks, hasInternalLinkTarget, insertApprovedLink, previewApprovedLink } from "../internal-linking";
 import type { InternalLinkReport, LinkArticle, LinkSuggestion } from "../internal-linking";
 import { generateAiInternalLinkSuggestions } from "../ai-internal-linking.server";
@@ -14,11 +14,9 @@ import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-ro
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
-import {
-  OPTIMIZE_WORKSPACE_TABS,
-  WorkspaceTabs,
-} from "../components/WorkspaceTabs";
+import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
+import { AppPage } from "../components/AppPage";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 
@@ -359,10 +357,7 @@ export default function InternalLinksPage() {
 
   if (!initialData.canInternalLinking) {
     return (
-      <Page>
-        <TitleBar title="Bulk Optimize" />
-        <BlockStack gap="500">
-          <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="links" />
+      <AppPage title="Internal links" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "links" }}>
           <Card>
             <EmptyState
               heading="Internal Linking Assistant is a Pro feature"
@@ -372,31 +367,20 @@ export default function InternalLinksPage() {
               <p>Upgrade to analyze related Shopify articles, broken destinations, repeated anchors and topic clusters, then insert approved links.</p>
             </EmptyState>
           </Card>
-        </BlockStack>
-      </Page>
+      </AppPage>
     );
   }
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Bulk Optimize">
-        <button variant="primary" disabled={analyzing || generatingAi} onClick={runAnalysis}>{analyzing ? "Analyzing..." : "Analyze links"}</button>
-      </TitleBar>
+    <AppPage
+      title="Internal links"
+      subtitle="Find related content, verify relevance and anchors with AI, then review every change before applying it."
+      fullWidth
+      tabs={{ items: SEO_WORKSPACE_TABS, activeId: "links" }}
+      primaryAction={{ content: report ? "Refresh analysis" : "Analyze links", onAction: runAnalysis, loading: analyzing, disabled: generatingAi }}
+      secondaryActions={report ? [{ content: initialData.aiEnabled ? "Review with AI" : "AI not configured", onAction: runAiReview, loading: generatingAi, disabled: !initialData.aiEnabled || analyzing }] : []}
+    >
       <BlockStack gap="500">
-        <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="links" />
-        <InlineStack align="space-between" blockAlign="end">
-          <BlockStack gap="100">
-            <Text as="h1" variant="headingXl" fontWeight="bold">Internal links</Text>
-            <Text as="p" tone="subdued">Find related content, verify semantic relevance and exact anchors with AI, then review every change before applying it.</Text>
-          </BlockStack>
-          <InlineStack gap="200">
-            {report && <Button disabled={!initialData.aiEnabled || analyzing} loading={generatingAi} onClick={runAiReview}>
-              {initialData.aiEnabled ? "Review with AI" : "AI not configured"}
-            </Button>}
-            <Button variant="primary" loading={analyzing} disabled={generatingAi} onClick={runAnalysis}>{report ? "Refresh analysis" : "Analyze links"}</Button>
-          </InlineStack>
-        </InlineStack>
-
         {analysisData?.error && <Card><Text as="p" tone="critical">{analysisData.error}</Text></Card>}
         {aiData?.error && <Banner tone="critical" title="AI review unavailable"><p>{aiData.error}</p></Banner>}
         {!report ? (
@@ -515,7 +499,7 @@ export default function InternalLinksPage() {
           </BlockStack>
         </Modal.Section>
       </Modal>
-    </Page>
+    </AppPage>
   );
 }
 

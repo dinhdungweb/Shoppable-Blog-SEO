@@ -10,17 +10,16 @@ import {
   EmptyState,
   IndexTable,
   InlineStack,
-  Page,
   Select,
   Text,
   useIndexResourceState,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
 import type { Prisma } from "@prisma/client";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import { OPTIMIZE_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
+import { CATALOG_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { CATALOG_BULK_ISSUES, CATALOG_BULK_ISSUE_TYPES, MAX_CATALOG_BULK, bulkProblems, type CatalogBulkFilter } from "../catalog-bulk";
+import { AppPage } from "../components/AppPage";
 
 const MAX_ROWS = 250;
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
@@ -111,27 +110,22 @@ export default function CatalogBulkPicker() {
   ];
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Bulk Optimize" />
-      <BlockStack gap="500">
-        <BlockStack gap="100">
-          <Text as="h1" variant="headingXl" fontWeight="bold">Bulk Optimize</Text>
-          <Text as="p" tone="subdued">
-            Fix search listings for many products or collections at once: select → generate with AI → review → apply. Every change can be undone from Change history.
-          </Text>
-        </BlockStack>
-
-        <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="catalog" />
+    <AppPage
+      title="Bulk optimize"
+      subtitle="Fix search listings for many products or collections at once: select → generate with AI → review → apply. Every change can be undone from Change history."
+      fullWidth
+      tabs={{ items: CATALOG_WORKSPACE_TABS, activeId: "bulk" }}
+    >
 
         {!data.canBulk && (
           <Banner tone="info" title="Bulk catalog editing is a Growth feature" action={{ content: "See plans", url: `/app/pricing?reason=bulk_edit&plan=${data.planKey}` }}>
-            <p>You can still see which {noun}s need attention here and fix them one at a time in the Catalog editor.</p>
+            <p>You can still see which {noun}s need attention here and fix them one at a time in the product or collection editor.</p>
           </Banner>
         )}
 
         {!data.total ? (
           <Card>
-            <EmptyState heading="Run an SEO scan first" action={{ content: "Go to SEO Audit", url: "/app/seo" }} image={EMPTY_IMAGE}>
+            <EmptyState heading="Run an SEO scan first" action={{ content: "Open SEO Analyzer", url: "/app/seo" }} image={EMPTY_IMAGE}>
               <p>Product and collection suggestions are built from your latest catalog scan.</p>
             </EmptyState>
           </Card>
@@ -192,8 +186,7 @@ export default function CatalogBulkPicker() {
             </IndexTable>
           </Card>
         )}
-      </BlockStack>
-    </Page>
+    </AppPage>
   );
 }
 

@@ -3,8 +3,8 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, InlineGrid, InlineStack, Page, Text, TextField } from "@shopify/polaris";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, InlineGrid, InlineStack, Text, TextField } from "@shopify/polaris";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { AlertTriangleIcon, AppsIcon, ChartVerticalIcon, CheckCircleIcon, ChevronDownIcon, CodeIcon, CollectionIcon, DesktopIcon, GaugeIcon, HomeIcon, ImageIcon, MobileIcon, NoteIcon, ProductIcon, SearchIcon } from "@shopify/polaris-icons";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
@@ -20,10 +20,8 @@ import {
   type PerformanceTarget,
   type StorefrontPerformanceReport,
 } from "../storefront-performance";
-import {
-  SEO_WORKSPACE_TABS,
-  WorkspaceTabs,
-} from "../components/WorkspaceTabs";
+import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
+import { AppPage } from "../components/AppPage";
 
 export const links = () => [{ rel: "stylesheet", href: performanceStyles }];
 
@@ -184,13 +182,14 @@ export default function PerformancePage() {
     return () => window.clearInterval(timer);
   }, [initial.scans, revalidator]);
 
-  return <Page fullWidth>
-    <TitleBar title="SEO Audit"><button variant="primary" disabled={scanning || !target?.available} onClick={scan}>{scanning ? "Scanning..." : report ? "Recheck page" : "Run scan"}</button></TitleBar>
+  return <AppPage
+    title="Site speed"
+    subtitle="Lighthouse and real-user Core Web Vitals for your Shopify storefront."
+    fullWidth
+    tabs={{ items: SEO_WORKSPACE_TABS, activeId: "site-speed" }}
+    primaryAction={{ content: report ? "Recheck page" : "Run scan", onAction: scan, loading: scanning, disabled: !target?.available }}
+  >
     <BlockStack gap="500">
-      <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="site-speed" />
-      <div className="bp-performance-hero"><InlineStack align="space-between" blockAlign="center" gap="400"><InlineStack gap="300" blockAlign="center"><div className="bp-performance-hero-icon"><Icon source={GaugeIcon} tone="base" /></div><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Site speed</Text><Text as="p" tone="subdued">Lighthouse and real-user Core Web Vitals for your Shopify storefront.</Text></BlockStack></InlineStack>
-        <Button variant="primary" loading={scanning} disabled={!target?.available} onClick={scan}>{report ? "Recheck page" : "Run scan"}</Button>
-      </InlineStack></div>
       {!initial.hasApiKey && <Banner tone="info" title="Using shared PageSpeed quota"><p>Add GOOGLE_PAGESPEED_API_KEY on the server for reliable recurring scans. Saved reports remain available if Google temporarily limits new requests.</p></Banner>}
       {response?.error && <Banner tone="critical"><p>{response.error}</p></Banner>}
       {saved?.status === "failed" && <Banner tone="critical" title="Performance scan failed"><p>{saved.error || "The storefront could not be scanned. Please try again."}</p></Banner>}
@@ -234,7 +233,7 @@ export default function PerformancePage() {
         </Box>
       </div>
     </BlockStack>
-  </Page>;
+  </AppPage>;
 }
 
 function PageTypeButton({ target, selected, scan, onSelect }: { target: PerformanceTarget; selected: boolean; scan?: SavedScan; onSelect: () => void }) {

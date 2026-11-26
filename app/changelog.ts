@@ -10,6 +10,20 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.11.26",
+    date: "2026-11-26",
+    title: "A simpler, more consistent app",
+    summary: "A clearer menu, a dashboard with a setup guide and every module in one place, and settings organized like Shopify's own.",
+    tags: ["New", "Improved"],
+    changes: [
+      { type: "Improved", text: "A simpler menu: Dashboard, Posts, Products & collections, SEO Analyzer, Analytics and Settings. Bulk tools now live where you use them: SEO Analyzer for posts, Products & collections for your catalog." },
+      { type: "New", text: "Dashboard › Setup guide walks you through turning on the app, connecting tracking, linking products and running your first scan, and checks each step automatically." },
+      { type: "New", text: "Dashboard › Modules shows every feature with its status. Switch tracking, breadcrumbs, table of contents and scheduled scans on or off from one place." },
+      { type: "Improved", text: "Settings is now a list of sections, each on its own page with a clear description, Shopify's save bar and a reset to defaults." },
+      { type: "Improved", text: "Every page uses the same header with its title, actions and back link, so the main action is always in the same place." },
+    ],
+  },
+  {
     version: "2026.11.21",
     date: "2026-11-21",
     title: "Settings you can trust",

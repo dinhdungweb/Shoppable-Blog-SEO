@@ -12,7 +12,6 @@ import {
   Icon,
   InlineGrid,
   InlineStack,
-  Page,
   Text,
 } from "@shopify/polaris";
 import {
@@ -21,12 +20,11 @@ import {
   ProductIcon,
   StarFilledIcon,
 } from "@shopify/polaris-icons";
-import { TitleBar } from "@shopify/app-bridge-react";
 import { GROWTH_PLAN, PAID_PLANS, PLUS_PLAN, PRO_PLAN, PLAN_LIMITS, getPlanKey } from "../pricing-plans";
 import { authenticate, isBillingTestMode } from "../shopify.server";
-import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { writeCachedPlan } from "../plan-cache.server";
 import type { PlanKey } from "../pricing-plans";
+import { AppPage } from "../components/AppPage";
 
 type PricingPlan = {
   key: PlanKey;
@@ -291,21 +289,14 @@ export default function PricingPage() {
   const upgradeMessage = UPGRADE_REASON_MESSAGES[upgradeReason] || "";
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Settings" />
+    <AppPage
+      title="Plan & billing"
+      subtitle="Every paid plan includes a 7-day free trial. Upgrade or downgrade from Shopify billing at any time."
+      fullWidth
+      backAction={{ content: "Settings", url: "/app/settings" }}
+    >
       <div style={{ width: "100%", maxWidth: "1280px", margin: "0 auto" }}>
         <BlockStack gap="500">
-        <WorkspaceTabs tabs={SETTINGS_WORKSPACE_TABS} activeId="billing" />
-        <InlineStack align="space-between" blockAlign="end" gap="400">
-          <BlockStack gap="100">
-            <Text as="h2" variant="headingLg" fontWeight="bold">
-              Compare plans
-            </Text>
-            <Text as="p" variant="bodyMd" tone="subdued">
-              Every paid plan includes a 7-day free trial. Upgrade or downgrade from Shopify billing at any time.
-            </Text>
-          </BlockStack>
-        </InlineStack>
 
         {/* Contextual upgrade banner — shown when redirected from a gated feature */}
         {upgradeMessage && (
@@ -355,7 +346,7 @@ export default function PricingPage() {
 
         </BlockStack>
       </div>
-    </Page>
+    </AppPage>
   );
 }
 

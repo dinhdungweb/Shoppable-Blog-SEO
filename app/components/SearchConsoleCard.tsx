@@ -46,7 +46,7 @@ type ActionData = { success?: boolean; error?: string; googleAction?: string; au
 
 /**
  * One Search Console card for the whole app.
- * - mode "keywords": SEO Audit → Keywords. Shows metrics and opportunities.
+ * - mode "keywords": Analytics → Keywords & decay. Shows metrics and opportunities.
  * - mode "connection": Settings → Integrations. Shows connect / property / disconnect.
  */
 export function SearchConsoleCard({ data, mode, planKey }: { data: SearchConsoleData; mode: "keywords" | "connection"; planKey?: string }) {
@@ -218,7 +218,7 @@ export function SearchConsoleCard({ data, mode, planKey }: { data: SearchConsole
         )}
 
         {mode === "connection" && data.selectedSiteUrl && (
-          <InlineStack><Button variant="plain" url="/app/content-decay">View keyword opportunities in SEO Audit</Button></InlineStack>
+          <InlineStack><Button variant="plain" url="/app/content-decay">View keyword opportunities in Analytics</Button></InlineStack>
         )}
       </BlockStack>
     </Card>

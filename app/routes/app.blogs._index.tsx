@@ -10,7 +10,6 @@ import {
 import {
   Badge,
   Banner,
-  Page,
   Card,
   Modal,
   Text,
@@ -19,7 +18,6 @@ import {
   IndexTable,
   useIndexResourceState,
   Icon,
-  Button,
   TextField,
   Select,
 } from "@shopify/polaris";
@@ -31,13 +29,11 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { formatLimit } from "../pricing-plans";
-import {
-  CONTENT_WORKSPACE_TABS,
-  WorkspaceTabs,
-} from "../components/WorkspaceTabs";
+import { CONTENT_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { analyticsWindow, formatMoney, groupRows } from "../analytics-core";
 import { canonicalArticleId, getShopLocale, loadLinkedProducts, priceLookup } from "../analytics.server";
 import { convertLegacyMarkers } from "../content-markers.server";
+import { AppPage } from "../components/AppPage";
 
 const BLOG_MANAGER_PAGE_SIZE = 20;
 const METRICS_WINDOW_DAYS = 30;
@@ -539,17 +535,14 @@ export default function BlogManager() {
   };
 
   return (
-    <Page fullWidth>
+    <AppPage
+      title="Posts"
+      subtitle="Write, optimize and add products to your blog posts."
+      fullWidth
+      tabs={{ items: CONTENT_WORKSPACE_TABS, activeId: "posts" }}
+      primaryAction={{ content: "Create post", onAction: () => navigate("/app/blogs/new") }}
+    >
       <BlockStack gap="500">
-        <WorkspaceTabs tabs={CONTENT_WORKSPACE_TABS} activeId="posts" />
-
-        <InlineStack align="space-between" blockAlign="center">
-          <BlockStack gap="100">
-            <Text as="h1" variant="headingLg" fontWeight="bold">Blog posts</Text>
-            <Text as="p" variant="bodyMd" tone="subdued">Manage and optimize all your blog posts in one place.</Text>
-          </BlockStack>
-          <Button variant="primary" onClick={() => navigate("/app/blogs/new")}>Create post</Button>
-        </InlineStack>
 
         {error && <Banner tone="critical" title={error} />}
 
@@ -696,6 +689,6 @@ export default function BlogManager() {
           </BlockStack>
         </Modal.Section>
       </Modal>
-    </Page>
+    </AppPage>
   );
 }

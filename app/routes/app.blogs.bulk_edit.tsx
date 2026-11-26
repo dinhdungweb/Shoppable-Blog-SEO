@@ -5,7 +5,6 @@ import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import { Banner, BlockStack, Button, Card, IndexTable, InlineStack, Layout, Modal, Page, Text, TextField } from "@shopify/polaris";
 import { useEffect, useMemo, useState } from "react";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { OPTIMIZE_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { generateAiSeoSuggestion, isNineRouterConfigured } from "../ai-seo.server";
@@ -155,9 +154,8 @@ export default function BulkSeoEdit() {
   const aiError = aiFetcher.data && "error" in aiFetcher.data ? aiFetcher.data.error : "";
   const aiWarning = aiFetcher.data && "warning" in aiFetcher.data ? aiFetcher.data.warning : "";
   return <Page backAction={{ content: "Meta tags", onAction: () => navigate("/app/optimize") }} title="Review meta tags" subtitle={`${items.length} selected posts · Step 2 of 2: generate, review and apply`} primaryAction={{ content: `Preview ${changed.length} changes`, onAction: () => setPreview(true), disabled: !changed.length }}>
-    <TitleBar title="Bulk Optimize" />
+    <TitleBar title="Review meta tags" />
     <Layout><Layout.Section><BlockStack gap="400">
-      <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="meta" />
       {error && <Banner tone="critical"><p>{error}</p></Banner>}
       {aiError && <Banner tone="critical" title="AI suggestions unavailable"><p>{aiError}</p></Banner>}
       {aiWarning && <Banner tone="warning"><p>{aiWarning}</p></Banner>}

@@ -18,7 +18,6 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { checkThemeSetup } from "../setup-status.server";
-import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import {
   THEME_BLOCK_HANDLES,
   buildAppEmbedDeepLink,
@@ -76,12 +75,12 @@ export default function ThemeSetupPage() {
     <Page
       title="Theme setup"
       subtitle="Install and preview Rankmath SEO blocks on your published theme."
+      backAction={{ content: "Settings", url: "/app/settings" }}
     >
-      <TitleBar title="Settings" />
+      <TitleBar title="Theme setup" />
       <Layout>
         <Layout.Section>
           <BlockStack gap="500">
-            <WorkspaceTabs tabs={SETTINGS_WORKSPACE_TABS} activeId="theme" />
             {blocks ? (
               <Banner
                 tone={requiredDone === required.length ? "success" : "warning"}

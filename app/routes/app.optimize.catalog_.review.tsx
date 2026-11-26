@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from "react";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import { OPTIMIZE_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { isNineRouterConfigured } from "../ai-seo.server";
 import { generateAiCatalogDraft } from "../ai-catalog.server";
 import { isAiQuotaExceededError, runWithAiUsage } from "../ai-usage.server";
@@ -251,14 +250,13 @@ export default function CatalogBulkReview() {
 
   return (
     <Page
-      backAction={{ content: "Products & collections", onAction: () => navigate("/app/optimize/catalog") }}
+      backAction={{ content: "Bulk optimize", onAction: () => navigate("/app/optimize/catalog") }}
       title="Review search listings"
       subtitle={`${resources.length} selected · Step 2 of 2: generate, review and apply`}
       primaryAction={{ content: `Preview ${changed.length} change${changed.length === 1 ? "" : "s"}`, onAction: () => setPreview(true), disabled: !changed.length }}
     >
-      <TitleBar title="Bulk Optimize" />
+      <TitleBar title="Review search listings" />
       <Layout><Layout.Section><BlockStack gap="400">
-        <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="catalog" />
         {error && <Banner tone="critical"><p>{error}</p></Banner>}
         {aiError && <Banner tone="critical" title="AI suggestions unavailable"><p>{aiError}</p></Banner>}
         {aiWarning && <Banner tone="warning"><p>{aiWarning}</p></Banner>}

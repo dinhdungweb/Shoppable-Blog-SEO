@@ -18,7 +18,6 @@ import {
   InlineStack,
   Layout,
   Modal,
-  Page,
   ProgressBar,
   Tabs,
   Text,
@@ -33,7 +32,7 @@ import {
   NoteIcon,
   ShieldCheckMarkIcon,
 } from "@shopify/polaris-icons";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
 import { getLimitsForPlan, type PlanLimits } from "../pricing-plans";
 import prisma from "../db.server";
@@ -49,11 +48,9 @@ import { getPublicSeoScanError } from "../seo-scan-error";
 import { applyCatalogDuplicateIssues, auditCatalogResource, type CatalogSeoAudit } from "../catalog-seo";
 import { fetchShopifyCatalogResources } from "../catalog-seo.server";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
-import {
-  SEO_WORKSPACE_TABS,
-  WorkspaceTabs,
-} from "../components/WorkspaceTabs";
+import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { IssueScopeSwitcher } from "../components/IssueScopeSwitcher";
+import { AppPage } from "../components/AppPage";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -826,52 +823,20 @@ export default function SEOOptimizer() {
   };
 
   return (
-    <Page fullWidth>
-      <TitleBar title="SEO Audit">
-        <button
-          variant="primary"
-          disabled={isScanning}
-          onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}
-        >
-          {isScanning ? "Scanning..." : "Run SEO scan"}
-        </button>
-      </TitleBar>
-
+    <AppPage
+      title="SEO Analyzer"
+      subtitle="One scan checks blog posts, products, collections and store pages. Fix the highest-impact issues first."
+      titleMetadata={<Badge tone="info">{lastScanAt ? `Last scan ${formatDate(lastScanAt)}` : "Not scanned yet"}</Badge>}
+      fullWidth
+      tabs={{ items: SEO_WORKSPACE_TABS, activeId: "issues" }}
+      primaryAction={isScanning
+        ? { content: "Cancel scan", destructive: true, onAction: () => scanFetcher.submit({ intent: "cancel_scan" }, { method: "post" }) }
+        : { content: "Run SEO scan", onAction: () => scanFetcher.submit({ intent: "scan_all" }, { method: "post" }) }}
+      secondaryActions={canAutoSeoScan
+        ? [{ content: autoScanEnabled ? "Turn off weekly scan" : "Turn on weekly scan", onAction: () => scanFetcher.submit({ intent: "set_auto_scan", enabled: String(!autoScanEnabled) }, { method: "post" }) }]
+        : [{ content: "Unlock weekly scans", url: "/app/pricing?reason=auto_seo_scan" }]}
+    >
       <BlockStack gap="500">
-        <InlineStack align="space-between" blockAlign="end">
-          <BlockStack gap="100">
-            <Text as="h1" variant="headingXl" fontWeight="bold">
-              SEO Audit
-            </Text>
-            <Text as="p" variant="bodyMd" tone="subdued">
-              Find and fix SEO issues across your store. One scan covers blog posts, products and collections.
-            </Text>
-          </BlockStack>
-          <InlineStack gap="200" blockAlign="center">
-            <Badge tone="info">{lastScanAt ? `Last scan ${formatDate(lastScanAt)}` : "Not scanned yet"}</Badge>
-            <Button loading={isScanning} onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}>
-              Run SEO scan
-            </Button>
-            {isScanning && <Button tone="critical" onClick={() => scanFetcher.submit({ intent: "cancel_scan" }, { method: "post" })}>Cancel scan</Button>}
-            {canAutoSeoScan ? (
-              <Button
-                pressed={autoScanEnabled}
-                onClick={() => scanFetcher.submit({ intent: "set_auto_scan", enabled: String(!autoScanEnabled) }, { method: "post" })}
-              >
-                {autoScanEnabled ? "Weekly scan on" : "Enable weekly scan"}
-              </Button>
-            ) : (
-              <Button url="/app/pricing?reason=auto_seo_scan">Unlock weekly scans</Button>
-            )}
-            <Button variant="primary" onClick={() => navigate("/app/blogs")}>
-              Review posts
-            </Button>
-          </InlineStack>
-        </InlineStack>
-
-        <div className="bp-seo-scope-tabs">
-          <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="issues" />
-        </div>
 
         <IssueScopeSwitcher active="articles" />
 
@@ -1223,7 +1188,7 @@ export default function SEOOptimizer() {
           </BlockStack>
         </Modal.Section>
       </Modal>
-    </Page>
+    </AppPage>
   );
 }
 

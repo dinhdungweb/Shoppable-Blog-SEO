@@ -37,13 +37,12 @@ export default function App() {
       <NavMenu>
         {/* Keep in sync with the tab sets in components/WorkspaceTabs.tsx. */}
         <Link to="/app" rel="home">
-          Home
+          Dashboard
         </Link>
-        <Link to="/app/blogs">Content</Link>
-        <Link to="/app/seo">SEO Audit</Link>
-        <Link to="/app/catalog-seo?view=manager&type=product">Catalog</Link>
-        <Link to="/app/optimize">Bulk Optimize</Link>
-        <Link to="/app/analytics">Insights</Link>
+        <Link to="/app/blogs">Posts</Link>
+        <Link to="/app/catalog-seo?view=manager&type=product">Products & collections</Link>
+        <Link to="/app/seo">SEO Analyzer</Link>
+        <Link to="/app/analytics">Analytics</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />

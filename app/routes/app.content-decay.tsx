@@ -3,8 +3,8 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, InlineGrid, InlineStack, Page, Select, Text } from "@shopify/polaris";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, InlineGrid, InlineStack, Select, Text } from "@shopify/polaris";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { analyzeContentDecay } from "../content-decay";
 import type { ContentDecayReport, DecayArticle, DecayIssue, DecayProduct } from "../content-decay";
 import prisma from "../db.server";
@@ -13,10 +13,8 @@ import { fetchShopDomains } from "../shopify-domains.server";
 import { isPublicHostname, isPublicUrlReachable } from "../safe-fetch.server";
 import { loadSearchConsoleView } from "../search-console-view.server";
 import { SearchConsoleCard } from "../components/SearchConsoleCard";
-import {
-  SEO_WORKSPACE_TABS,
-  WorkspaceTabs,
-} from "../components/WorkspaceTabs";
+import { ANALYTICS_WORKSPACE_TABS } from "../components/WorkspaceTabs";
+import { AppPage } from "../components/AppPage";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const MAX_EXTERNAL_LINKS = 30;
@@ -103,16 +101,16 @@ export default function ContentDecayPage() {
 
   useEffect(() => { setPage(1); }, [filter, report]);
 
-  if (!initial.canContentDecay) return <Page fullWidth><TitleBar title="SEO Audit" /><BlockStack gap="500"><WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="keywords" /><BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Keywords & content decay</Text><Text as="p" tone="subdued">See which queries bring traffic, and which posts are losing it.</Text></BlockStack><SearchConsoleCard data={initial.searchConsole} mode="keywords" planKey={initial.planKey} /><Card><EmptyState heading="Content decay monitoring is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></Card></BlockStack></Page>;
+  if (!initial.canContentDecay) return <AppPage title="Keywords & decay" subtitle="See which searches bring traffic, and which posts are losing it." fullWidth tabs={{ items: ANALYTICS_WORKSPACE_TABS, activeId: "keywords" }}><SearchConsoleCard data={initial.searchConsole} mode="keywords" planKey={initial.planKey} /><Card><EmptyState heading="Content decay monitoring is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></Card></AppPage>;
 
-  return <Page fullWidth>
-    <TitleBar title="SEO Audit"><button variant="primary" disabled={analyzing} onClick={run}>{analyzing ? "Analyzing..." : "Analyze content"}</button></TitleBar>
+  return <AppPage
+    title="Keywords & decay"
+    subtitle="See which searches bring traffic, and which posts are losing it or contain stale products, links and dates."
+    fullWidth
+    tabs={{ items: ANALYTICS_WORKSPACE_TABS, activeId: "keywords" }}
+    primaryAction={{ content: report ? "Refresh analysis" : "Analyze content", onAction: run, loading: analyzing }}
+  >
     <BlockStack gap="500">
-      <WorkspaceTabs tabs={SEO_WORKSPACE_TABS} activeId="keywords" />
-      <InlineStack align="space-between" blockAlign="end">
-        <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Keywords & content decay</Text><Text as="p" tone="subdued">See which queries bring traffic, and which posts are losing it or contain stale products, links and dates.</Text></BlockStack>
-        <Button variant="primary" loading={analyzing} onClick={run}>{report ? "Refresh analysis" : "Analyze content"}</Button>
-      </InlineStack>
       <SearchConsoleCard data={initial.searchConsole} mode="keywords" planKey={initial.planKey} />
       <Text as="h2" variant="headingLg">Content decay</Text>
       {response?.error && <Banner tone="critical"><p>{response.error}</p></Banner>}
@@ -134,7 +132,7 @@ export default function ContentDecayPage() {
         </Card>
       </>}
     </BlockStack>
-  </Page>;
+  </AppPage>;
 }
 
 function SummaryCard({ label, value, tone }: { label: string; value: number; tone: "info" | "critical" | "warning" | "success" }) {

@@ -12,12 +12,11 @@ import {
   IndexTable,
   InlineGrid,
   InlineStack,
-  Page,
   Select,
   Text,
 } from "@shopify/polaris";
 import { ExportIcon } from "@shopify/polaris-icons";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { allowedRanges, loadAnalyticsReport, resolveRange } from "../analytics.server";
 import { formatMoney, rate } from "../analytics-core";
@@ -33,6 +32,8 @@ import {
   formatPercent,
   trend,
 } from "../components/AnalyticsWidgets";
+import { AppPage } from "../components/AppPage";
+import { ANALYTICS_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const MAX_POST_ROWS = 50;
@@ -87,14 +88,15 @@ export default function Insights() {
   const rangeOptions = data.ranges.map((days) => ({ label: `Last ${days} days`, value: String(days) }));
 
   return (
-    <Page fullWidth>
-      <TitleBar title="Insights" />
+    <AppPage
+      title="Analytics"
+      subtitle="How blog readers become customers: from Google, to the article, to the products you linked, to orders."
+      fullWidth
+      tabs={{ items: ANALYTICS_WORKSPACE_TABS, activeId: "overview" }}
+      secondaryActions={[{ content: "Export CSV", icon: ExportIcon, onAction: exportCsv, loading: exporting, disabled: !data.totalPosts }]}
+    >
       <BlockStack gap="500">
-        <InlineStack align="space-between" blockAlign="end" gap="300">
-          <BlockStack gap="100">
-            <Text as="h1" variant="headingXl" fontWeight="bold">Insights</Text>
-            <Text as="p" tone="subdued">How blog readers become customers: from Google, to the article, to the products you linked, to orders.</Text>
-          </BlockStack>
+        <InlineStack align="end" blockAlign="center" gap="300">
           <InlineStack gap="200" blockAlign="center">
             <div style={{ minWidth: 170 }}>
               <Select
@@ -109,7 +111,6 @@ export default function Insights() {
                 }}
               />
             </div>
-            <Button icon={ExportIcon} loading={exporting} disabled={!data.totalPosts} onClick={exportCsv}>Export CSV</Button>
           </InlineStack>
         </InlineStack>
 
@@ -287,7 +288,7 @@ export default function Insights() {
           </BlockStack>
         </Card>
       </BlockStack>
-    </Page>
+    </AppPage>
   );
 }
 

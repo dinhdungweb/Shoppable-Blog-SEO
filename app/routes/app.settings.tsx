@@ -1,33 +1,29 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { unstable_usePrompt, useFetcher, useLoaderData } from "@remix-run/react";
+import { unstable_usePrompt, useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import {
-  Page,
   Banner,
   Card,
   Text,
   BlockStack,
   InlineStack,
-  Divider,
   TextField,
   Select,
   Icon,
   Button,
   InlineGrid,
-  Tabs,
+  Badge,
+  Checkbox,
+  Layout,
+  ResourceList,
+  ResourceItem,
 } from "@shopify/polaris";
 import {
-  SettingsIcon,
-  StoreIcon,
-  ChartVerticalIcon,
-  CheckCircleIcon,
-  ListBulletedIcon,
-  HomeIcon,
+  ChevronRightIcon,
 } from "@shopify/polaris-icons";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import { SETTINGS_WORKSPACE_TABS, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { SearchConsoleCard } from "../components/SearchConsoleCard";
 import { loadSearchConsoleView } from "../search-console-view.server";
 import { getAiUsageStatus } from "../ai-usage.server";
@@ -70,6 +66,7 @@ import {
   cleanSettingText,
   pickSettingChoice,
 } from "../settings-validation";
+import { AppPage } from "../components/AppPage";
 
 const META_TEMPLATE_PREVIEW = {
   title: "How to choose trail running shoes",
@@ -113,7 +110,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     aiStatus: { configured: isNineRouterConfigured(), usage: aiUsage },
     canContentNavigation: limits.canContentNavigation,
     canCustomCss: limits.canCustomCss,
-    initialTab: getInitialSettingsTab(url.searchParams.get("tab")),
+    section: getSettingsSection(url.searchParams.get("tab")),
     planKey,
   };
 };
@@ -130,14 +127,28 @@ async function loadSuggestedLanguage(admin: any) {
   }
 }
 
-function getInitialSettingsTab(tab: string | null) {
-  if (tab === "display") return 1;
-  if (tab === "content-navigation" || tab === "toc") return 2;
-  if (tab === "tracking") return 3;
-  if (tab === "rules") return 4;
-  if (tab === "integrations") return 5;
-  return 0;
+/** Settings index when no section is requested. "toc" is an old alias. */
+function getSettingsSection(tab: string | null): SettingsSectionId | null {
+  if (tab === "toc") return "content-navigation";
+  return SETTINGS_SECTIONS.some((section) => section.id === tab) ? (tab as SettingsSectionId) : null;
 }
+
+const SETTINGS_SECTIONS = [
+  { id: "general", title: "General", description: "App status and how your data is kept." },
+  { id: "display", title: "Storefront display", description: "How products appear inside blog posts: layout, cards, colors and buttons." },
+  { id: "content-navigation", title: "Breadcrumbs & table of contents", description: "Breadcrumb navigation and the automatic table of contents." },
+  { id: "tracking", title: "Tracking & attribution", description: "Checkout pixel, attribution window and UTM links." },
+  { id: "rules", title: "Titles, meta & AI rules", description: "Meta tag templates, content language, brand tone and words AI must avoid." },
+  { id: "integrations", title: "Integrations", description: "Google Search Console and the AI assistant." },
+] as const;
+type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
+
+/** Pages outside this route that belong to Settings. */
+const SETTINGS_LINKS = [
+  { url: "/app/theme-setup", title: "Theme setup", description: "Install the app embed and blocks on your theme and see what is installed." },
+  { url: "/app/pricing", title: "Plan & billing", description: "Your plan, AI allowance and upgrades." },
+  { url: "/app/changelog", title: "What's new", description: "Recent improvements to the app." },
+];
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
@@ -227,6 +238,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 // --- CUSTOM TOGGLE COMPONENT ---
+/** Polaris checkbox with the old toggle's props, so every call site stays the same. */
 const CustomToggle = ({
   checked,
   label,
@@ -242,31 +254,47 @@ const CustomToggle = ({
   hideLabel?: boolean;
   onChange: (val: boolean) => void;
 }) => (
-  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', opacity: disabled ? 0.6 : 1 }}>
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => {
-        if (!disabled) onChange(!checked);
-      }}
-      style={{ width: '36px', height: '20px', padding: 0, border: 0, borderRadius: '10px', backgroundColor: checked ? '#29845A' : '#C9CCCF', position: 'relative', flexShrink: 0, marginTop: '2px', cursor: disabled ? 'not-allowed' : 'pointer' }}
-    >
-       <div style={{ width: '16px', height: '16px', borderRadius: '8px', backgroundColor: '#fff', position: 'absolute', top: '2px', right: checked ? '2px' : 'auto', left: checked ? 'auto' : '2px', transition: 'all 0.2s' }} />
-    </button>
-    {!hideLabel && (
-      <BlockStack gap="0">
-        <Text as="span" variant="bodyMd" fontWeight="semibold">{label}</Text>
-        {description && <Text as="p" variant="bodySm" tone="subdued">{description}</Text>}
-      </BlockStack>
-    )}
-  </div>
+  <Checkbox label={label} labelHidden={hideLabel} helpText={hideLabel ? undefined : description} checked={checked} disabled={disabled} onChange={(value) => onChange(value)} />
 );
 
-export default function Settings() {
-  const { config, tracking, suggestedLanguage, searchConsole, aiStatus, canContentNavigation, canCustomCss, initialTab, planKey } = useLoaderData<typeof loader>();
+export default function SettingsRoute() {
+  const { section } = useLoaderData<typeof loader>();
+  return section ? <Settings key={section} section={section} /> : <SettingsIndex />;
+}
+
+/** Settings index, like Shopify's own Settings: one list of sections. */
+function SettingsIndex() {
+  const navigate = useNavigate();
+  const items = [
+    ...SETTINGS_SECTIONS.map((section) => ({ url: `/app/settings?tab=${section.id}`, title: section.title, description: section.description })),
+    ...SETTINGS_LINKS,
+  ];
+  return (
+    <AppPage title="Settings" subtitle="Configure how the app looks on your storefront, what it tracks and how AI writes.">
+      <Card padding="0">
+        <ResourceList
+          resourceName={{ singular: "setting", plural: "settings" }}
+          items={items}
+          renderItem={(item) => (
+            <ResourceItem id={item.url} onClick={() => navigate(item.url)} accessibilityLabel={`Open ${item.title}`}>
+              <InlineStack align="space-between" blockAlign="center" wrap={false} gap="300">
+                <BlockStack gap="050">
+                  <Text as="h3" variant="headingSm">{item.title}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{item.description}</Text>
+                </BlockStack>
+                <Icon source={ChevronRightIcon} tone="subdued" />
+              </InlineStack>
+            </ResourceItem>
+          )}
+        />
+      </Card>
+    </AppPage>
+  );
+}
+
+function Settings({ section }: { section: SettingsSectionId }) {
+  const { config, tracking, suggestedLanguage, searchConsole, aiStatus, canContentNavigation, canCustomCss, planKey } = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   const pixelFetcher = useFetcher<{ success?: boolean; error?: string }>();
@@ -349,27 +377,8 @@ export default function Settings() {
     shopify.toast.show("Defaults applied. Review and save to keep them.");
   };
 
-  const [selectedTab, setSelectedTab] = useState(initialTab);
-  const settingsTabs = useMemo(
-    () => [
-      { id: 'general', content: 'General', panelID: 'general-panel' },
-      { id: 'display', content: 'Shoppable display', panelID: 'display-panel' },
-      { id: 'content-navigation', content: 'Content navigation', panelID: 'content-navigation-panel' },
-      { id: 'tracking', content: 'Tracking', panelID: 'tracking-panel' },
-      { id: 'rules', content: 'SEO & AI rules', panelID: 'rules-panel' },
-      { id: 'integrations', content: 'Integrations', panelID: 'integrations-panel' },
-    ],
-    [],
-  );
-  const selectedTabId = settingsTabs[selectedTab]?.id || 'general';
-  useEffect(() => {
-    setSelectedTab(settingsTabs[initialTab] ? initialTab : 0);
-  }, [initialTab, settingsTabs]);
-  useEffect(() => {
-    if (!settingsTabs[selectedTab]) {
-      setSelectedTab(0);
-    }
-  }, [selectedTab, settingsTabs]);
+  const selectedTabId = section;
+  const sectionMeta = SETTINGS_SECTIONS.find((item) => item.id === section) || SETTINGS_SECTIONS[0];
   const isCarouselMode = (formState.widgetStyle || 'carousel') === 'carousel';
   const primaryColor = normalizeWidgetHexColor(formState.primaryColor);
   const contentNavPrimaryColor = normalizeContentNavHexColor(formState.contentNavPrimaryColor);
@@ -387,108 +396,38 @@ export default function Settings() {
   const tocStickyOffsetVisible = ['left-rail', 'right-rail'].includes(String(formState.tocLayout || ''));
 
   return (
-    <Page fullWidth>
-      <BlockStack gap="500">
-        
-        {/* HEADER */}
-        <InlineStack align="space-between" blockAlign="center">
-          <BlockStack gap="100">
-            <Text as="h1" variant="headingLg" fontWeight="bold">Settings</Text>
-            <Text as="p" variant="bodyMd" tone="subdued">Configure storefront display, content navigation, tracking, AI writing rules and integrations.</Text>
-          </BlockStack>
-          <InlineStack gap="300" blockAlign="center">
-            {!hasChanges && (
-              <InlineStack gap="100" blockAlign="center">
-                <Icon source={CheckCircleIcon} tone="success" />
-                <Text as="span" tone="success">All changes saved</Text>
-              </InlineStack>
-            )}
-            {isResettableSettingsTab(selectedTabId) && (
-              <Button onClick={() => handleResetTab(selectedTabId)} disabled={(selectedTabId === 'content-navigation' && contentNavigationLocked)}>Reset this tab to defaults</Button>
-            )}
-          </InlineStack>
-        </InlineStack>
-
-        <style>
-          {`
-            .bp-settings-tabs .Polaris-Box {
-              --pc-box-padding-block-start-xs: 0 !important;
-              --pc-box-padding-block-start-sm: 0 !important;
-              --pc-box-padding-block-start-md: 0 !important;
-              --pc-box-padding-block-start-lg: 0 !important;
-              --pc-box-padding-block-start-xl: 0 !important;
-              --pc-box-padding-block-end-xs: 0 !important;
-              --pc-box-padding-block-end-sm: 0 !important;
-              --pc-box-padding-block-end-md: 0 !important;
-              --pc-box-padding-block-end-lg: 0 !important;
-              --pc-box-padding-block-end-xl: 0 !important;
-              --pc-box-padding-inline-start-xs: 0 !important;
-              --pc-box-padding-inline-start-sm: 0 !important;
-              --pc-box-padding-inline-start-md: 0 !important;
-              --pc-box-padding-inline-start-lg: 0 !important;
-              --pc-box-padding-inline-start-xl: 0 !important;
-              --pc-box-padding-inline-end-xs: 0 !important;
-              --pc-box-padding-inline-end-sm: 0 !important;
-              --pc-box-padding-inline-end-md: 0 !important;
-              --pc-box-padding-inline-end-lg: 0 !important;
-              --pc-box-padding-inline-end-xl: 0 !important;
-              padding: 0 !important;
-            }
-
-            .bp-settings-tabs .Polaris-Tabs__Wrapper {
-              padding: 0 !important;
-            }
-
-            .bp-settings-tabs .Polaris-Tabs {
-              padding: 0 !important;
-            }
-          `}
-        </style>
-        <WorkspaceTabs tabs={SETTINGS_WORKSPACE_TABS} activeId="settings" />
-
-        <BlockStack gap="300">
-          <div className="bp-settings-tabs">
-            <Tabs tabs={settingsTabs} selected={selectedTab} onSelect={setSelectedTab} />
-          </div>
-
-          <div id={settingsTabs[selectedTab]?.panelID || 'general-panel'}>
+    <AppPage
+      title={sectionMeta.title}
+      subtitle={sectionMeta.description}
+      fullWidth={section === 'display' || section === 'content-navigation'}
+      backAction={{ content: "Settings", url: "/app/settings" }}
+      titleMetadata={hasChanges ? <Badge tone="attention">Unsaved changes</Badge> : undefined}
+      secondaryActions={isResettableSettingsTab(section) ? [{ content: "Reset to defaults", onAction: () => handleResetTab(section), disabled: section === 'content-navigation' && contentNavigationLocked }] : []}
+    >
+          <div>
           {selectedTabId === 'general' && (
-            <BlockStack gap="400">
-            <Card padding="400">
-              <BlockStack gap="400">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={SettingsIcon} tone="base" /></div>
-                  <Text as="h2" variant="headingMd" fontWeight="bold">General</Text>
-                </div>
-                <Text as="p" variant="bodyMd" tone="subdued">Basic app configuration and defaults.</Text>
-
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="0">
-                    <Text as="h3" variant="bodyMd" fontWeight="bold">App status</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">When inactive, products, breadcrumbs and the table of contents are hidden on the storefront and no tracking data is collected. Your settings and data are kept.</Text>
-                  </BlockStack>
-                  <InlineStack gap="200" blockAlign="center">
-                    <div style={{ backgroundColor: formState.appStatus ? '#E8F5E9' : '#F1F2F3', color: formState.appStatus ? '#29845A' : '#6D7175', padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold' }}>
-                      {formState.appStatus ? 'Active' : 'Inactive'}
-                    </div>
-                    <CustomToggle checked={formState.appStatus} onChange={(value) => handleChange('appStatus', value)} label="App status" hideLabel />
+            <Layout>
+              <Layout.AnnotatedSection
+                title="App status"
+                description="When the app is inactive, products, breadcrumbs and the table of contents are hidden on your storefront and no tracking data is collected. Settings and data are kept."
+              >
+                <Card>
+                  <InlineStack align="space-between" blockAlign="center" gap="300">
+                    <Checkbox label="App is active on the storefront" checked={formState.appStatus} onChange={(value) => handleChange('appStatus', value)} />
+                    <Badge tone={formState.appStatus ? 'success' : undefined}>{formState.appStatus ? 'Active' : 'Inactive'}</Badge>
                   </InlineStack>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-            <Card padding="400">
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd" fontWeight="bold">Your data</Text>
-                <Text as="p" variant="bodyMd" tone="subdued">
-                  Changing plans never deletes settings: features outside your plan stop applying and come back when you upgrade.
-                  If you uninstall the app, your data is kept for 48 hours so reinstalling restores everything, then it is permanently deleted.
-                </Text>
-                <InlineStack>
-                  <Button variant="plain" url="/privacy" target="_blank">Privacy policy</Button>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-            </BlockStack>
+                </Card>
+              </Layout.AnnotatedSection>
+              <Layout.AnnotatedSection title="Your data" description="How plan changes and uninstalling affect what the app stores.">
+                <Card>
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd">Changing plans never deletes settings: features outside your plan stop applying and come back when you upgrade.</Text>
+                    <Text as="p" variant="bodyMd">If you uninstall the app, your data is kept for 48 hours so reinstalling restores everything, then it is permanently deleted.</Text>
+                    <InlineStack><Button variant="plain" url="/privacy" target="_blank">Privacy policy</Button></InlineStack>
+                  </BlockStack>
+                </Card>
+              </Layout.AnnotatedSection>
+            </Layout>
           )}
 
           {selectedTabId === 'display' && (
@@ -500,10 +439,7 @@ export default function Settings() {
               <BlockStack gap="400">
                 <Card padding="400">
                   <BlockStack gap="400">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={StoreIcon} tone="base" /></div>
-                      <Text as="h2" variant="headingMd" fontWeight="bold">Display mode</Text>
-                    </div>
+                    <Text as="h2" variant="headingMd">Display mode</Text>
                     <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
                       <Select
                         label="Display mode"
@@ -729,10 +665,7 @@ export default function Settings() {
 
                 <Card padding="400">
                   <BlockStack gap="400">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={HomeIcon} tone="base" /></div>
-                      <Text as="h2" variant="headingMd" fontWeight="bold">Breadcrumbs</Text>
-                    </div>
+                    <Text as="h2" variant="headingMd">Breadcrumbs</Text>
                     <CustomToggle
                       checked={formState.breadcrumbsEnabled}
                       label="Enable visual breadcrumbs"
@@ -806,10 +739,7 @@ export default function Settings() {
                 <div id="toc-settings">
                   <Card padding="400">
                     <BlockStack gap="400">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={ListBulletedIcon} tone="base" /></div>
-                        <Text as="h2" variant="headingMd" fontWeight="bold">Table of contents</Text>
-                      </div>
+                      <Text as="h2" variant="headingMd">Table of contents</Text>
                       <CustomToggle
                         checked={formState.tocEnabled}
                         label="Enable table of contents"
@@ -947,62 +877,53 @@ export default function Settings() {
           )}
 
           {selectedTabId === 'tracking' && (
-            <Card padding="400">
-              <BlockStack gap="400">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{ flexShrink: 0, display: 'flex' }}><Icon source={ChartVerticalIcon} tone="base" /></div>
-                  <Text as="h2" variant="headingMd" fontWeight="bold">Tracking & attribution</Text>
-                </div>
-                <Text as="p" variant="bodyMd" tone="subdued">Track performance and attribute revenue.</Text>
-
-                <BlockStack gap="100">
-                  <Text as="span" variant="bodyMd" fontWeight="semibold">Tracking status</Text>
-                  <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
-                    <TrackingFact
-                      label="Conversion tracking"
-                      ok={formState.enableConversionTracking && formState.appStatus}
-                      value={!formState.appStatus ? 'Paused (app is inactive)' : formState.enableConversionTracking ? 'On' : 'Off'}
-                    />
-                    <TrackingFact
-                      label="Checkout pixel"
-                      ok={pixelConnected}
-                      value={pixelConnected ? 'Connected' : tracking.webPixelEnabled === null ? 'Could not check' : 'Not connected'}
-                      hint={pixelConnected ? undefined : 'Needed to credit add-to-carts and orders to posts.'}
-                      action={pixelConnected ? undefined : <Button size="slim" loading={pixelFetcher.state !== 'idle'} onClick={() => pixelFetcher.submit({ intent: 'activate_pixel' }, { method: 'post', action: '/app/dashboard-status' })}>Connect pixel</Button>}
-                    />
-                    <TrackingFact
-                      label="Last event received"
-                      ok={Boolean(tracking.lastEventAt)}
-                      value={tracking.lastEventAt ? formatRelative(tracking.lastEventAt) : 'None yet'}
-                      hint={tracking.lastPurchaseAt ? `Last order credited ${formatRelative(tracking.lastPurchaseAt)}` : 'Events appear after readers visit a post with linked products.'}
-                    />
-                  </InlineGrid>
-                </BlockStack>
-
-                <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
-                  <BlockStack gap="100">
-                    <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} helpText="UTMs are added only when a shopper clicks, for your analytics. Search engines always see clean product links, and conversion tracking works either way." />
-                  </BlockStack>
-                  <Select
-                    label="Attribution window"
-                    options={ATTRIBUTION_WINDOW_OPTIONS.map((option) => ({ label: option, value: option }))}
-                    value={ATTRIBUTION_WINDOW_OPTIONS.includes(formState.attributionWindow as (typeof ATTRIBUTION_WINDOW_OPTIONS)[number]) ? formState.attributionWindow : '7 days'}
-                    onChange={(v) => handleChange('attributionWindow', v)}
-                    helpText="How long after a product click in a blog post an add-to-cart or order is credited to that post. Applies to new clicks."
+            <Layout>
+              <Layout.AnnotatedSection title="Status" description="Whether tracking is on, the checkout pixel is connected, and data is arriving.">
+                <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
+                  <TrackingFact
+                    label="Conversion tracking"
+                    ok={formState.enableConversionTracking && formState.appStatus}
+                    value={!formState.appStatus ? 'Paused (app is inactive)' : formState.enableConversionTracking ? 'On' : 'Off'}
+                  />
+                  <TrackingFact
+                    label="Checkout pixel"
+                    ok={pixelConnected}
+                    value={pixelConnected ? 'Connected' : tracking.webPixelEnabled === null ? 'Could not check' : 'Not connected'}
+                    hint={pixelConnected ? undefined : 'Needed to credit add-to-carts and orders to posts.'}
+                    action={pixelConnected ? undefined : <Button size="slim" loading={pixelFetcher.state !== 'idle'} onClick={() => pixelFetcher.submit({ intent: 'activate_pixel' }, { method: 'post', action: '/app/dashboard-status' })}>Connect pixel</Button>}
+                  />
+                  <TrackingFact
+                    label="Last event received"
+                    ok={Boolean(tracking.lastEventAt)}
+                    value={tracking.lastEventAt ? formatRelative(tracking.lastEventAt) : 'None yet'}
+                    hint={tracking.lastPurchaseAt ? `Last order credited ${formatRelative(tracking.lastPurchaseAt)}` : 'Events appear after readers visit a post with linked products.'}
                   />
                 </InlineGrid>
-
-                <Divider />
-
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="0">
-                    <Text as="span" fontWeight="bold">Enable conversion tracking</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">Track conversions and revenue from blog traffic</Text>
+              </Layout.AnnotatedSection>
+              <Layout.AnnotatedSection title="Conversion tracking" description="Credit product clicks, add-to-carts and orders to the post that sent the shopper.">
+                <Card>
+                  <BlockStack gap="400">
+                    <Checkbox
+                      label="Track conversions and revenue from blog traffic"
+                      checked={formState.enableConversionTracking}
+                      onChange={(value) => handleChange('enableConversionTracking', value)}
+                    />
+                    <Select
+                      label="Attribution window"
+                      options={ATTRIBUTION_WINDOW_OPTIONS.map((option) => ({ label: option, value: option }))}
+                      value={ATTRIBUTION_WINDOW_OPTIONS.includes(formState.attributionWindow as (typeof ATTRIBUTION_WINDOW_OPTIONS)[number]) ? formState.attributionWindow : '7 days'}
+                      onChange={(v) => handleChange('attributionWindow', v)}
+                      helpText="How long after a product click an add-to-cart or order is credited to that post. Applies to new clicks."
+                    />
                   </BlockStack>
-                  <CustomToggle checked={formState.enableConversionTracking} onChange={(v) => handleChange('enableConversionTracking', v)} label="Enable conversion tracking" hideLabel />
-                </InlineStack>
-              </BlockStack>
-            </Card>
+                </Card>
+              </Layout.AnnotatedSection>
+              <Layout.AnnotatedSection title="UTM links" description="Campaign parameters for your own analytics tools.">
+                <Card>
+                  <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} helpText="UTMs are added only when a shopper clicks. Search engines always see clean product links, and conversion tracking works either way." />
+                </Card>
+              </Layout.AnnotatedSection>
+            </Layout>
           )}
 
           {selectedTabId === 'rules' && (
@@ -1057,7 +978,7 @@ export default function Settings() {
                 <BlockStack gap="400">
                   <BlockStack gap="100">
                     <Text as="h2" variant="headingMd" fontWeight="bold">Meta tag templates</Text>
-                    <Text as="p" variant="bodyMd" tone="subdued">Starting suggestions in Bulk Optimize → Meta tags. Available tokens: {META_TEMPLATE_TOKENS.join(', ')}. Empty tokens are removed with their separator.</Text>
+                    <Text as="p" variant="bodyMd" tone="subdued">Starting suggestions in SEO Analyzer → Meta tags. Available tokens: {META_TEMPLATE_TOKENS.join(', ')}. Empty tokens are removed with their separator.</Text>
                   </BlockStack>
                   <TextField
                     label="SEO title template"
@@ -1097,7 +1018,7 @@ export default function Settings() {
                       : `${aiStatus.usage.used} of ${aiStatus.usage.limit} AI generations used this month · resets ${new Date(aiStatus.usage.resetsAt).toLocaleDateString()}.`}
                   </Text>
                   <InlineStack gap="200">
-                    <Button onClick={() => setSelectedTab(settingsTabs.findIndex((tab) => tab.id === 'rules'))}>Edit AI writing rules</Button>
+                    <Button onClick={() => navigate('/app/settings?tab=rules')}>Edit AI writing rules</Button>
                     <Button variant="plain" url="/app/pricing">Get more AI generations</Button>
                   </InlineStack>
                 </BlockStack>
@@ -1106,14 +1027,12 @@ export default function Settings() {
           )}
 
           </div>
-        </BlockStack>
-      </BlockStack>
 
       <SaveBar id="settings-save-bar" open={hasChanges}>
         <button variant="primary" onClick={handleSave} loading={fetcher.state !== 'idle' ? '' : undefined}>Save</button>
         <button onClick={handleDiscard}>Discard</button>
       </SaveBar>
-    </Page>
+    </AppPage>
   );
 }
 

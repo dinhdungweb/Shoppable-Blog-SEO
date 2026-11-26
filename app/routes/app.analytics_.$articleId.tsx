@@ -68,12 +68,12 @@ export default function ArticleAnalytics() {
   return (
     <Page
       fullWidth
-      backAction={{ content: "Insights", onAction: () => navigate(`/app/analytics?range=${report.days}`) }}
+      backAction={{ content: "Analytics", onAction: () => navigate(`/app/analytics?range=${report.days}`) }}
       title={title}
       subtitle={`${blogTitle} · ${report.range.start} → ${report.range.end}`}
       primaryAction={{ content: "Edit post", onAction: () => navigate(articleEditorUrl(articleId)) }}
     >
-      <TitleBar title="Insights" />
+      <TitleBar title={title} />
       <BlockStack gap="500">
         <InlineStack align="space-between" blockAlign="center">
           <InlineStack gap="300" blockAlign="center">

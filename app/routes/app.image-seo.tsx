@@ -18,14 +18,13 @@ import {
   InlineGrid,
   InlineStack,
   Modal,
-  Page,
   Select,
   Text,
   TextField,
   Thumbnail,
 } from "@shopify/polaris";
 import { ImageIcon } from "@shopify/polaris-icons";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 
 import { generateAiImageAltSuggestions, type AiImageAltSuggestion } from "../ai-image-seo.server";
 import { isNineRouterConfigured } from "../ai-seo.server";
@@ -40,11 +39,9 @@ import {
 } from "../image-seo";
 import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import {
-  OPTIMIZE_WORKSPACE_TABS,
-  WorkspaceTabs,
-} from "../components/WorkspaceTabs";
+import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
+import { AppPage } from "../components/AppPage";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const PAGE_SIZE = 20;
@@ -473,7 +470,7 @@ export default function ImageSeoPage() {
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   if (!initial.canUse) {
-    return <Page><TitleBar title="Bulk Optimize" /><BlockStack gap="500"><WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="images" /><Card><EmptyState heading="Bulk image alt text is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></BlockStack></Page>;
+    return <AppPage title="Image alt text" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "images" }}><Card><EmptyState heading="Bulk image alt text is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></AppPage>;
   }
 
   const toggle = (id: string, checked: boolean) => setSelectedIds((current) => checked ? [...new Set([...current, id])] : current.filter((value) => value !== id));
@@ -502,15 +499,15 @@ export default function ImageSeoPage() {
     decorative_alt: candidates.filter((candidate) => candidate.issues.includes("decorative_alt")).length,
   };
 
-  return <Page fullWidth>
-    <TitleBar title="Bulk Optimize" />
+  return <AppPage
+    title="Image alt text"
+    subtitle="Generate context-aware alt text for featured and inline images. Image files, URLs, dimensions and all other HTML stay unchanged."
+    fullWidth
+    tabs={{ items: SEO_WORKSPACE_TABS, activeId: "images" }}
+    primaryAction={{ content: `Generate AI for selected (${Math.min(selectedIds.length, 50)})`, onAction: generate, loading: aiFetcher.state !== "idle", disabled: !initial.aiEnabled || !selectedIds.length || aiFetcher.state !== "idle" }}
+    secondaryActions={[{ content: "Clear selection", onAction: () => setSelectedIds([]), disabled: !selectedIds.length }]}
+  >
     <BlockStack gap="500">
-      <WorkspaceTabs tabs={OPTIMIZE_WORKSPACE_TABS} activeId="images" />
-      <InlineStack align="space-between" blockAlign="end" gap="400">
-        <BlockStack gap="100"><Text as="h1" variant="headingXl" fontWeight="bold">Image alt text</Text><Text as="p" tone="subdued">Generate context-aware alt suggestions for featured and inline images. Image files, URLs, dimensions and all non-alt HTML remain unchanged.</Text></BlockStack>
-        <InlineStack gap="200"><Button disabled={!selectedIds.length} onClick={() => setSelectedIds([])}>Clear selection</Button><Button variant="primary" loading={aiFetcher.state !== "idle"} disabled={!initial.aiEnabled || !selectedIds.length || aiFetcher.state !== "idle"} onClick={generate}>{`Generate AI for selected (${Math.min(selectedIds.length, 50)})`}</Button></InlineStack>
-      </InlineStack>
-
       {!initial.aiEnabled && <Banner tone="critical" title="9Router is not configured"><p>Add the 9Router environment variables before generating image alt suggestions.</p></Banner>}
       {initial.truncated && <Banner tone="warning"><p>This review is limited to the 500 most recently returned Shopify articles. Narrow the store scope before reviewing additional articles.</p></Banner>}
       {aiFetcher.data?.error && <Banner tone="critical"><p>{aiFetcher.data.error}</p></Banner>}
@@ -571,7 +568,7 @@ export default function ImageSeoPage() {
     <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="Confirm image alt changes" primaryAction={{ content: `Apply ${reviewed.length} changes`, onAction: apply, loading: changeFetcher.state !== "idle", disabled: !reviewed.length }} secondaryActions={[{ content: "Continue reviewing", onAction: () => setPreviewOpen(false) }]}>
       <Modal.Section><BlockStack gap="400">{reviewed.map((candidate) => <BlockStack key={candidate.id} gap="150"><InlineStack gap="300" wrap={false}><Thumbnail source={thumbnailSource(candidate.src)} alt={candidate.currentAlt || candidate.articleTitle} size="small" /><BlockStack gap="050"><Text as="h3" fontWeight="semibold">{candidate.articleTitle}</Text><Text as="p" variant="bodySm" tone="subdued">{candidate.kind === "featured" ? "Featured image" : `Inline image ${candidate.index + 1}`}</Text></BlockStack></InlineStack><Box background="bg-surface-secondary" padding="300" borderRadius="200"><BlockStack gap="100"><Text as="p" variant="bodySm"><strong>Before:</strong> {candidate.currentAlt || "(empty)"}</Text><Text as="p" variant="bodySm"><strong>After:</strong> {proposedAlts[candidate.id] || "(empty decorative alt)"}</Text></BlockStack></Box></BlockStack>)}</BlockStack></Modal.Section>
     </Modal>
-  </Page>;
+  </AppPage>;
 }
 
 function Summary({ label, value, tone }: { label: string; value: number; tone: "info" | "warning" | "critical" }) {
