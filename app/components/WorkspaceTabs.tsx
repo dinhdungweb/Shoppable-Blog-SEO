@@ -1,5 +1,5 @@
 import { useNavigate } from "@remix-run/react";
-import { Card, Tabs } from "@shopify/polaris";
+import { Tabs } from "@shopify/polaris";
 
 export type WorkspaceTab = {
   id: string;
@@ -30,12 +30,17 @@ export const CATALOG_WORKSPACE_TABS: WorkspaceTab[] = [
 
 /** SEO Analyzer: find problems across the store and fix them in bulk. */
 export const SEO_WORKSPACE_TABS: WorkspaceTab[] = [
-  { id: "issues", content: "Issues", url: "/app/seo" },
-  { id: "meta", content: "Meta tags", url: "/app/optimize" },
-  { id: "images", content: "Image alt text", url: "/app/image-seo" },
-  { id: "links", content: "Internal links", url: "/app/internal-links" },
+  { id: "issues", content: "Checks", url: "/app/seo" },
+  { id: "bulk", content: "Bulk fixes", url: "/app/optimize" },
   { id: "site-speed", content: "Site speed", url: "/app/performance" },
   { id: "history", content: "Change history", url: "/app/optimize/history" },
+];
+
+/** SEO Analyzer › Bulk fixes: one chip row switches between the three bulk tools. */
+export const BULK_FIX_CHIPS = [
+  { id: "meta", label: "Meta tags", to: "/app/optimize" },
+  { id: "images", label: "Image alt text", to: "/app/image-seo" },
+  { id: "links", label: "Internal links", to: "/app/internal-links" },
 ];
 
 /** Analytics: revenue from content and search performance. */
@@ -55,8 +60,7 @@ export function WorkspaceTabs({
   const selected = Math.max(0, tabs.findIndex((tab) => tab.id === activeId));
 
   return (
-    <Card padding="0">
-      <Tabs
+    <Tabs
         tabs={tabs.map(({ id, content }) => ({ id, content }))}
         selected={selected}
         onSelect={(index) => {
@@ -64,6 +68,5 @@ export function WorkspaceTabs({
           if (destination) navigate(destination);
         }}
       />
-    </Card>
   );
 }

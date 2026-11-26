@@ -10,17 +10,22 @@ import {
   InlineStack,
   TextField,
   Select,
-  Icon,
   Button,
   InlineGrid,
   Badge,
   Checkbox,
   Layout,
-  ResourceList,
-  ResourceItem,
 } from "@shopify/polaris";
 import {
-  ChevronRightIcon,
+  SettingsIcon,
+  LayoutColumns3Icon,
+  ListBulletedIcon,
+  ChartVerticalIcon,
+  MagicIcon,
+  ConnectIcon,
+  ThemeIcon,
+  CreditCardIcon,
+  NoteIcon,
 } from "@shopify/polaris-icons";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
@@ -67,6 +72,7 @@ import {
   pickSettingChoice,
 } from "../settings-validation";
 import { AppPage } from "../components/AppPage";
+import { IconTile } from "../components/rm";
 
 const META_TEMPLATE_PREVIEW = {
   title: "How to choose trail running shoes",
@@ -263,31 +269,41 @@ export default function SettingsRoute() {
 }
 
 /** Settings index, like Shopify's own Settings: one list of sections. */
+/** Visual identity of each settings entry on the index. */
+const SETTINGS_ICONS: Record<string, { icon: any; tone: "plain" | "brand" | "good" | "warn" | "dark" }> = {
+  general: { icon: SettingsIcon, tone: "plain" },
+  display: { icon: LayoutColumns3Icon, tone: "brand" },
+  "content-navigation": { icon: ListBulletedIcon, tone: "good" },
+  tracking: { icon: ChartVerticalIcon, tone: "warn" },
+  rules: { icon: MagicIcon, tone: "brand" },
+  integrations: { icon: ConnectIcon, tone: "plain" },
+  "/app/theme-setup": { icon: ThemeIcon, tone: "good" },
+  "/app/pricing": { icon: CreditCardIcon, tone: "dark" },
+  "/app/changelog": { icon: NoteIcon, tone: "plain" },
+};
+
 function SettingsIndex() {
   const navigate = useNavigate();
   const items = [
-    ...SETTINGS_SECTIONS.map((section) => ({ url: `/app/settings?tab=${section.id}`, title: section.title, description: section.description })),
-    ...SETTINGS_LINKS,
+    ...SETTINGS_SECTIONS.map((section) => ({ key: section.id, url: `/app/settings?tab=${section.id}`, title: section.title, description: section.description })),
+    ...SETTINGS_LINKS.map((link) => ({ key: link.url, ...link })),
   ];
   return (
-    <AppPage title="Settings" subtitle="Configure how the app looks on your storefront, what it tracks and how AI writes.">
-      <Card padding="0">
-        <ResourceList
-          resourceName={{ singular: "setting", plural: "settings" }}
-          items={items}
-          renderItem={(item) => (
-            <ResourceItem id={item.url} onClick={() => navigate(item.url)} accessibilityLabel={`Open ${item.title}`}>
-              <InlineStack align="space-between" blockAlign="center" wrap={false} gap="300">
-                <BlockStack gap="050">
-                  <Text as="h3" variant="headingSm">{item.title}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">{item.description}</Text>
-                </BlockStack>
-                <Icon source={ChevronRightIcon} tone="subdued" />
-              </InlineStack>
-            </ResourceItem>
-          )}
-        />
-      </Card>
+    <AppPage title="Settings" subtitle="How the app looks on your storefront, what it tracks and how AI writes.">
+      <div className="rm-setting-grid">
+        {items.map((item) => {
+          const look = SETTINGS_ICONS[item.key] || { icon: SettingsIcon, tone: "plain" as const };
+          return (
+            <button key={item.key} type="button" className="rm-setting" onClick={() => navigate(item.url)}>
+              <IconTile icon={look.icon} tone={look.tone} />
+              <span>
+                <span className="rm-setting__title">{item.title}</span>
+                <span className="rm-setting__text">{item.description}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </AppPage>
   );
 }

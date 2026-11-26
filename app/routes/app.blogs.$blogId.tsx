@@ -28,7 +28,6 @@ import {
   Page,
   Popover,
   ActionList,
-  ProgressBar,
   Select,
   Tabs,
   Text,
@@ -36,7 +35,6 @@ import {
   Thumbnail,
 } from "@shopify/polaris";
 import {
-  AlertCircleIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   CheckIcon,
@@ -65,7 +63,6 @@ import {
   TextItalicIcon,
   TextUnderlineIcon,
   ViewIcon,
-  InfoIcon,
   XSmallIcon,
 } from "@shopify/polaris-icons";
 import { SaveBar, TitleBar, useAppBridge } from "@shopify/app-bridge-react";
@@ -75,6 +72,7 @@ import { formatLimit, PLAN_LIMITS } from "../pricing-plans";
 import { markersToStorage, storageToMarkers } from "../content-markers";
 import { sanitizeArticleHtml } from "../editor-html";
 import { ArticlePreviewModal } from "../components/ArticlePreview";
+import { AiButton, Bar, CheckItem, Pill, ScoreRing } from "../components/rm";
 import { clearDraft, draftDiffers, draftKey, readDraft, writeDraft, type EditorDraft } from "../editor-draft";
 import { SEO_SCORE_AREAS, auditSeo as runSeoAudit, slugifySeoText, toStoredSeoIssues, type SeoAuditIssue, type SeoAuditResult } from "../seo-audit";
 import { fetchShopDomains } from "../shopify-domains.server";
@@ -6099,26 +6097,37 @@ function SeoSidebar({
     onChangeFocusKeyword(newKeywords.join(', '));
   };
 
+  const actionable = issues.filter((issue) => issue.severity !== "good");
+  const keywords = focusKeyword.split(",").map((k) => k.trim()).filter(Boolean);
+
   return (
-    <BlockStack gap="400">
-      <Card padding="400">
-        <BlockStack gap="400">
+    <Card padding="0">
+      <Box padding="400">
+        <InlineStack gap="400" blockAlign="center" wrap={false}>
+          <ScoreRing score={seoScore} size={80} label={`SEO score ${seoScore} out of 100`} />
+          <BlockStack gap="100">
+            <Text as="h3" variant="headingMd">SEO score</Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              {actionable.length ? `${actionable.length} check${actionable.length === 1 ? "" : "s"} need work · updates as you type` : "Every check passes"}
+            </Text>
+            {!aiEnabled && <Text as="p" variant="bodySm" tone="subdued">AI fixes need 9Router on the server.</Text>}
+          </BlockStack>
+        </InlineStack>
+      </Box>
+      <Divider />
+
+      <Box padding="400">
+        <BlockStack gap="200">
           <div onKeyDown={handleKeyDown}>
-            <TextField
-              label="Focus Keyword"
-              value={inputValue}
-              onChange={setInputValue}
-              autoComplete="off"
-              placeholder="Type keyword and press Enter"
-            />
+            <TextField label="Focus keyword" value={inputValue} onChange={setInputValue} autoComplete="off" placeholder="Type a keyword and press Enter" />
           </div>
-          {focusKeyword && focusKeyword.trim().length > 0 && (
-            <InlineStack gap="200">
-              {focusKeyword.split(',').map(k => k.trim()).filter(Boolean).map((kw, index) => {
+          {keywords.length > 0 && (
+            <InlineStack gap="150">
+              {keywords.map((kw) => {
                 const score = keywordScores[kw.toLowerCase()] || "critical";
                 return (
-                  <InlineStack key={index} gap="050" blockAlign="center" wrap={false}>
-                    <Badge tone={score === "success" ? "success" : score === "warning" ? "warning" : "critical"}>{kw}</Badge>
+                  <InlineStack key={kw} gap="050" blockAlign="center" wrap={false}>
+                    <Pill tone={score === "success" ? "good" : score === "warning" ? "warn" : "bad"}>{kw}</Pill>
                     <Button variant="tertiary" size="micro" icon={XSmallIcon} accessibilityLabel={`Remove focus keyword ${kw}`} onClick={() => handleRemove(kw)} />
                   </InlineStack>
                 );
@@ -6126,24 +6135,13 @@ function SeoSidebar({
             </InlineStack>
           )}
         </BlockStack>
-      </Card>
+      </Box>
+      <Divider />
 
-      <Card padding="400">
-        <BlockStack gap="400">
-          <InlineStack align="space-between">
-            <Text as="h3" variant="headingMd" fontWeight="bold">
-              SEO score
-            </Text>
-            <InlineStack gap="200" blockAlign="center">
-              {aiEnabled ? <Badge tone="magic">AI ready</Badge> : <Badge>9Router required</Badge>}
-              <Badge tone={seoScore >= 80 ? "success" : seoScore >= 60 ? "warning" : "critical"}>
-                {`${seoScore}/100`}
-              </Badge>
-            </InlineStack>
-          </InlineStack>
-
-          {scoreBreakdown && (
-            <BlockStack gap="150">
+      {scoreBreakdown && (
+        <>
+          <Box padding="400">
+            <BlockStack gap="200">
               {(Object.keys(SEO_SCORE_AREAS) as Array<keyof typeof SEO_SCORE_AREAS>).map((area) => {
                 const part = scoreBreakdown[area];
                 const ratio = part.max ? part.score / part.max : 1;
@@ -6151,115 +6149,89 @@ function SeoSidebar({
                   <BlockStack key={area} gap="050">
                     <InlineStack align="space-between">
                       <Text as="span" variant="bodySm">{SEO_SCORE_AREAS[area].label}</Text>
-                      <Text as="span" variant="bodySm" tone={ratio >= 0.8 ? "success" : ratio >= 0.5 ? "caution" : "critical"}>{`${part.score}/${part.max}`}</Text>
+                      <Text as="span" variant="bodySm" fontWeight="semibold">{`${part.score}/${part.max}`}</Text>
                     </InlineStack>
-                    <ProgressBar progress={Math.round(ratio * 100)} size="small" tone={ratio >= 0.8 ? "success" : ratio >= 0.5 ? "highlight" : "critical"} />
+                    <Bar value={ratio * 100} tone={ratio >= 0.8 ? "good" : ratio >= 0.5 ? "warn" : "bad"} />
                   </BlockStack>
                 );
               })}
             </BlockStack>
-          )}
+          </Box>
+          <Divider />
+        </>
+      )}
 
-          {Object.entries(categories).map(([cat, title]) => {
-            const catIssues = issues.filter(i => i.category === cat);
-            if (catIssues.length === 0) return null;
-            const criticalCount = catIssues.filter(i => i.severity === 'critical').length;
-            const warningCount = catIssues.filter(i => i.severity === 'warning').length;
-            const actionCount = criticalCount + warningCount;
-            
-            return (
-              <BlockStack key={cat} gap="200" inlineAlign="stretch">
-                <div 
-                  onClick={() => toggleCategory(cat)}
-                  style={{ display: 'flex', width: '100%', flex: 1, alignItems: 'center', cursor: 'pointer', padding: '4px 0' }}
-                >
-                  <InlineStack gap="200" blockAlign="center">
-                    <Text as="span" variant="bodyMd" fontWeight="semibold">{title}</Text>
-                    {actionCount > 0 ? (
-                      <Badge tone={criticalCount > 0 ? "critical" : "warning"}>{`${actionCount} ${actionCount === 1 ? 'issue' : 'issues'}`}</Badge>
-                    ) : (
-                      <Badge tone="success">✓ All Good</Badge>
-                    )}
-                  </InlineStack>
-                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', alignSelf: 'center', lineHeight: 0 }}>
-                    <Icon source={openCategories[cat] ? ChevronUpIcon : ChevronDownIcon} tone="subdued" />
-                  </div>
-                </div>
-                <Collapsible
-                  open={openCategories[cat]}
-                  id={`collapsible-${cat}`}
-                  transition={{ duration: '150ms', timingFunction: 'ease' }}
-                >
-                  <BlockStack gap="200">
-                    {catIssues.map((issue) => (
-                      <div key={issue.type} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ flexShrink: 0, width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 0 }}>
-                          <Icon source={issue.severity === 'good' ? CheckIcon : issue.severity === 'critical' ? AlertCircleIcon : InfoIcon} 
-                                tone={issue.severity === 'good' ? 'success' : issue.severity === 'critical' ? 'critical' : 'warning'} />
-                        </div>
-                        <div style={{ flex: 1, textAlign: 'left' }}>
-                          <BlockStack gap="100">
-                            <Text as="span" variant="bodySm">{issue.message}</Text>
-                            {issue.type === "toc" && issue.severity !== "good" && (
-                              <InlineStack>
-                                <Button
-                                  size="micro"
-                                  onClick={() => navigate("/app/settings?tab=content-navigation#toc-settings")}
-                                >
-                                  Open TOC settings
-                                </Button>
-                              </InlineStack>
-                            )}
-                          </BlockStack>
-                        </div>
-                        {issue.severity !== "good" && issue.type !== "toc" && (
-                          <Button
-                            size="micro"
-                            icon={issue.type === "products" || issue.type === "internal_links" || isManualOnlySeoIssueForUi(issue.type) ? LinkIcon : MagicIcon}
-                            onClick={() => issue.type === "products"
-                              ? onManageProducts()
-                              : issue.type === "internal_links"
-                                ? onReviewInternalLinks()
-                                : onFixIssue(issue)}
-                            disabled={aiLoading || (!aiEnabled && !["products", "internal_links"].includes(issue.type))}
-                            loading={issue.type !== "products" && aiLoadingTarget === issue.type}
-                          >
-                            {issue.type === "products"
-                              ? "Manage"
-                              : issue.type === "internal_links"
-                                ? "Review suggestions"
-                                : isManualOnlySeoIssueForUi(issue.type) && !["external_links", "dofollow_external_links", "eeat_sources"].includes(issue.type)
-                                  ? "Review steps"
-                                  : "Fix with AI"}
-                          </Button>
-                        )}
-                      </div>
-                    ))}
-                  </BlockStack>
-                </Collapsible>
-              </BlockStack>
-            );
-          })}
-
-          <InlineStack align="space-between" gap="200" blockAlign="center">
-            <div>{undoAvailable && <Button size="micro" onClick={onUndo} disabled={aiLoading}>Undo AI changes</Button>}</div>
-            <InlineStack gap="200">
-              <Button size="micro" onClick={onApplyAll} disabled={aiLoading}>Apply basic metadata</Button>
-              <Button
-                size="micro"
-                variant="primary"
-                icon={MagicIcon}
-                onClick={onFixAll}
-                loading={aiLoadingTarget === "all"}
-                disabled={aiLoading || !aiEnabled || !issues.some((issue) => issue.severity !== "good")}
+      <Box paddingBlock="200">
+        {Object.entries(categories).map(([cat, title]) => {
+          const catIssues = issues.filter((i) => i.category === cat);
+          if (catIssues.length === 0) return null;
+          const criticalCount = catIssues.filter((i) => i.severity === "critical").length;
+          const warningCount = catIssues.filter((i) => i.severity === "warning").length;
+          return (
+            <div key={cat} style={{ borderTop: "1px solid var(--rm-line)" }}>
+              <button
+                type="button"
+                onClick={() => toggleCategory(cat)}
+                aria-expanded={openCategories[cat]}
+                aria-controls={`collapsible-${cat}`}
+                style={{ all: "unset", boxSizing: "border-box", width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", cursor: "pointer" }}
               >
-                Fix all with AI
-              </Button>
-            </InlineStack>
+                <span style={{ flex: 1 }}><Text as="span" variant="bodyMd" fontWeight="semibold">{title}</Text></span>
+                {criticalCount > 0
+                  ? <Pill tone="bad">{`${criticalCount} error${criticalCount === 1 ? "" : "s"}`}</Pill>
+                  : warningCount > 0
+                    ? <Pill tone="warn">{`${warningCount} warning${warningCount === 1 ? "" : "s"}`}</Pill>
+                    : <Pill tone="good">All good</Pill>}
+                <Icon source={openCategories[cat] ? ChevronUpIcon : ChevronDownIcon} tone="subdued" />
+              </button>
+              <Collapsible open={openCategories[cat]} id={`collapsible-${cat}`} transition={{ duration: "150ms", timingFunction: "ease" }}>
+                <Box paddingInline="400" paddingBlockEnd="300">
+                  {catIssues.map((issue) => (
+                    <BlockStack key={issue.type} gap="100">
+                      <CheckItem status={issue.severity === "good" ? "pass" : issue.severity === "critical" ? "fail" : "warn"}>{issue.message}</CheckItem>
+                      {issue.severity !== "good" && (
+                        <Box paddingInlineStart="800" paddingBlockEnd="100">
+                          {issue.type === "toc" ? (
+                            <Button size="micro" onClick={() => navigate("/app/settings?tab=content-navigation#toc-settings")}>Open TOC settings</Button>
+                          ) : (
+                            <Button
+                              size="micro"
+                              icon={issue.type === "products" || issue.type === "internal_links" || isManualOnlySeoIssueForUi(issue.type) ? LinkIcon : MagicIcon}
+                              onClick={() => issue.type === "products" ? onManageProducts() : issue.type === "internal_links" ? onReviewInternalLinks() : onFixIssue(issue)}
+                              disabled={aiLoading || (!aiEnabled && !["products", "internal_links"].includes(issue.type))}
+                              loading={issue.type !== "products" && aiLoadingTarget === issue.type}
+                            >
+                              {issue.type === "products"
+                                ? "Manage products"
+                                : issue.type === "internal_links"
+                                  ? "Review suggestions"
+                                  : isManualOnlySeoIssueForUi(issue.type) && !["external_links", "dofollow_external_links", "eeat_sources"].includes(issue.type)
+                                    ? "Review steps"
+                                    : "Fix with AI"}
+                            </Button>
+                          )}
+                        </Box>
+                      )}
+                    </BlockStack>
+                  ))}
+                </Box>
+              </Collapsible>
+            </div>
+          );
+        })}
+      </Box>
+      <Divider />
+
+      <Box padding="400">
+        <BlockStack gap="200">
+          <AiButton fullWidth onClick={onFixAll} loading={aiLoadingTarget === "all"} disabled={aiLoading || !aiEnabled || !actionable.length}>Fix all with AI</AiButton>
+          <InlineStack align="space-between" gap="200">
+            <Button variant="plain" onClick={onApplyAll} disabled={aiLoading}>Apply basic metadata</Button>
+            {undoAvailable && <Button variant="plain" onClick={onUndo} disabled={aiLoading}>Undo AI changes</Button>}
           </InlineStack>
         </BlockStack>
-      </Card>
-    </BlockStack>
+      </Box>
+    </Card>
   );
 }
 
@@ -8108,8 +8080,6 @@ function styleLabel(value: string) {
 
 const DETAIL_STYLES = `
 .bp-detail-shell {
-  max-width: 1200px;
-  margin: 0 auto;
   padding-bottom: 88px;
 }
 

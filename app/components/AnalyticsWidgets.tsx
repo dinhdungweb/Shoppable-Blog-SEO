@@ -43,7 +43,7 @@ export function TrendLabel({ value }: { value: Trend }) {
   );
 }
 
-export function KpiCard({ title, value, change, hint, spark, color = "#2C6ECB" }: { title: string; value: string; change: Trend; hint?: string; spark?: number[]; color?: string }) {
+export function KpiCard({ title, value, change, hint, spark, color = "#4B48E8" }: { title: string; value: string; change: Trend; hint?: string; spark?: number[]; color?: string }) {
   return (
     <Card padding="400">
       <BlockStack gap="100">
@@ -92,8 +92,8 @@ export function Funnel({ steps }: { steps: FunnelStepData[] }) {
                 <Text as="span" variant="bodyMd" fontWeight="bold">{formatNumber(step.value)}</Text>
               </InlineStack>
             </InlineStack>
-            <div style={{ height: 8, borderRadius: 4, background: "var(--p-color-bg-surface-secondary)" }}>
-              <div style={{ width: `${width}%`, height: 8, borderRadius: 4, background: index === 0 ? "#2C6ECB" : `rgba(44, 110, 203, ${Math.max(0.35, 1 - index * 0.1)})` }} />
+            <div style={{ height: 22, borderRadius: 6, background: "#f4f4fb" }}>
+              <div style={{ width: `${width}%`, height: 22, borderRadius: 6, background: index === steps.length - 1 ? "var(--rm-good)" : `rgba(75, 72, 232, ${Math.max(0.3, 1 - index * 0.13)})` }} />
             </div>
           </BlockStack>
         );

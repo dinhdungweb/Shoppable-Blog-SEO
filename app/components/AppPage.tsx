@@ -3,6 +3,7 @@ import { Badge, Banner, BlockStack, Page } from "@shopify/polaris";
 import type { BadgeProps, PageProps } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { WorkspaceTabs, type WorkspaceTab } from "./WorkspaceTabs";
+import { Chips, type ChipItem } from "./rm";
 
 /**
  * The one page frame used by every screen:
@@ -23,6 +24,7 @@ export function AppPage({
   backAction,
   fullWidth,
   tabs,
+  subnav,
   children,
 }: {
   title: string;
@@ -33,6 +35,8 @@ export function AppPage({
   backAction?: { content: string; url: string };
   fullWidth?: boolean;
   tabs?: { items: WorkspaceTab[]; activeId: string };
+  /** A chip row under the tabs for tools inside one tab (e.g. SEO Analyzer › Bulk fixes). */
+  subnav?: { items: ChipItem[]; active: string; label: string };
   children: ReactNode;
 }) {
   return (
@@ -48,6 +52,7 @@ export function AppPage({
       <TitleBar title={title} />
       <BlockStack gap="500">
         {tabs && <WorkspaceTabs tabs={tabs.items} activeId={tabs.activeId} />}
+        {subnav && <Chips items={subnav.items} active={subnav.active} label={subnav.label} />}
         {children}
       </BlockStack>
     </Page>

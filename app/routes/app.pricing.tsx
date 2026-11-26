@@ -368,6 +368,7 @@ function PricingPlanCard({
   const submitting = navigation.state === "submitting" && navigation.formData?.get("plan") === (plan.billingPlan || plan.key);
 
   return (
+    <div className={isFeatured ? "rm-plan rm-plan--featured" : "rm-plan"}>
     <Card padding="0">
       <div id={plan.key}>
         <Box padding="200" background={isFeatured ? "bg-fill-brand" : "bg-surface-secondary"}>
@@ -439,6 +440,7 @@ function PricingPlanCard({
         </Modal>
       )}
     </Card>
+    </div>
   );
 }
 

@@ -39,9 +39,10 @@ import {
 } from "../image-seo";
 import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
+import { BULK_FIX_CHIPS, SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 import { AppPage } from "../components/AppPage";
+import { StatTile } from "../components/rm";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const PAGE_SIZE = 20;
@@ -470,7 +471,7 @@ export default function ImageSeoPage() {
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   if (!initial.canUse) {
-    return <AppPage title="Image alt text" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "images" }}><Card><EmptyState heading="Bulk image alt text is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></AppPage>;
+    return <AppPage title="Image alt text" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "bulk" }} subnav={{ items: BULK_FIX_CHIPS, active: "images", label: "Bulk fix" }}><Card><EmptyState heading="Bulk image alt text is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></AppPage>;
   }
 
   const toggle = (id: string, checked: boolean) => setSelectedIds((current) => checked ? [...new Set([...current, id])] : current.filter((value) => value !== id));
@@ -503,7 +504,7 @@ export default function ImageSeoPage() {
     title="Image alt text"
     subtitle="Generate context-aware alt text for featured and inline images. Image files, URLs, dimensions and all other HTML stay unchanged."
     fullWidth
-    tabs={{ items: SEO_WORKSPACE_TABS, activeId: "images" }}
+    tabs={{ items: SEO_WORKSPACE_TABS, activeId: "bulk" }} subnav={{ items: BULK_FIX_CHIPS, active: "images", label: "Bulk fix" }}
     primaryAction={{ content: `Generate AI for selected (${Math.min(selectedIds.length, 50)})`, onAction: generate, loading: aiFetcher.state !== "idle", disabled: !initial.aiEnabled || !selectedIds.length || aiFetcher.state !== "idle" }}
     secondaryActions={[{ content: "Clear selection", onAction: () => setSelectedIds([]), disabled: !selectedIds.length }]}
   >
@@ -572,7 +573,7 @@ export default function ImageSeoPage() {
 }
 
 function Summary({ label, value, tone }: { label: string; value: number; tone: "info" | "warning" | "critical" }) {
-  return <Card><BlockStack gap="100"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><InlineStack align="space-between" blockAlign="center"><Text as="p" variant="heading2xl" fontWeight="bold">{value}</Text><Badge tone={tone}>{value ? "Measured" : "Clear"}</Badge></InlineStack></BlockStack></Card>;
+  return <StatTile label={label} value={value} tone={tone === "info" ? "plain" : !value ? "good" : tone === "critical" ? "bad" : "warn"} hint={tone === "info" ? undefined : value ? "Needs review" : "Clear"} />;
 }
 
 async function fetchImageArticles(admin: any): Promise<{ articles: ImageSeoArticle[]; truncated: boolean }> {

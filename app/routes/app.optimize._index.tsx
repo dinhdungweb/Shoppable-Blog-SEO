@@ -4,6 +4,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import {
   Badge,
+  Box,
   Banner,
   BlockStack,
   Button,
@@ -11,15 +12,15 @@ import {
   EmptyState,
   IndexTable,
   InlineStack,
-  Select,
   Text,
   useIndexResourceState,
 } from "@shopify/polaris";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
-import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
+import { BULK_FIX_CHIPS, SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { META_TAG_PROBLEM_LABELS, auditMetaTags, type MetaTagProblem } from "../meta-tag-audit";
 import { AppPage } from "../components/AppPage";
+import { Chips, Steps } from "../components/rm";
 
 const MAX_BULK_SELECTION = 50;
 const MAX_ROWS = 250;
@@ -99,8 +100,9 @@ export default function MetaTagsOptimizer() {
       title="Meta tags"
       subtitle="Fix SEO titles, meta descriptions and featured image alt text for many posts at once: select → generate with AI → review → apply. Every change can be undone from Change history."
       fullWidth
-      tabs={{ items: SEO_WORKSPACE_TABS, activeId: "meta" }}
+      tabs={{ items: SEO_WORKSPACE_TABS, activeId: "bulk" }} subnav={{ items: BULK_FIX_CHIPS, active: "meta", label: "Bulk fix" }}
     >
+        <Steps active={0} steps={[{ title: "Select", text: "Pick up to 50 posts" }, { title: "Generate & review", text: "AI drafts, you edit" }, { title: "Apply", text: "Saved to Shopify, undo anytime" }]} />
 
         {!data.canBulkReview && (
           <Banner
@@ -125,39 +127,21 @@ export default function MetaTagsOptimizer() {
         ) : (
           <Card padding="0">
             <BlockStack gap="0">
-              <div style={{ padding: "16px" }}>
-                <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
-                  <BlockStack gap="050">
-                    <Text as="h2" variant="headingMd">Meta tags</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      SEO title, meta description and featured image alt text. Select up to {MAX_BULK_SELECTION} posts.
-                    </Text>
-                  </BlockStack>
-                  <InlineStack gap="200" blockAlign="center">
-                    <div style={{ minWidth: 240 }}>
-                      <Select
-                        label="Filter"
-                        labelHidden
-                        options={filterOptions}
-                        value={filter}
-                        onChange={(value) => { clearSelection(); setFilter(value as Filter); }}
-                      />
-                    </div>
-                    <Button
-                      variant="primary"
-                      disabled={!selectedIds.length || tooMany || !data.canBulkReview}
-                      onClick={openReview}
-                    >
+              <Box padding="400">
+                <BlockStack gap="300">
+                  <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+                    <BlockStack gap="050">
+                      <Text as="h2" variant="headingMd">Meta tags</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">SEO title, meta description and featured image alt text. Select up to {MAX_BULK_SELECTION} posts.</Text>
+                    </BlockStack>
+                    <Button variant="primary" disabled={!selectedIds.length || tooMany || !data.canBulkReview} onClick={openReview}>
                       {selectedIds.length ? `Review ${selectedIds.length} selected` : "Select posts to review"}
                     </Button>
                   </InlineStack>
-                </InlineStack>
-                {tooMany && (
-                  <div style={{ marginTop: 12 }}>
-                    <Banner tone="warning"><p>Select at most {MAX_BULK_SELECTION} posts per batch.</p></Banner>
-                  </div>
-                )}
-              </div>
+                  <Chips label="Problem filter" active={filter} items={filterOptions.map((option) => ({ id: option.value, label: option.label, onClick: () => { clearSelection(); setFilter(option.value as Filter); } }))} />
+                  {tooMany && <Banner tone="warning"><p>Select at most {MAX_BULK_SELECTION} posts per batch.</p></Banner>}
+                </BlockStack>
+              </Box>
               <IndexTable
                 resourceName={{ singular: "post", plural: "posts" }}
                 itemCount={visible.length}

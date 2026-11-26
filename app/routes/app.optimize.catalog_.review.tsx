@@ -15,6 +15,7 @@ import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 import { SEO_DESCRIPTION_FALLBACK_LENGTH, stripTags } from "../catalog-save";
 import { CATALOG_BULK_ISSUES, bulkProblems, clean, initialBulkValues, parseBulkPayload, parseCatalogIds, planBulkChange } from "../catalog-bulk";
 import { fetchBulkCatalogNodes, refreshCatalogAudit, setCatalogImageAlt, setCatalogSeo } from "../catalog-bulk.server";
+import { Steps } from "../components/rm";
 
 const AI_BATCH = 3;
 
@@ -257,6 +258,7 @@ export default function CatalogBulkReview() {
     >
       <TitleBar title="Review search listings" />
       <Layout><Layout.Section><BlockStack gap="400">
+        <Steps active={1} steps={[{ title: "Select", text: "Pick up to 50 products or collections" }, { title: "Generate & review", text: "AI drafts, you edit" }, { title: "Apply", text: "Saved to Shopify, undo anytime" }]} />
         {error && <Banner tone="critical"><p>{error}</p></Banner>}
         {aiError && <Banner tone="critical" title="AI suggestions unavailable"><p>{aiError}</p></Banner>}
         {aiWarning && <Banner tone="warning"><p>{aiWarning}</p></Banner>}

@@ -10,26 +10,17 @@ import {
   Button,
   Card,
   Banner,
-  Divider,
   EmptyState,
-  Icon,
-  IndexTable,
   InlineGrid,
   InlineStack,
-  Layout,
   Modal,
   ProgressBar,
-  Tabs,
   Text,
-  Thumbnail,
-  useIndexResourceState,
 } from "@shopify/polaris";
 import {
   AlertTriangleIcon,
-  CheckCircleIcon,
+  SearchIcon,
   XCircleIcon,
-  ImageIcon,
-  MagicIcon,
 } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
@@ -50,6 +41,7 @@ import catalogSeoStyles from "../styles/catalog-seo.css?url";
 import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { IssueScopeSwitcher } from "../components/IssueScopeSwitcher";
 import { AppPage } from "../components/AppPage";
+import { ActionRow, ActionRows, AiButton, Chips, DotScore, GroupLabel, IconTile, Pill, ScoreRing, StatTile, StatTiles, impactTone } from "../components/rm";
 
 type SeoCategory = "on_page" | "product_linking" | "image" | "schema" | "content";
 type SeoSeverity = "critical" | "warning" | "info" | "good";
@@ -138,11 +130,6 @@ type SeoAuditConfig = {
 };
 
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
-const DONUT_COLORS = {
-  High: "#D82C0D",
-  Medium: "#FFC453",
-  Low: "#29845A",
-};
 // v8: single engine (seo-audit.ts), Shopify-sourced metadata, area-based scoring.
 const SEO_AUDIT_VERSION = 8;
 
@@ -166,7 +153,16 @@ function parseStoredIssues(value: string | null): SeoIssue[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((issue): issue is SeoIssue => Boolean(issue && typeof issue.type === "string" && typeof issue.label === "string")) : [];
+    if (!Array.isArray(parsed)) return [];
+    // Scans from older versions stored issues without impact, effort or fix: fill them so no badge or column is empty.
+    return parsed
+      .filter((issue): issue is SeoIssue => Boolean(issue && typeof issue.type === "string" && typeof issue.label === "string"))
+      .map((issue) => ({
+        ...issue,
+        impact: issue.impact || (issue.severity === "critical" ? "High" : issue.severity === "warning" ? "Medium" : "Low"),
+        effort: issue.effort || "Low",
+        fix: issue.fix || issue.message || "",
+      }));
   } catch {
     return [];
   }
@@ -691,7 +687,6 @@ export default function SEOOptimizer() {
     averageScore,
     averageOnPageScore,
     issueGroups,
-    issueStats,
     affectedPosts,
     quickWins,
     scannedPosts,
@@ -719,7 +714,6 @@ export default function SEOOptimizer() {
     () => issueGroups.filter((issue) => selectedCategory === "all" || issue.category === selectedCategory),
     [issueGroups, selectedCategory],
   );
-  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(visibleIssues as any);
   const statusData = statusFetcher.data as { job?: typeof scanJob } | undefined;
   const scanActionData = scanFetcher.data as { queued?: boolean; jobId?: string } | undefined;
   const currentJob = statusData?.job === undefined ? scanJob : statusData.job;
@@ -778,22 +772,6 @@ export default function SEOOptimizer() {
     }
   }, [searchParams, shopify]);
 
-  const selectedIssueCount = allResourcesSelected ? visibleIssues.length : selectedResources.length;
-  const selectedIssues = visibleIssues.filter((issue) => allResourcesSelected || selectedResources.includes(issue.id));
-  const selectedArticleIds = [...new Set(selectedIssues.flatMap((issue) => issue.affectedPosts.map((post) => post.id.replace(/^gid:\/\/shopify\/Article\//, ""))))];
-  const selectedPotential = selectedIssues.reduce((sum, issue) => sum + issue.affected * getImpactWeight(issue.impact), 0);
-  const selectedTime = selectedIssues.reduce((sum, issue) => sum + issue.affected * getEffortMinutes(issue.effort), 0);
-  const donutData = [
-    { name: "High impact", value: issueStats.High, color: DONUT_COLORS.High },
-    { name: "Medium impact", value: issueStats.Medium, color: DONUT_COLORS.Medium },
-    { name: "Low impact", value: issueStats.Low, color: DONUT_COLORS.Low },
-  ];
-  const donutTotal = Math.max(1, issueStats.total);
-  const highEnd = (issueStats.High / donutTotal) * 100;
-  const mediumEnd = highEnd + (issueStats.Medium / donutTotal) * 100;
-  const donutBackground = issueStats.total
-    ? `conic-gradient(${DONUT_COLORS.High} 0 ${highEnd}%, ${DONUT_COLORS.Medium} ${highEnd}% ${mediumEnd}%, ${DONUT_COLORS.Low} ${mediumEnd}% 100%)`
-    : "var(--p-color-bg-surface-secondary)";
   const goToPost = (postId: string) => navigate(getPostTarget(postId));
   const handleIssueAction = (issue: IssueGroup) => {
     const bulkRoute = getBulkFixRoute(issue);
@@ -883,233 +861,122 @@ export default function SEOOptimizer() {
           quickWins={quickWins}
         />
 
-        <Layout>
-          <Layout.Section>
-            <BlockStack gap="400">
-              <Card padding="0">
-                <Tabs tabs={CATEGORY_TABS} selected={selectedTab} onSelect={setSelectedTab} />
-                {visibleIssues.length ? (
-                  <div className="bp-seo-issue-table">
-                    <IndexTable
-                      resourceName={{ singular: "issue", plural: "issues" }}
-                      itemCount={visibleIssues.length}
-                      selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
-                      onSelectionChange={handleSelectionChange}
-                      headings={[
-                        { title: "Check" },
-                        { title: "Affected" },
-                        { title: "Impact" },
-                        { title: "Effort" },
-                        { title: "Impressions (28d)" },
-                        { title: "Suggested fix" },
-                        { title: "Action" },
-                      ]}
-                      selectable
-                    >
-                      {visibleIssues.map((issue, index) => (
-                        <IndexTable.Row id={issue.id} key={issue.id} position={index} selected={selectedResources.includes(issue.id)}>
-                          <IndexTable.Cell>
-                            <InlineStack gap="200" blockAlign="center" wrap={false}>
-                            <Icon source={issue.impact === "High" ? XCircleIcon : AlertTriangleIcon} tone={issue.impact === "High" ? "critical" : "caution"} />
-                            <div className="bp-seo-issue-cell">
-                              <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
-                                {issue.issue}
-                              </Text>
-                              <Text as="span" variant="bodySm" tone="subdued" truncate>
-                                {issue.examples.slice(0, 2).join(", ")}
-                              </Text>
-                            </div>
-                            </InlineStack>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>{issue.affected}</IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Badge tone={getImpactTone(issue.impact)}>{issue.impact}</Badge>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Badge tone={getEffortTone(issue.effort)}>{issue.effort}</Badge>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Text as="span" variant="bodyMd" tone={issue.impressions ? undefined : "subdued"}>{formatImpressions(issue.impressions)}</Text>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <div className="bp-seo-fix-cell">
-                              <Text as="span" variant="bodyMd" truncate>
-                                {issue.fix}
-                              </Text>
-                            </div>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Button size="micro" onClick={() => handleIssueAction(issue)}>
-                              {getBulkFixRoute(issue) ? "Fix in bulk" : issue.actionLabel}
-                            </Button>
-                          </IndexTable.Cell>
-                        </IndexTable.Row>
-                      ))}
-                    </IndexTable>
-                  </div>
-                ) : (
-                  <Box padding="600">
-                    <EmptyState heading="No issues in this category" image={PLACEHOLDER_IMAGE}>
-                      <p>Choose another category or run a fresh SEO scan.</p>
-                    </EmptyState>
-                  </Box>
-                )}
-              </Card>
-
-              <Card padding="400">
-                <InlineStack align="space-between" blockAlign="center">
-                  <InlineStack gap="400" blockAlign="center">
-                    <BlockStack gap="0">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Text as="span" variant="headingSm">
-                          {selectedIssueCount} issues selected
-                        </Text>
-                        <Button variant="plain" onClick={clearSelection}>
-                          Clear
-                        </Button>
-                      </InlineStack>
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        High ({issueStats.High}) - Medium ({issueStats.Medium}) - Low ({issueStats.Low})
-                      </Text>
-                    </BlockStack>
-                    <Divider borderColor="border" />
-                    <BlockStack gap="0">
-                      <Text as="span" variant="bodySm" fontWeight="semibold">
-                        Potential impact
-                      </Text>
-                      <Text as="span" variant="bodySm" tone="success" fontWeight="bold">
-                        {selectedPotential ? `+${selectedPotential} priority points` : "Select issues"}
-                      </Text>
-                    </BlockStack>
-                    <Divider borderColor="border" />
-                    <BlockStack gap="0">
-                      <Text as="span" variant="bodySm" fontWeight="semibold">
-                        Estimated time
-                      </Text>
-                      <Text as="span" variant="bodySm" fontWeight="bold">
-                        {selectedTime ? formatMinutes(selectedTime) : "-"}
-                      </Text>
-                    </BlockStack>
-                  </InlineStack>
-
-                  <InlineStack gap="200">
-                    <Button onClick={() => navigate("/app/blogs")}>Review posts</Button>
-                    <Button disabled={!selectedArticleIds.length} onClick={() => navigate(`/app/blogs/bulk_edit?ids=${encodeURIComponent(selectedArticleIds.join(","))}`)}>
-                      Fix meta tags in bulk
-                    </Button>
-                    <Button variant="primary" loading={isScanning} onClick={() => scanFetcher.submit({ intent: "scan_all" }, { method: "post" })}>
-                      Apply scan
-                    </Button>
-                  </InlineStack>
-                </InlineStack>
-              </Card>
-            </BlockStack>
-          </Layout.Section>
-
-          <Layout.Section variant="oneThird">
-            <BlockStack gap="400">
-              <Card padding="400">
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">Keywords</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {!canSearchConsole
-                      ? "Search queries, clicks and keyword opportunities are available on Pro and Growth."
-                      : searchConsole.connected
-                        ? `Google Search Console is connected${searchConsole.lastSyncedAt ? ` · synced ${formatDate(searchConsole.lastSyncedAt)}` : ""}.`
-                        : "Connect Google Search Console to see which queries each post ranks for."}
-                  </Text>
-                  <InlineStack>
-                    {!canSearchConsole
-                      ? <Button url="/app/pricing?reason=search_console">Upgrade to Pro</Button>
-                      : searchConsole.connected
-                        ? <Button onClick={() => navigate("/app/content-decay")}>View keyword opportunities</Button>
-                        : <Button onClick={() => navigate("/app/settings?tab=integrations")}>Connect Google</Button>}
-                  </InlineStack>
-                </BlockStack>
-              </Card>
-
-              <Card padding="400">
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd" fontWeight="bold">
-                    Issue breakdown
-                  </Text>
-                  <InlineStack gap="500" blockAlign="center" wrap={false}>
-                    <div style={{ width: "120px", height: "120px", position: "relative" }}>
-                      <div aria-hidden="true" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: donutBackground }} />
-                      <div aria-hidden="true" style={{ position: "absolute", inset: "15px", borderRadius: "50%", background: "var(--p-color-bg-surface)" }} />
-                      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
-                        <Text as="p" variant="headingLg" fontWeight="bold">
-                          {issueStats.total}
-                        </Text>
-                        <Text as="span" variant="bodySm" tone="subdued" alignment="center">
-                          Issues
-                        </Text>
-                      </div>
+        <InlineGrid columns={{ xs: 1, lg: "2fr 1fr" }} gap="400">
+          <Card padding="0">
+            <Box padding="400">
+              <Chips
+                label="Check category"
+                active={selectedCategory}
+                items={CATEGORY_TABS.map((tab, index) => ({
+                  id: tab.id,
+                  label: tab.content,
+                  count: tab.id === "all" ? issueGroups.length : issueGroups.filter((issue) => issue.category === tab.id).length || undefined,
+                  onClick: () => setSelectedTab(index),
+                }))}
+              />
+            </Box>
+            {visibleIssues.length ? (
+              <>
+                {(selectedCategory === "all" ? CATEGORY_TABS.filter((tab) => tab.id !== "all") : CATEGORY_TABS.filter((tab) => tab.id === selectedCategory)).map((tab) => {
+                  const group = visibleIssues.filter((issue) => issue.category === tab.id);
+                  if (!group.length) return null;
+                  const failed = group.filter((issue) => issue.impact === "High").length;
+                  return (
+                    <div key={tab.id}>
+                      <GroupLabel>{`${tab.content} · ${failed ? `${failed} failed, ` : ""}${group.length - failed} warning${group.length - failed === 1 ? "" : "s"}`}</GroupLabel>
+                      <ActionRows>
+                        {group.map((issue) => (
+                          <ActionRow
+                            key={issue.id}
+                            icon={issue.impact === "High" ? XCircleIcon : AlertTriangleIcon}
+                            iconTone={issue.impact === "High" ? "bad" : "warn"}
+                            title={issue.issue}
+                            text={issue.fix}
+                            meta={`${issue.affected} post${issue.affected === 1 ? "" : "s"} · ${issue.examples.slice(0, 2).join(", ")}${issue.impressions ? ` · ${formatImpressions(issue.impressions)} impressions` : ""}`}
+                            aside={
+                              <>
+                                <Pill tone={impactTone(issue.impact)}>{issue.impact}</Pill>
+                                {getBulkFixRoute(issue)
+                                  ? <AiButton onClick={() => handleIssueAction(issue)}>Fix in bulk</AiButton>
+                                  : <Button size="slim" onClick={() => handleIssueAction(issue)}>{issue.actionLabel}</Button>}
+                              </>
+                            }
+                          />
+                        ))}
+                      </ActionRows>
                     </div>
-                    <BlockStack gap="200">
-                      {donutData.map((item) => (
-                        <InlineStack key={item.name} align="space-between" blockAlign="center" gap="300">
-                          <InlineStack gap="100" blockAlign="center">
-                            <div style={{ width: "8px", height: "8px", borderRadius: "4px", backgroundColor: item.color }} />
-                            <Text as="span" variant="bodySm">
-                              {item.name}
-                            </Text>
-                          </InlineStack>
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {item.value}
-                          </Text>
-                        </InlineStack>
-                      ))}
-                    </BlockStack>
-                  </InlineStack>
-                </BlockStack>
-              </Card>
+                  );
+                })}
+              </>
+            ) : (
+              <Box padding="600">
+                <EmptyState heading={scannedPosts ? "No issues in this category" : "Run your first scan"} image={PLACEHOLDER_IMAGE}>
+                  <p>{scannedPosts ? "Choose another category, or run a fresh scan after editing posts." : "One scan checks every post and lists what to fix first."}</p>
+                </EmptyState>
+              </Box>
+            )}
+            {affectedPosts < scannedPosts && (
+              <GroupLabel tone="good">{`Passing · ${scannedPosts - affectedPosts} post${scannedPosts - affectedPosts === 1 ? "" : "s"} with no issues`}</GroupLabel>
+            )}
+          </Card>
 
-              <Card padding="400">
-                <BlockStack gap="400">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd" fontWeight="bold">
-                      Posts needing attention
-                    </Text>
-                    <Button variant="plain" onClick={() => navigate("/app/blogs")}>
-                      View all
-                    </Button>
-                  </InlineStack>
-                  <BlockStack gap="300">
-                    {postsNeedingAttention.length ? (
-                      postsNeedingAttention.map((post) => (
-                        <div className="bp-seo-attention-row" key={post.id}>
-                          <div className="bp-seo-attention-thumbnail">
-                            <Thumbnail source={post.imageUrl || ImageIcon} alt={post.imageAlt || post.title} size="small" />
-                          </div>
-                          <div className="bp-seo-attention-copy">
-                            <BlockStack gap="050">
-                              <div className="bp-seo-attention-title" title={post.title}>
-                                <Text as="span" variant="bodyMd" fontWeight="semibold">
-                                  {post.title}
-                                </Text>
-                              </div>
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                On-page {post.baseScore}/100 · Site-adjusted {post.score}/100
-                              </Text>
-                            </BlockStack>
-                          </div>
-                          <Button size="micro" onClick={() => goToPost(post.id)}>
-                            Review
-                          </Button>
-                        </div>
-                      ))
-                    ) : (
-                      <Text as="p" tone="subdued">
-                        All posts are optimized.
-                      </Text>
-                    )}
-                  </BlockStack>
+          <BlockStack gap="400">
+            {quickWins > 0 && (
+              <div className="rm-callout rm-callout--brand">
+                <BlockStack gap="200">
+                  <Text as="h2" variant="headingSm"><span style={{ color: "var(--rm-brand-strong)" }}>{`Fix ${quickWins} quick win${quickWins === 1 ? "" : "s"}`}</span></Text>
+                  <Text as="p" variant="bodySm">AI drafts meta tags, alt text and links for the affected posts. You review every change before it is saved, and can undo it.</Text>
+                  <InlineStack><AiButton onClick={() => navigate("/app/optimize")}>Review AI fixes</AiButton></InlineStack>
                 </BlockStack>
-              </Card>
-            </BlockStack>
-          </Layout.Section>
-        </Layout>
+              </div>
+            )}
+
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack gap="200" blockAlign="center"><IconTile icon={SearchIcon} tone="brand" size="sm" /><Text as="h2" variant="headingMd">Keywords</Text></InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {!canSearchConsole
+                    ? "Search queries, clicks and keyword opportunities are available on Pro and Growth."
+                    : searchConsole.connected
+                      ? `Google Search Console is connected${searchConsole.lastSyncedAt ? ` · synced ${formatDate(searchConsole.lastSyncedAt)}` : ""}.`
+                      : "Connect Google Search Console to see which searches each post ranks for."}
+                </Text>
+                <InlineStack>
+                  {!canSearchConsole
+                    ? <Button url="/app/pricing?reason=search_console">Upgrade to Pro</Button>
+                    : searchConsole.connected
+                      ? <Button onClick={() => navigate("/app/content-decay")}>View keyword opportunities</Button>
+                      : <Button onClick={() => navigate("/app/settings?tab=integrations")}>Connect Google</Button>}
+                </InlineStack>
+              </BlockStack>
+            </Card>
+
+            <Card padding="0">
+              <Box padding="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">Posts needing attention</Text>
+                  <Button variant="plain" onClick={() => navigate("/app/blogs?status=needs_seo")}>View all</Button>
+                </InlineStack>
+              </Box>
+              {postsNeedingAttention.length ? (
+                <ActionRows>
+                  {postsNeedingAttention.map((post) => (
+                    <div className="rm-row" key={post.id}>
+                      <DotScore score={post.score} />
+                      <div className="rm-row__body">
+                        <div className="rm-row__title">{post.title}</div>
+                        <div className="rm-row__text">{`On-page ${post.baseScore} · overall ${post.score}`}</div>
+                      </div>
+                      <Button size="slim" onClick={() => goToPost(post.id)}>Open</Button>
+                    </div>
+                  ))}
+                </ActionRows>
+              ) : (
+                <Box padding="400" paddingBlockStart="0"><Text as="p" tone="subdued">All scanned posts are in good shape.</Text></Box>
+              )}
+            </Card>
+          </BlockStack>
+        </InlineGrid>
       </BlockStack>
       <Modal
         open={Boolean(activeIssue)}
@@ -1152,51 +1019,39 @@ export default function SEOOptimizer() {
   );
 }
 
-/** Rank Math style summary: overall score and how many checks fail or warn. */
+/** Rank Math style summary: score ring, a one-line verdict and four tinted counts. */
 function AnalyzerSummary({ score, onPageScore, failed, warnings, passedPosts, scannedPosts, totalPosts, quickWins }: {
   score: number; onPageScore: number; failed: number; warnings: number; passedPosts: number; scannedPosts: number; totalPosts: number; quickWins: number;
 }) {
-  const tone = score >= 80 ? "success" : score >= 50 ? "caution" : "critical";
+  const verdict = !scannedPosts
+    ? "Run a scan to see how your posts score"
+    : failed + warnings === 0
+      ? "Your posts pass every check"
+      : `Your SEO is ${score >= 80 ? "great" : score >= 50 ? "good" : "weak"}, with ${failed + warnings} thing${failed + warnings === 1 ? "" : "s"} to improve`;
   return (
     <Card>
-      <InlineGrid columns={{ xs: 1, md: "1fr 2fr" }} gap="600">
-        <BlockStack gap="200">
-          <Text as="h2" variant="headingSm" tone="subdued">Overall SEO score</Text>
-          <InlineStack gap="100" blockAlign="end">
-            <Text as="p" variant="heading3xl" fontWeight="bold" tone={tone}>{scannedPosts ? String(score) : "—"}</Text>
-            <Text as="span" tone="subdued">/ 100</Text>
-          </InlineStack>
-          <ProgressBar progress={scannedPosts ? score : 0} size="small" tone={score >= 80 ? "success" : score >= 50 ? "highlight" : "critical"} />
-          <Text as="p" variant="bodySm" tone="subdued">
-            {scannedPosts ? `On-page average ${onPageScore}/100. The overall score also counts orphan posts, duplicates and keyword overlap.` : "Run a scan to score your posts."}
-          </Text>
-        </BlockStack>
-        <InlineGrid columns={{ xs: 2, sm: 4 }} gap="400">
-          <SummaryStat icon={XCircleIcon} tone="critical" label="Failed checks" value={failed} hint="High-impact problems" />
-          <SummaryStat icon={AlertTriangleIcon} tone="caution" label="Warnings" value={warnings} hint="Worth improving" />
-          <SummaryStat icon={CheckCircleIcon} tone="success" label="Posts passing" value={passedPosts} hint={`of ${scannedPosts} scanned`} />
-          <SummaryStat icon={MagicIcon} tone="magic" label="Quick wins" value={quickWins} hint="Low-effort fixes" />
-        </InlineGrid>
-      </InlineGrid>
-      {scannedPosts < totalPosts && (
-        <Box paddingBlockStart="300">
-          <Text as="p" variant="bodySm" tone="subdued">{`${scannedPosts} of ${totalPosts} posts have been scanned.`}</Text>
-        </Box>
-      )}
-    </Card>
-  );
-}
-
-function SummaryStat({ icon, tone, label, value, hint }: { icon: any; tone: "critical" | "caution" | "success" | "magic"; label: string; value: number; hint: string }) {
-  return (
-    <BlockStack gap="100">
-      <InlineStack gap="100" blockAlign="center" wrap={false}>
-        <Icon source={icon} tone={tone} />
-        <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+      <InlineStack gap="600" blockAlign="center" wrap>
+        <ScoreRing score={scannedPosts ? score : null} size={150} caption="/ 100" label={scannedPosts ? `Overall SEO score ${score} out of 100` : "Not scanned yet"} />
+        <div style={{ flex: "1 1 360px", minWidth: 0 }}>
+          <BlockStack gap="300">
+            <BlockStack gap="100">
+              <Text as="h2" variant="headingLg">{verdict}</Text>
+              <Text as="p" tone="subdued">
+                {scannedPosts
+                  ? `On-page average ${onPageScore}/100 across ${scannedPosts} of ${totalPosts} posts. Fix the failed checks first, then the quick wins.`
+                  : "One scan checks every post and lists the fixes that matter most."}
+              </Text>
+            </BlockStack>
+            <StatTiles>
+              <StatTile tone="bad" label="Failed" value={failed} hint="High-impact checks" />
+              <StatTile tone="warn" label="Warnings" value={warnings} hint="Worth improving" />
+              <StatTile tone="good" label="Posts passing" value={passedPosts} hint={`of ${scannedPosts} scanned`} />
+              <StatTile tone="brand" label="Quick wins" value={quickWins} hint="Low-effort fixes" />
+            </StatTiles>
+          </BlockStack>
+        </div>
       </InlineStack>
-      <Text as="p" variant="headingXl" fontWeight="bold">{String(value)}</Text>
-      <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>
-    </BlockStack>
+    </Card>
   );
 }
 
@@ -1404,36 +1259,10 @@ function getPostTarget(postId: string) {
   return `/app/blogs/${encodeURIComponent(postId)}`;
 }
 
-function getImpactWeight(impact: Impact) {
-  if (impact === "High") return 3;
-  if (impact === "Medium") return 2;
-  return 1;
-}
 
-function getEffortMinutes(effort: Effort) {
-  if (effort === "High") return 35;
-  if (effort === "Medium") return 20;
-  return 8;
-}
 
-function getImpactTone(impact: Impact) {
-  if (impact === "High") return "critical";
-  if (impact === "Medium") return "warning";
-  return "success";
-}
 
-function getEffortTone(effort: Effort) {
-  if (effort === "High") return "critical";
-  if (effort === "Medium") return "warning";
-  return "success";
-}
 
-function formatMinutes(minutes: number) {
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return mins ? `${hours}h ${mins}m` : `${hours}h`;
-}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-US", {

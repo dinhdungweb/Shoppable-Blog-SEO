@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
 import {
   Badge,
+  Box,
   Banner,
   BlockStack,
   Button,
@@ -10,7 +11,6 @@ import {
   EmptyState,
   IndexTable,
   InlineStack,
-  Select,
   Text,
   useIndexResourceState,
 } from "@shopify/polaris";
@@ -20,6 +20,7 @@ import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { CATALOG_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { CATALOG_BULK_ISSUES, CATALOG_BULK_ISSUE_TYPES, MAX_CATALOG_BULK, bulkProblems, type CatalogBulkFilter } from "../catalog-bulk";
 import { AppPage } from "../components/AppPage";
+import { Chips, Steps } from "../components/rm";
 
 const MAX_ROWS = 250;
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
@@ -116,6 +117,7 @@ export default function CatalogBulkPicker() {
       fullWidth
       tabs={{ items: CATALOG_WORKSPACE_TABS, activeId: "bulk" }}
     >
+        <Steps active={0} steps={[{ title: "Select", text: "Pick up to 50 products or collections" }, { title: "Generate & review", text: "AI drafts, you edit" }, { title: "Apply", text: "Saved to Shopify, undo anytime" }]} />
 
         {!data.canBulk && (
           <Banner tone="info" title="Bulk catalog editing is a Growth feature" action={{ content: "See plans", url: `/app/pricing?reason=bulk_edit&plan=${data.planKey}` }}>
@@ -131,22 +133,10 @@ export default function CatalogBulkPicker() {
           </Card>
         ) : (
           <Card padding="0">
-            <div style={{ padding: "16px" }}>
-              <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
-                <BlockStack gap="050">
-                  <Text as="h2" variant="headingMd">Search listings</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    SEO title, meta description and featured image alt text. Select up to {MAX_CATALOG_BULK} {noun}s.
-                    {data.matching > rows.length ? ` Showing the ${rows.length} with the most problems of ${data.matching}.` : ""}
-                  </Text>
-                </BlockStack>
-                <InlineStack gap="200" blockAlign="center" wrap>
-                  <div style={{ minWidth: 150 }}>
-                    <Select label="Type" labelHidden options={[{ label: "Products", value: "product" }, { label: "Collections", value: "collection" }]} value={data.type} onChange={(value) => update("type", value)} />
-                  </div>
-                  <div style={{ minWidth: 220 }}>
-                    <Select label="Filter" labelHidden options={filterOptions} value={data.filter} onChange={(value) => update("filter", value)} />
-                  </div>
+            <Box padding="400">
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+                  <Chips label="Resource type" active={data.type} items={[{ id: "product", label: "Products", onClick: () => update("type", "product") }, { id: "collection", label: "Collections", onClick: () => update("type", "collection") }]} />
                   <Button
                     variant="primary"
                     disabled={!selectedIds.length || tooMany || !data.canBulk}
@@ -155,9 +145,16 @@ export default function CatalogBulkPicker() {
                     {selectedIds.length ? `Review ${selectedIds.length} selected` : `Select ${noun}s to review`}
                   </Button>
                 </InlineStack>
-              </InlineStack>
-              {tooMany && <div style={{ marginTop: 12 }}><Banner tone="warning"><p>Select at most {MAX_CATALOG_BULK} {noun}s per batch.</p></Banner></div>}
-            </div>
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  <Text as="span" variant="bodySm" tone="subdued">Show {noun}s with:</Text>
+                  <Chips label="Problem filter" active={data.filter} items={filterOptions.map((option) => ({ id: option.value, label: option.label, onClick: () => update("filter", option.value) }))} />
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Select up to {MAX_CATALOG_BULK} {noun}s.{data.matching > rows.length ? ` Showing the ${rows.length} with the most problems of ${data.matching}.` : ""}
+                </Text>
+                {tooMany && <Banner tone="warning"><p>Select at most {MAX_CATALOG_BULK} {noun}s per batch.</p></Banner>}
+              </BlockStack>
+            </Box>
             <IndexTable
               key={`${data.type}:${data.filter}`}
               resourceName={{ singular: noun, plural: `${noun}s` }}

@@ -16,7 +16,7 @@ import {
   Select,
   Text,
 } from "@shopify/polaris";
-import { ExportIcon } from "@shopify/polaris-icons";
+import { AlertTriangleIcon, ChartVerticalIcon, ExportIcon, InfoIcon } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { allowedRanges, loadAnalyticsReport, resolveRange } from "../analytics.server";
@@ -35,6 +35,7 @@ import {
 } from "../components/AnalyticsWidgets";
 import { AppPage } from "../components/AppPage";
 import { ANALYTICS_WORKSPACE_TABS } from "../components/WorkspaceTabs";
+import { ActionRow, ActionRows, Pill } from "../components/rm";
 
 const PLACEHOLDER_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const MAX_POST_ROWS = 50;
@@ -123,8 +124,8 @@ export default function Insights() {
 
         <InlineGrid columns={{ xs: 2, sm: 3, lg: 6 }} gap="400">
           <KpiCard title="Readers" value={formatNumber(metrics.views)} change={trend(metrics.views, previous.views)} spark={data.chart.map((day) => day.views)} hint="Article views on posts with a shoppable widget, counted once per session." />
-          <KpiCard title="Product clicks" value={formatNumber(metrics.clicks)} change={trend(metrics.clicks, previous.clicks)} spark={data.chart.map((day) => day.clicks)} color="#8D51D5" />
-          <KpiCard title="Add to carts" value={formatNumber(metrics.addToCarts)} change={trend(metrics.addToCarts, previous.addToCarts)} spark={data.chart.map((day) => day.addToCarts)} color="#00A0AC" />
+          <KpiCard title="Product clicks" value={formatNumber(metrics.clicks)} change={trend(metrics.clicks, previous.clicks)} spark={data.chart.map((day) => day.clicks)} />
+          <KpiCard title="Add to carts" value={formatNumber(metrics.addToCarts)} change={trend(metrics.addToCarts, previous.addToCarts)} spark={data.chart.map((day) => day.addToCarts)} />
           <KpiCard title="Orders" value={formatNumber(metrics.purchases)} change={trend(metrics.purchases, previous.purchases)} spark={data.chart.map((day) => day.purchases)} color="#50B83C" hint={`${formatNumber(metrics.units)} units`} />
           <KpiCard title="Revenue" value={money(metrics.revenue)} change={trend(metrics.revenue, previous.revenue)} spark={data.chart.map((day) => day.revenue)} color="#50B83C" hint="Amount paid for products shoppers clicked in a blog post, within your attribution window." />
           <KpiCard title="Revenue per 1,000 readers" value={money(kpis.revenuePerThousandReaders)} change={trend(kpis.revenuePerThousandReaders, previousKpis.revenuePerThousandReaders)} hint="Revenue divided by readers, per 1,000. Compare posts and periods with it." />
@@ -173,24 +174,27 @@ export default function Insights() {
         </InlineGrid>
 
         <InlineGrid columns={{ xs: 1, md: "2fr 1fr" }} gap="400">
-          <Card padding="400">
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd" fontWeight="bold">What to improve</Text>
-              {data.insights.length ? data.insights.map((insight) => (
-                <InlineStack key={insight.id} align="space-between" blockAlign="center" gap="300" wrap={false}>
-                  <BlockStack gap="050">
-                    <InlineStack gap="200" blockAlign="center">
-                      <Badge tone={insight.tone}>{insight.tone === "success" ? "Opportunity" : insight.tone === "warning" ? "Fix" : "Review"}</Badge>
-                      <Text as="span" fontWeight="semibold">{insight.title}</Text>
-                    </InlineStack>
-                    <Text as="p" variant="bodySm" tone="subdued">{insight.detail}</Text>
-                  </BlockStack>
-                  <Button size="slim" onClick={() => navigate(insight.url)}>{insight.actionLabel}</Button>
-                </InlineStack>
-              )) : (
-                <Text as="p" tone="subdued">Recommendations appear once posts have enough readers (about 100 per post) to be reliable.</Text>
-              )}
-            </BlockStack>
+          <Card padding="0">
+            <Box padding="400"><Text as="h2" variant="headingMd">What to improve</Text></Box>
+            {data.insights.length ? (
+              <ActionRows>
+                {data.insights.map((insight) => (
+                  <ActionRow
+                    key={insight.id}
+                    icon={insight.tone === "success" ? ChartVerticalIcon : insight.tone === "warning" ? AlertTriangleIcon : InfoIcon}
+                    iconTone={insight.tone === "success" ? "good" : insight.tone === "warning" ? "warn" : "brand"}
+                    title={insight.title}
+                    text={insight.detail}
+                    aside={<>
+                      <Pill tone={insight.tone === "success" ? "good" : insight.tone === "warning" ? "warn" : "brand"}>{insight.tone === "success" ? "Opportunity" : insight.tone === "warning" ? "Fix" : "Review"}</Pill>
+                      <Button size="slim" onClick={() => navigate(insight.url)}>{insight.actionLabel}</Button>
+                    </>}
+                  />
+                ))}
+              </ActionRows>
+            ) : (
+              <Box padding="400" paddingBlockStart="0"><Text as="p" tone="subdued">Recommendations appear once posts have enough readers (about 100 per post) to be reliable.</Text></Box>
+            )}
           </Card>
 
           <Card padding="400">

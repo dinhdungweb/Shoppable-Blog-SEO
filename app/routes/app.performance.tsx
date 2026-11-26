@@ -22,6 +22,7 @@ import {
 } from "../storefront-performance";
 import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { AppPage } from "../components/AppPage";
+import { ScoreRing } from "../components/rm";
 
 export const links = () => [{ rel: "stylesheet", href: performanceStyles }];
 
@@ -244,7 +245,14 @@ function PageTypeButton({ target, selected, scan, onSelect }: { target: Performa
 }
 
 function ScoreCard({ title, score, icon }: { title: string; score: number; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>> }) {
-  return <div className="bp-score-card"><div className="bp-score-card-heading"><Icon source={icon} /><Text as="h3" variant="bodyMd" fontWeight="semibold">{title}</Text></div><div className="bp-score-ring" style={{ background: `conic-gradient(${scoreColor(score)} ${score * 3.6}deg, var(--p-color-bg-surface-secondary) 0)` }}><div><Text as="span" variant="heading2xl" fontWeight="bold">{score}</Text></div></div><span className={`bp-score-label ${scoreClass(score)}`}>{score >= 90 ? "Good" : score >= 50 ? "Needs improvement" : "Poor"}</span></div>;
+  return (
+    <Card>
+      <BlockStack gap="200" inlineAlign="center">
+        <ScoreRing score={score} size={96} goodAt={90} label={`${title} ${score} out of 100`} />
+        <InlineStack gap="100" blockAlign="center" wrap={false}><Icon source={icon} tone="subdued" /><Text as="h3" variant="bodyMd" fontWeight="semibold">{title}</Text></InlineStack>
+      </BlockStack>
+    </Card>
+  );
 }
 
 function FieldDataCard({ fieldData }: { fieldData: StorefrontPerformanceReport["mobile"]["fieldData"] }) {
@@ -312,13 +320,7 @@ function scoreTone(score: number): "success" | "warning" | "critical" {
   return score >= 90 ? "success" : score >= 50 ? "warning" : "critical";
 }
 
-function scoreColor(score: number) {
-  return score >= 90 ? "#00a86b" : score >= 50 ? "#f5a623" : "#d82c0d";
-}
 
-function scoreClass(score: number) {
-  return score >= 90 ? "good" : score >= 50 ? "needs-improvement" : "poor";
-}
 
 function formatDate(value?: string) {
   if (!value) return "never";

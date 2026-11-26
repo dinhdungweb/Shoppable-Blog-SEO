@@ -59,7 +59,7 @@
 .bp-checklist-row { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 9px; align-items: center; }
 .bp-checklist-row > .Polaris-Icon { align-self: center; margin: 0; }
 .bp-checklist-row > div { align-self: center; }
-.bp-catalog-editor-shell { width: 100%; max-width: 1200px; margin: 0 auto; padding-bottom: 88px; }
+.bp-catalog-editor-shell { width: 100%; padding-bottom: 88px; }
 .bp-catalog-editor-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 320px); gap: 16px; align-items: start; }
 .bp-catalog-editor-content { min-width: 0; }
 .bp-catalog-editor-sidebar { min-width: 0; }

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, isRouteErrorResponse, useActionData, useBlocker, useFetcher, useLoaderData, useNavigate, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
-import { Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField, Toast } from "@shopify/polaris";
-import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, MagicIcon, PlayCircleIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
+import { Box, Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField, Toast } from "@shopify/polaris";
+import { ChevronDownIcon, ChevronUpIcon, CodeIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, MagicIcon, PlayCircleIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
 import { SaveBar, TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
@@ -17,6 +17,7 @@ import catalogSeoStyles from "../styles/catalog-seo.css?url";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 import { buildCatalogUpdate, hasNewerVersion, type CatalogSnapshot } from "../catalog-save";
 import { sanitizeArticleHtml } from "../editor-html";
+import { AiButton, CheckItem, Pill, ScoreRing } from "../components/rm";
 import { clearDraft, draftDiffers, draftKey, readDraft, writeDraft, type EditorDraft } from "../editor-draft";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
@@ -617,7 +618,23 @@ function CatalogResourceEditor() {
         </Card>
       </BlockStack></main><aside className="bp-catalog-editor-sidebar"><BlockStack gap="400">
         <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
-        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="bodySm" tone="subdued">Every passed and failed check remains visible and updates while you edit.</Text></BlockStack><Badge tone={scoreTone(currentAudit.score)}>{`${currentAudit.score}/100`}</Badge></InlineStack><div className="bp-checklist-groups">{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</div></BlockStack></Card>
+        <Card padding="0">
+          <Box padding="400">
+            <InlineStack gap="400" blockAlign="center" wrap={false}>
+              <ScoreRing score={currentAudit.score} size={80} label={`SEO score ${currentAudit.score} out of 100`} />
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">SEO score</Text>
+                <Text as="p" variant="bodySm" tone="subdued">{currentAudit.issues.length ? `${currentAudit.issues.length} check${currentAudit.issues.length === 1 ? "" : "s"} need work · updates as you edit` : "Every check passes"}</Text>
+              </BlockStack>
+            </InlineStack>
+          </Box>
+          <div>{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</div>
+          {aiEnabled && aiIssueFields.length > 0 && (
+            <Box padding="400" borderBlockStartWidth="025" borderColor="border">
+              <AiButton fullWidth loading={aiLoadingTarget === "seo_issues"} disabled={Boolean(aiLoadingTarget) || aiQuotaExhausted} onClick={() => generateAiForFields("improve", aiIssueFields, "seo_issues", "Fix the current SEO issues while preserving accurate resource facts.")}>Fix with AI</AiButton>
+            </Box>
+          )}
+        </Card>
         <Card>
           <BlockStack gap="300">
             <div className="bp-icon-heading"><Icon source={ImageIcon} tone="info" /><Text as="h2" variant="headingMd">Image</Text></div>
@@ -1063,9 +1080,28 @@ function checklistGroups(issues: CatalogSeoIssue[], resource: CatalogResourceInp
 
 function dedupeRows(rows: ChecklistRow[]) { return rows.filter((row, index) => rows.findIndex((candidate) => candidate.label === row.label) === index); }
 function ChecklistGroup({ label, rows }: { label: string; rows: ChecklistRow[] }) {
-  const failures = rows.filter((row) => !row.passed).length;
+  const failures = rows.filter((row) => !row.passed);
+  const high = failures.filter((row) => row.impact === "High").length;
   const [open, setOpen] = useState(false);
-  return <div className="bp-checklist-group"><button type="button" className="bp-checklist-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}><InlineStack gap="200" blockAlign="center"><Text as="h3" fontWeight="semibold">{label}</Text><Badge tone={failures ? "warning" : "success"}>{failures ? `${failures} ${failures === 1 ? "issue" : "issues"}` : "All good"}</Badge></InlineStack><Icon source={open ? ChevronUpIcon : ChevronDownIcon} tone="subdued" /></button>{open && <div className="bp-checklist-rows">{rows.map((row) => <div className="bp-checklist-row" key={row.label}><Icon source={row.passed ? CheckCircleIcon : AlertTriangleIcon} tone={row.passed ? "success" : row.impact === "High" ? "critical" : "warning"} /><div><Text as="p" variant="bodySm" fontWeight={row.passed ? "regular" : "semibold"}>{row.label}</Text>{row.fix && <Text as="p" variant="bodySm" tone="subdued">{row.fix}</Text>}</div></div>)}</div>}</div>;
+  return (
+    <div style={{ borderTop: "1px solid var(--rm-line)" }}>
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} style={{ all: "unset", boxSizing: "border-box", width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", cursor: "pointer" }}>
+        <span style={{ flex: 1 }}><Text as="h3" fontWeight="semibold">{label}</Text></span>
+        {high ? <Pill tone="bad">{`${high} error${high === 1 ? "" : "s"}`}</Pill> : failures.length ? <Pill tone="warn">{`${failures.length} warning${failures.length === 1 ? "" : "s"}`}</Pill> : <Pill tone="good">All good</Pill>}
+        <Icon source={open ? ChevronUpIcon : ChevronDownIcon} tone="subdued" />
+      </button>
+      {open && (
+        <Box paddingInline="400" paddingBlockEnd="300">
+          {rows.map((row) => (
+            <CheckItem key={row.label} status={row.passed ? "pass" : row.impact === "High" ? "fail" : "warn"}>
+              <span style={{ fontWeight: row.passed ? 400 : 600 }}>{row.label}</span>
+              {row.fix && <span style={{ display: "block", color: "var(--rm-muted)", fontWeight: 400 }}>{row.fix}</span>}
+            </CheckItem>
+          ))}
+        </Box>
+      )}
+    </div>
+  );
 }
 
 function Detail({ label, value }: { label: string; value: string }) { return <InlineStack align="space-between" gap="300" wrap={false}><Text as="span" variant="bodySm" tone="subdued">{label}</Text><Text as="span" variant="bodySm" fontWeight="semibold" alignment="end">{value}</Text></InlineStack>; }
@@ -1092,7 +1128,6 @@ function videoEmbed(value: string) {
 }
 function shopifyGid(type: CatalogResourceType, id?: string) { if (!id || !/^\d+$/.test(id)) throw new Response("Not found", { status: 404 }); return `gid://shopify/${type === "product" ? "Product" : "Collection"}/${id}`; }
 function field(form: FormData, key: string, max: number) { return String(form.get(key) || "").trim().slice(0, max); }
-function scoreTone(score: number): "success" | "warning" | "critical" { return score >= 80 ? "success" : score >= 60 ? "warning" : "critical"; }
 function normalizeResource(node: any, type: CatalogResourceType): CatalogResourceInput { const image = type === "product" ? node.featuredMedia?.preview?.image || {} : node.image || {}; return { id: String(node.id), type, title: String(node.title || ""), handle: String(node.handle || ""), descriptionHtml: String(node.descriptionHtml || ""), updatedAt: String(node.updatedAt || ""), status: String(node.status || ""), seoTitle: String(node.seo?.title || ""), seoDescription: String(node.seo?.description || ""), imageUrl: String(image.url || ""), imageAlt: String(image.altText || ""), imageWidth: Number(image.width || 0), imageHeight: Number(image.height || 0), itemCount: type === "collection" ? Number(node.products?.nodes?.length || 0) : 0, mediaId: type === "product" ? String(node.featuredMedia?.id || "") : "", ...(type === "product" ? galleryAltCounts(node.media?.nodes) : {}) }; }
 function seoRecord(shop: string, audit: ReturnType<typeof auditCatalogResource>) { return { shop, resourceType: audit.type, resourceId: audit.id, title: audit.title, handle: audit.handle, status: audit.status, seoScore: audit.score, metaTitle: audit.seoTitle, metaDescription: audit.seoDescription, focusKeyword: audit.focusKeyword || "", imageUrl: audit.imageUrl, imageAlt: audit.imageAlt, issues: JSON.stringify(audit.issues), issueCount: audit.issues.length, contentHash: audit.contentHash, sourceUpdatedAt: new Date(), lastAnalyzedAt: new Date() }; }
 function parseSnapshot(value: string): CatalogSnapshot | null {

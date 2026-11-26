@@ -3,7 +3,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, IndexTable, InlineGrid, InlineStack, Select, Text } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, IndexTable, InlineStack, Select, Text } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { analyzeContentDecay } from "../content-decay";
 import type { ContentDecayReport, DecayArticle, DecayIssue, DecayProduct } from "../content-decay";
@@ -15,6 +15,7 @@ import { loadSearchConsoleView } from "../search-console-view.server";
 import { SearchConsoleCard } from "../components/SearchConsoleCard";
 import { ANALYTICS_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { AppPage } from "../components/AppPage";
+import { StatTile, StatTiles } from "../components/rm";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 const MAX_EXTERNAL_LINKS = 30;
@@ -115,12 +116,12 @@ export default function ContentDecayPage() {
       <Text as="h2" variant="headingLg">Content decay</Text>
       {response?.error && <Banner tone="critical"><p>{response.error}</p></Banner>}
       {!report ? <Card><EmptyState heading="Check your content health" action={{ content: "Analyze content", onAction: run, loading: analyzing }} image={EMPTY_IMAGE}><p>The analysis is read-only and saved per shop. It never changes an article automatically.</p></EmptyState></Card> : <>
-        <InlineGrid columns={{ xs: 2, md: 4 }} gap="400">
-          <SummaryCard label="Articles checked" value={report.articlesAnalyzed} tone="info" />
-          <SummaryCard label="High priority" value={report.issues.filter((item) => item.severity === "high").length} tone="critical" />
-          <SummaryCard label="Needs review" value={report.issues.length} tone={report.issues.length ? "warning" : "success"} />
-          <SummaryCard label="Links checked" value={report.externalLinksChecked} tone="info" />
-        </InlineGrid>
+        <StatTiles>
+          <StatTile label="Articles checked" value={report.articlesAnalyzed} />
+          <StatTile label="High priority" value={report.issues.filter((item) => item.severity === "high").length} tone={report.issues.some((item) => item.severity === "high") ? "bad" : "good"} />
+          <StatTile label="Needs review" value={report.issues.length} tone={report.issues.length ? "warn" : "good"} />
+          <StatTile label="Links checked" value={report.externalLinksChecked} tone="brand" />
+        </StatTiles>
         {!report.searchDataAvailable && <Banner tone="info" title="Search performance checks are waiting"><p>Connect and sync Google Search Console in Settings → Integrations to detect click and CTR decline.</p></Banner>}
         {!report.schemaEnabled && <Banner tone="warning" title="Article schema is disabled"><p>Enable Blog schema in Settings before relying on structured data for Shopify articles. <Button size="micro" url="/app/settings">Open settings</Button></p></Banner>}
         {!report.inventoryDataAvailable && <Banner tone="info" title="Inventory-level checks are limited"><p>The current Shopify installation does not provide inventory quantities. Deleted and inactive products are still checked; out-of-stock checks will run only when inventory access is available.</p></Banner>}
@@ -143,9 +144,6 @@ export default function ContentDecayPage() {
   </AppPage>;
 }
 
-function SummaryCard({ label, value, tone }: { label: string; value: number; tone: "info" | "critical" | "warning" | "success" }) {
-  return <Card><BlockStack gap="150"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><InlineStack align="space-between" blockAlign="center"><Text as="p" variant="heading2xl" fontWeight="bold">{value}</Text><Badge tone={tone}>{value ? "Measured" : "Clear"}</Badge></InlineStack></BlockStack></Card>;
-}
 
 function IssueRow({ issue, index }: { issue: DecayIssue; index: number }) {
   const showDetail = issue.detail && issue.type !== "broken_outbound" && issue.type !== "unavailable_product";

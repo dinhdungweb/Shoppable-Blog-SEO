@@ -3,8 +3,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useNavigation, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, IndexTable, InlineGrid, InlineStack, Modal, Text, Thumbnail, useIndexResourceState, ChoiceList, IndexFilters, useSetIndexFiltersMode } from "@shopify/polaris";
-import { AlertTriangleIcon, CheckCircleIcon, CollectionIcon, NoteIcon, ProductIcon } from "@shopify/polaris-icons";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, IndexTable, InlineStack, Modal, Text, Thumbnail, useIndexResourceState, ChoiceList, IndexFilters, useSetIndexFiltersMode } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
@@ -13,7 +12,9 @@ import catalogSeoStyles from "../styles/catalog-seo.css?url";
 import { CATALOG_BULK_ISSUES } from "../catalog-bulk";
 import { CATALOG_WORKSPACE_TABS, SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { IssueScopeSwitcher } from "../components/IssueScopeSwitcher";
-import { AppPage, ScoreBadge } from "../components/AppPage";
+import { AppPage } from "../components/AppPage";
+import { ActionRow, ActionRows, AiButton, DotScore, Pill, StatTile, StatTiles, impactTone } from "../components/rm";
+import { AlertTriangleIcon, XCircleIcon } from "@shopify/polaris-icons";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 
@@ -176,13 +177,36 @@ export default function CatalogSeoPage() {
       {isScanning && <Banner tone="info" title={data.job?.phase || "SEO scan queued"}><p>Products and collections are scanned in the background. This page updates automatically.</p></Banner>}
       {data.job?.status === "failed" && <Banner tone="critical" title="SEO scan failed"><p>The background scan could not be completed. Check the SEO worker log and run the scan again.</p></Banner>}
       {!data.total && !isScanning && <Banner tone="info" title={`No saved ${typeLabel.toLowerCase()} report`}><p>Run an SEO scan to analyze Shopify {typeLabel.toLowerCase()}.</p></Banner>}
-      <InlineGrid columns={{ xs: 1, sm: 2, md: data.view === "manager" ? 4 : 3 }} gap="300">
-        {data.view === "manager" && <StatCard label="Average score" value={`${data.averageScore}/100`} icon={CheckCircleIcon} tone={data.averageScore >= 80 ? "success" : "warning"} />}
-        <StatCard label="Resources scanned" value={String(data.total)} icon={data.resourceType === "product" ? ProductIcon : data.resourceType === "page" ? NoteIcon : CollectionIcon} tone="info" />
-        <StatCard label="Need attention" value={String(data.needsAttention)} icon={AlertTriangleIcon} tone={data.needsAttention ? "critical" : "success"} />
-        <StatCard label="Total issues" value={String(data.totalIssues)} icon={AlertTriangleIcon} tone={data.totalIssues ? "warning" : "success"} />
-      </InlineGrid>
-      {data.view === "issues" && <Card padding="0"><Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO issue report</Text><Text as="p" variant="bodySm" tone="subdued">Issues are grouped so you can fix the highest-impact patterns first.</Text></BlockStack></Box><IndexTable resourceName={{ singular: "issue", plural: "issues" }} itemCount={data.issueGroups.length} selectable={false} headings={[{ title: "Issue" }, { title: "Affected" }, { title: "Impact" }, { title: "Effort" }, { title: "Suggested fix" }, { title: "Action" }]}>{data.issueGroups.map((issue, index) => <IndexTable.Row id={issue.type} key={issue.type} position={index}><IndexTable.Cell><Text as="span" fontWeight="semibold">{issue.label}</Text></IndexTable.Cell><IndexTable.Cell>{issue.count}</IndexTable.Cell><IndexTable.Cell><Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>{issue.impact}</Badge></IndexTable.Cell><IndexTable.Cell><Badge>{issue.effort}</Badge></IndexTable.Cell><IndexTable.Cell><div className="bp-catalog-fix-copy"><Text as="span" variant="bodySm">{issue.fix}</Text></div></IndexTable.Cell><IndexTable.Cell><InlineStack gap="150" wrap={false}>{bulkFilterFor(issue.type) && data.resourceType !== "page" && <Button size="micro" variant="primary" url={`/app/optimize/catalog?type=${data.resourceType}&filter=${bulkFilterFor(issue.type)}`}>Fix in bulk</Button>}<Button size="micro" onClick={() => setReviewIssue(issue)}>Review</Button></InlineStack></IndexTable.Cell></IndexTable.Row>)}</IndexTable>{!data.issueGroups.length && <Box padding="500"><Banner tone="success" title="No SEO issues found"><p>Run a scan after Shopify content changes to refresh this report.</p></Banner></Box>}</Card>}
+      <StatTiles>
+        {data.view === "manager" && <StatTile label="Average score" value={data.total ? data.averageScore : "–"} tone={!data.total ? "plain" : data.averageScore >= 80 ? "good" : data.averageScore >= 50 ? "warn" : "bad"} hint={data.total ? "out of 100" : "Not scanned"} />}
+        <StatTile label={`${typeLabel} scanned`} value={data.total} />
+        <StatTile label="Need attention" value={data.needsAttention} tone={data.needsAttention ? "warn" : "good"} />
+        <StatTile label="Total issues" value={data.totalIssues} tone={data.totalIssues ? "bad" : "good"} />
+      </StatTiles>
+      {data.view === "issues" && <Card padding="0">
+        <Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">{`${typeLabel} checks`}</Text><Text as="p" variant="bodySm" tone="subdued">Grouped by problem, highest impact first.</Text></BlockStack></Box>
+        {data.issueGroups.length ? (
+          <ActionRows>
+            {data.issueGroups.map((issue) => (
+              <ActionRow
+                key={issue.type}
+                icon={issue.impact === "High" ? XCircleIcon : AlertTriangleIcon}
+                iconTone={issue.impact === "High" ? "bad" : "warn"}
+                title={issue.label}
+                text={issue.fix}
+                meta={`${issue.count} affected${issue.affected.length ? ` · ${issue.affected.slice(0, 2).map((item) => item.title).join(", ")}` : ""}`}
+                aside={<>
+                  <Pill tone={impactTone(issue.impact)}>{issue.impact}</Pill>
+                  {bulkFilterFor(issue.type) && data.resourceType !== "page" && <AiButton url={`/app/optimize/catalog?type=${data.resourceType}&filter=${bulkFilterFor(issue.type)}`}>Fix in bulk</AiButton>}
+                  <Button size="slim" onClick={() => setReviewIssue(issue)}>Review</Button>
+                </>}
+              />
+            ))}
+          </ActionRows>
+        ) : (
+          <Box padding="400" paddingBlockStart="0"><Banner tone="success" title="No SEO issues found"><p>Run a scan after Shopify content changes to refresh this report.</p></Banner></Box>
+        )}
+      </Card>}
       {data.view === "manager" && <Card padding="0">
         <IndexFilters
           tabs={[
@@ -219,7 +243,7 @@ export default function CatalogSeoPage() {
         <IndexTable resourceName={{ singular: data.resourceType, plural: typeLabel.toLowerCase() }} itemCount={data.rows.length} selectable={bulkSelectable} selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length} onSelectionChange={handleSelectionChange} promotedBulkActions={bulkActions} pagination={data.totalPages > 1 ? { hasPrevious: data.page > 1, onPrevious: () => goToList({ page: data.page - 1 }), hasNext: data.page < data.totalPages, onNext: () => goToList({ page: data.page + 1 }), label: `Page ${data.page} of ${data.totalPages} · ${data.filteredTotal} ${typeLabel.toLowerCase()}, lowest score first` } : undefined} headings={[{ title: typeLabel.slice(0, -1) }, { title: "SEO details" }, { title: "Status" }]}>
           {data.rows.map((row, index) => <IndexTable.Row id={row.id} key={row.id} position={index} selected={selectedResources.includes(row.id)} onClick={() => navigate(row.editorUrl)}>
             <IndexTable.Cell><InlineStack gap="300" blockAlign="center" wrap={false}><Thumbnail source={row.imageUrl || PLACEHOLDER_IMAGE} alt={row.imageAlt || row.title} size="small" /><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.title}</Text><Text as="span" variant="bodySm" tone="subdued">{resourcePath(data.resourceType, row.handle)}</Text></BlockStack></InlineStack></IndexTable.Cell>
-            <IndexTable.Cell><BlockStack gap="050"><div><ScoreBadge score={row.score} /></div><Text as="span" variant="bodySm" tone="subdued">{row.issues.length ? `${row.issues[0].label}${row.issues.length > 1 ? ` · +${row.issues.length - 1} more` : ""}` : "No issues"}</Text></BlockStack></IndexTable.Cell>
+            <IndexTable.Cell><InlineStack gap="200" blockAlign="center" wrap={false}><DotScore score={row.score} /><Text as="span" variant="bodySm" tone="subdued">{row.issues.length ? `${row.issues[0].label}${row.issues.length > 1 ? ` · +${row.issues.length - 1} more` : ""}` : "No issues"}</Text></InlineStack></IndexTable.Cell>
             <IndexTable.Cell>{row.status ? <Badge tone={row.status === "ACTIVE" ? "success" : undefined}>{row.status}</Badge> : <Text as="span" tone="subdued">—</Text>}</IndexTable.Cell>
           </IndexTable.Row>)}
         </IndexTable>
@@ -229,9 +253,6 @@ export default function CatalogSeoPage() {
   </AppPage>;
 }
 
-function StatCard({ label, value, icon, tone }: { label: string; value: string; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; tone: "success" | "warning" | "critical" | "info" }) {
-  return <Card><BlockStack gap="200"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><div className="bp-catalog-stat-value"><Text as="p" variant="headingXl" fontWeight="bold">{value}</Text><Icon source={icon} tone={tone === "info" ? "info" : tone} /></div></BlockStack></Card>;
-}
 
 function parseIssues(value: string | null): CatalogSeoIssue[] {
   try { const parsed = JSON.parse(value || "[]"); return Array.isArray(parsed) ? parsed : []; } catch { return []; }

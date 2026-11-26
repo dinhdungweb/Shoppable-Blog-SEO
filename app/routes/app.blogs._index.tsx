@@ -15,6 +15,7 @@ import {
   Modal,
   Text,
   BlockStack,
+  InlineStack,
   IndexTable,
   useIndexResourceState,
   Box,
@@ -30,7 +31,8 @@ import { CONTENT_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { analyticsWindow, formatMoney, groupRows } from "../analytics-core";
 import { canonicalArticleId, getShopLocale, loadLinkedProducts, priceLookup } from "../analytics.server";
 import { convertLegacyMarkers } from "../content-markers.server";
-import { AppPage, ScoreBadge } from "../components/AppPage";
+import { AppPage } from "../components/AppPage";
+import { DotScore, StatTile, StatTiles } from "../components/rm";
 
 const BLOG_MANAGER_PAGE_SIZE = 20;
 const METRICS_WINDOW_DAYS = 30;
@@ -251,6 +253,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     articles,
     blogs: blogs.map((blog) => ({ id: blog.id, title: blog.title, handle: blog.handle })),
+    summary: {
+      scanned: dataTabs.scanned.length,
+      averageScore: dataTabs.scanned.length ? Math.round(dataTabs.scanned.reduce((sum, row) => sum + row.seoScore, 0) / dataTabs.scanned.length) : null,
+      readers: articles.reduce((sum, article) => sum + article.readers, 0),
+    },
     tabCounts: {
       needsSeo: dataTabs.lists.needs_seo.length,
       noProducts: dataTabs.lists.no_products.length,
@@ -464,7 +471,7 @@ const POST_SORT_OPTIONS: Array<{ label: string; value: `${string} ${"asc" | "des
 ];
 
 export default function BlogManager() {
-  const { articles, blogs, tabCounts, filters, pagination, canBulkReview, currency, metricsWindowDays, markersMigrated, error } = useLoaderData<typeof loader>();
+  const { articles, blogs, summary, tabCounts, filters, pagination, canBulkReview, currency, metricsWindowDays, markersMigrated, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<ActionResult>();
   const markerFetcher = useFetcher<ActionResult>();
   const navigate = useNavigate();
@@ -573,6 +580,13 @@ export default function BlogManager() {
         )}
         {markerResult?.done && <Banner tone="success" title={`Placeholders updated in ${markerResult.converted} post(s).`} />}
 
+        <StatTiles>
+          <StatTile label="Posts scanned" value={summary.scanned} hint="Run a scan to include new posts" />
+          <StatTile label="Average SEO score" value={summary.averageScore === null ? "–" : summary.averageScore} tone={summary.averageScore === null ? "plain" : summary.averageScore >= 80 ? "good" : summary.averageScore >= 50 ? "warn" : "bad"} />
+          <StatTile label="Need SEO work" value={tabCounts.needsSeo} hint={`Score below ${NEEDS_SEO_BELOW}`} />
+          <StatTile label="Without products" value={tabCounts.noProducts} hint="Readers have nothing to buy" />
+        </StatTiles>
+
         {bulkFailures.length > 0 && (
           <Banner tone="warning" title="Some posts could not be changed">
             {bulkFailures.slice(0, 5).map((failure) => typeof failure === "string" ? <p key={failure}>{failure}</p> : <p key={failure.id}>{articles.find((article) => article.id === failure.id)?.title || failure.id}: {failure.error}</p>)}
@@ -679,10 +693,10 @@ export default function BlogManager() {
                   </IndexTable.Cell>
                   <IndexTable.Cell>{post.publishedAt ? <Badge tone="success">Published</Badge> : <Badge tone="attention">Draft</Badge>}</IndexTable.Cell>
                   <IndexTable.Cell>
-                    <BlockStack gap="050">
-                      <div><ScoreBadge score={post.seoScore} /></div>
-                      <Text as="span" variant="bodySm" tone="subdued">{post.focusKeyword ? `Keyword: ${post.focusKeyword}` : 'No focus keyword'}</Text>
-                    </BlockStack>
+                    <InlineStack gap="200" blockAlign="center" wrap={false}>
+                      <DotScore score={post.seoScore} />
+                      <Text as="span" variant="bodySm" tone={post.focusKeyword ? undefined : "subdued"}>{post.focusKeyword || (post.seoScore === null ? "Not scanned" : "No focus keyword")}</Text>
+                    </InlineStack>
                   </IndexTable.Cell>
                   <IndexTable.Cell><Text as="span" variant="bodyMd">{post.productCount}</Text></IndexTable.Cell>
                   <IndexTable.Cell><Text as="span" alignment="end" numeric>{post.readers.toLocaleString()}</Text></IndexTable.Cell>

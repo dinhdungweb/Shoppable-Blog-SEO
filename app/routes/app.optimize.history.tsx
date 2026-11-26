@@ -3,20 +3,18 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
-  Badge,
   Banner,
   Button,
   Card,
   EmptyState,
-  IndexTable,
-  InlineStack,
-  Text,
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { AppPage } from "../components/AppPage";
+import { ActionRow, ActionRows, GroupLabel, Pill } from "../components/rm";
+import { CheckIcon, UndoIcon } from "@shopify/polaris-icons";
 
 const PER_TOOL = 30;
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
@@ -163,40 +161,45 @@ export default function ChangeHistory() {
           </Card>
         ) : (
           <Card padding="0">
-            <IndexTable
-              resourceName={{ singular: "change", plural: "changes" }}
-              itemCount={changes.length}
-              selectable={false}
-              headings={[{ title: "Applied" }, { title: "Tool" }, { title: "Item" }, { title: "Change" }, { title: "Status" }, { title: "" }]}
-            >
-              {changes.map((change, index) => (
-                <IndexTable.Row id={`${change.kind}-${change.id}`} key={`${change.kind}-${change.id}`} position={index}>
-                  <IndexTable.Cell><Text as="span" variant="bodySm">{new Date(change.appliedAt).toLocaleString()}</Text></IndexTable.Cell>
-                  <IndexTable.Cell><Badge>{TOOL_META[change.kind].label}</Badge></IndexTable.Cell>
-                  <IndexTable.Cell><Text as="span" fontWeight="semibold">{change.subject}</Text></IndexTable.Cell>
-                  <IndexTable.Cell><Text as="span" variant="bodySm">{change.summary}</Text></IndexTable.Cell>
-                  <IndexTable.Cell>
-                    {change.status === "applied"
-                      ? <Badge tone="success">Applied</Badge>
-                      : <Badge>{change.undoneAt ? `Undone ${new Date(change.undoneAt).toLocaleDateString()}` : "Undone"}</Badge>}
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <InlineStack align="end">
-                      <Button
-                        size="micro"
-                        disabled={change.status !== "applied" || (fetcher.state !== "idle" && pendingId !== change.id)}
-                        loading={pendingId === change.id}
-                        onClick={() => undo(change.kind, change.id)}
-                      >
-                        Undo
-                      </Button>
-                    </InlineStack>
-                  </IndexTable.Cell>
-                </IndexTable.Row>
-              ))}
-            </IndexTable>
+            {groupByDay(changes).map(([day, items]) => (
+              <div key={day}>
+                <GroupLabel>{day}</GroupLabel>
+                <ActionRows>
+                  {items.map((change) => (
+                    <ActionRow
+                      key={`${change.kind}-${change.id}`}
+                      icon={change.status === "applied" ? CheckIcon : UndoIcon}
+                      iconTone={change.status === "applied" ? "brand" : "plain"}
+                      title={change.subject}
+                      text={`${change.summary} · ${TOOL_META[change.kind].label}`}
+                      aside={<>
+                        {change.status === "applied"
+                          ? <Pill tone="good">{`Applied ${new Date(change.appliedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}</Pill>
+                          : <Pill>{change.undoneAt ? `Undone ${new Date(change.undoneAt).toLocaleDateString()}` : "Undone"}</Pill>}
+                        {change.status === "applied" && (
+                          <Button size="slim" disabled={fetcher.state !== "idle" && pendingId !== change.id} loading={pendingId === change.id} onClick={() => undo(change.kind, change.id)}>Undo</Button>
+                        )}
+                      </>}
+                    />
+                  ))}
+                </ActionRows>
+              </div>
+            ))}
           </Card>
         )}
     </AppPage>
   );
+}
+
+/** Changes grouped by the day they were applied, newest first ("Today", "Yesterday", then dates). */
+function groupByDay<T extends { appliedAt: string }>(items: T[]): Array<[string, T[]]> {
+  const groups = new Map<string, T[]>();
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86_400_000);
+  for (const item of items) {
+    const date = new Date(item.appliedAt);
+    const label = date.toDateString() === today.toDateString() ? "Today" : date.toDateString() === yesterday.toDateString() ? "Yesterday" : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    groups.set(label, [...(groups.get(label) || []), item]);
+  }
+  return [...groups];
 }

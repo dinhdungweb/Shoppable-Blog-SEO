@@ -11,6 +11,7 @@ import { generateAiSeoSuggestion, isNineRouterConfigured } from "../ai-seo.serve
 import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-router.server";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 import { DEFAULT_META_DESCRIPTION_TEMPLATE, DEFAULT_META_TITLE_TEMPLATE, renderMetaTemplate } from "../ai-writing-rules";
+import { Steps } from "../components/rm";
 
 type ArticleData = { id: string; title: string; metaTitle: string; metaDescription: string; imageUrl: string; imageAlt: string; suggestedMetaTitle: string; suggestedMetaDescription: string; suggestedImageAlt: string };
 type UpdateItem = { id: string; metaTitle: string; metaDescription: string; imageAlt: string };
@@ -156,6 +157,7 @@ export default function BulkSeoEdit() {
   return <Page backAction={{ content: "Meta tags", onAction: () => navigate("/app/optimize") }} title="Review meta tags" subtitle={`${items.length} selected posts · Step 2 of 2: generate, review and apply`} primaryAction={{ content: `Preview ${changed.length} changes`, onAction: () => setPreview(true), disabled: !changed.length }}>
     <TitleBar title="Review meta tags" />
     <Layout><Layout.Section><BlockStack gap="400">
+      <Steps active={1} steps={[{ title: "Select", text: "Pick up to 50 posts" }, { title: "Generate & review", text: "AI drafts, you edit" }, { title: "Apply", text: "Saved to Shopify, undo anytime" }]} />
       {error && <Banner tone="critical"><p>{error}</p></Banner>}
       {aiError && <Banner tone="critical" title="AI suggestions unavailable"><p>{aiError}</p></Banner>}
       {aiWarning && <Banner tone="warning"><p>{aiWarning}</p></Banner>}

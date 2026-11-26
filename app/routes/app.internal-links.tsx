@@ -14,9 +14,10 @@ import { getPublicNineRouterErrorMessage, enterAiWritingRules } from "../nine-ro
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { fetchShopDomains } from "../shopify-domains.server";
-import { SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
+import { BULK_FIX_CHIPS, SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { loadShopAiWritingRules } from "../ai-writing-rules.server";
 import { AppPage } from "../components/AppPage";
+import { StatTile } from "../components/rm";
 
 const EMPTY_IMAGE = "https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png";
 
@@ -357,7 +358,7 @@ export default function InternalLinksPage() {
 
   if (!initialData.canInternalLinking) {
     return (
-      <AppPage title="Internal links" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "links" }}>
+      <AppPage title="Internal links" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "bulk" }} subnav={{ items: BULK_FIX_CHIPS, active: "links", label: "Bulk fix" }}>
           <Card>
             <EmptyState
               heading="Internal Linking Assistant is a Pro feature"
@@ -376,7 +377,7 @@ export default function InternalLinksPage() {
       title="Internal links"
       subtitle="Find related content, verify relevance and anchors with AI, then review every change before applying it."
       fullWidth
-      tabs={{ items: SEO_WORKSPACE_TABS, activeId: "links" }}
+      tabs={{ items: SEO_WORKSPACE_TABS, activeId: "bulk" }} subnav={{ items: BULK_FIX_CHIPS, active: "links", label: "Bulk fix" }}
       primaryAction={{ content: report ? "Refresh analysis" : "Analyze links", onAction: runAnalysis, loading: analyzing, disabled: generatingAi }}
       secondaryActions={report ? [{ content: initialData.aiEnabled ? "Review with AI" : "AI not configured", onAction: runAiReview, loading: generatingAi, disabled: !initialData.aiEnabled || analyzing }] : []}
     >
@@ -504,8 +505,7 @@ export default function InternalLinksPage() {
 }
 
 function SummaryCard({ label, value, tone }: { label: string; value: number; tone: "info" | "success" | "critical" }) {
-  const status = label === "Articles analyzed" || label === "Internal links" ? "Measured" : value ? "Needs review" : "Clear";
-  return <Card><BlockStack gap="150"><Text as="p" variant="bodySm" tone="subdued">{label}</Text><InlineStack align="space-between" blockAlign="center"><Text as="p" variant="heading2xl" fontWeight="bold">{value}</Text><Badge tone={tone}>{status}</Badge></InlineStack></BlockStack></Card>;
+  return <StatTile label={label} value={value} tone={tone === "info" ? "plain" : tone === "success" ? (label === "Internal links" ? "brand" : "good") : "bad"} hint={tone === "critical" ? "Needs review" : undefined} />;
 }
 
 function Overview({ report, analyzedAt, onSelectTab }: { report: InternalLinkReport; analyzedAt: string | null; onSelectTab: (tab: number) => void }) {

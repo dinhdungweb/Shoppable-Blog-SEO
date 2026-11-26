@@ -10,6 +10,21 @@ export type ChangelogRelease = {
 // Keep newest releases first. This is the single source used by the merchant-facing changelog.
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: "2026.11.27",
+    date: "2026-11-27",
+    title: "A fresh new look",
+    summary: "Score rings, color-coded checks and clearer layouts across the app, so you can see at a glance what is good and what needs work.",
+    tags: ["Improved", "Fixed"],
+    changes: [
+      { type: "Improved", text: "Dashboard shows your store score as a ring, failed checks, warnings and quick wins at a glance, your next setup step, ranked next best actions, revenue from content and compact module cards." },
+      { type: "Improved", text: "SEO Analyzer groups checks by category with a clear status for each, and has four sections: Checks, Bulk fixes, Site speed and Change history." },
+      { type: "Improved", text: "Post, product and collection editors show the SEO score as a ring with a pass/fail checklist and a Fix all with AI button." },
+      { type: "Improved", text: "Lists show a score circle for every post and product, bulk tools show the select → review → apply steps, and Settings is a grid of sections." },
+      { type: "Fixed", text: "Impact and effort badges and suggested fixes no longer appear empty for posts scanned by older versions." },
+      { type: "Fixed", text: "Settings arrows line up, and the post and product editors use the full page width instead of a narrow centered column." },
+    ],
+  },
+  {
     version: "2026.11.26",
     date: "2026-11-26",
     title: "A simpler, more consistent app",

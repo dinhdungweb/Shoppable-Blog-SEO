@@ -1,4 +1,7 @@
-import { Badge, BlockStack, Button, Card, Checkbox, InlineGrid, InlineStack, Text } from "@shopify/polaris";
+import { useState } from "react";
+import { Button, Checkbox, Link } from "@shopify/polaris";
+import type { IconSource } from "@shopify/polaris";
+import { Chips, IconTile, type Tone } from "./rm";
 
 export type ModuleStatus = "active" | "off" | "setup" | "locked" | "checking";
 
@@ -7,6 +10,8 @@ export type AppModule = {
   title: string;
   description: string;
   status: ModuleStatus;
+  icon: IconSource;
+  tone: Tone;
   /** Plan needed when locked, e.g. "Pro". */
   requiredPlan?: string;
   /** Detail under the description, e.g. "12 of 25 AI generations used". */
@@ -16,51 +21,49 @@ export type AppModule = {
   toggle?: { checked: boolean; pending?: boolean; onChange: (checked: boolean) => void };
 };
 
-const STATUS: Record<ModuleStatus, { label: string; tone?: "success" | "attention" | "info" }> = {
-  active: { label: "Active", tone: "success" },
-  off: { label: "Off" },
-  setup: { label: "Needs setup", tone: "attention" },
-  locked: { label: "Upgrade", tone: "info" },
-  checking: { label: "Checking…" },
-};
-
 /** Dashboard › Modules: every feature in one place, with its status and a way in. */
 export function ModuleGrid({ modules, planKey }: { modules: AppModule[]; planKey: string }) {
+  const [filter, setFilter] = useState<"all" | "active" | "locked">("all");
+  const active = modules.filter((module) => module.status === "active").length;
+  const locked = modules.filter((module) => module.status === "locked").length;
+  const visible = modules.filter((module) => filter === "all" || (filter === "active" ? module.status === "active" : module.status === "locked"));
+
   return (
-    <InlineGrid columns={{ xs: 1, sm: 2, lg: 3 }} gap="300">
-      {modules.map((module) => {
-        const status = STATUS[module.status];
-        const locked = module.status === "locked";
-        return (
-          <Card key={module.id}>
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center" wrap={false} gap="200">
-                <Text as="h3" variant="headingSm">{module.title}</Text>
-                <Badge tone={status.tone}>{locked && module.requiredPlan ? module.requiredPlan : status.label}</Badge>
-              </InlineStack>
-              <Text as="p" variant="bodySm" tone="subdued">{module.description}</Text>
-              {module.detail && <Text as="p" variant="bodySm">{module.detail}</Text>}
-              <InlineStack align="space-between" blockAlign="center" gap="200">
-                {module.toggle && !locked ? (
-                  <Checkbox
-                    label="Enabled"
-                    checked={module.toggle.checked}
-                    disabled={module.toggle.pending}
-                    onChange={module.toggle.onChange}
-                  />
-                ) : <span />}
-                {locked ? (
-                  <Button url={`/app/pricing?reason=${encodeURIComponent(module.id)}&plan=${planKey}`}>See plans</Button>
-                ) : (
-                  <Button url={module.url} variant={module.status === "setup" ? "primary" : undefined}>
-                    {module.status === "setup" ? "Set up" : "Open"}
-                  </Button>
-                )}
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        );
-      })}
-    </InlineGrid>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <Chips
+        label="Filter modules"
+        active={filter}
+        items={[
+          { id: "all", label: "All", count: modules.length, onClick: () => setFilter("all") },
+          { id: "active", label: "Active", count: active, onClick: () => setFilter("active") },
+          ...(locked ? [{ id: "locked", label: "Locked", count: locked, onClick: () => setFilter("locked") }] : []),
+        ]}
+      />
+      <div className="rm-modules">
+        {visible.map((module) => {
+          const isLocked = module.status === "locked";
+          return (
+            <div key={module.id} className={`rm-module${isLocked ? " rm-module--locked" : ""}`}>
+              <IconTile icon={module.icon} tone={isLocked ? "plain" : module.tone} />
+              <div className="rm-module__body">
+                <div className="rm-module__title">{module.title}</div>
+                <div className="rm-module__text">
+                  {isLocked ? `${module.requiredPlan} plan` : module.status === "setup" ? "Needs setup" : module.status === "checking" ? "Checking…" : module.detail || module.description}
+                </div>
+              </div>
+              {isLocked ? (
+                <Link url={`/app/pricing?reason=${encodeURIComponent(module.id)}&plan=${planKey}`} removeUnderline>Upgrade</Link>
+              ) : module.toggle ? (
+                <Checkbox label={`${module.title} enabled`} labelHidden checked={module.toggle.checked} disabled={module.toggle.pending} onChange={module.toggle.onChange} />
+              ) : module.status === "setup" ? (
+                <Button size="slim" variant="primary" url={module.url}>Set up</Button>
+              ) : (
+                <Button size="slim" variant="tertiary" url={module.url}>Open</Button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
