@@ -10,6 +10,7 @@ import {
   Card,
   EmptyState,
   IndexTable,
+  ProgressBar,
   InlineGrid,
   InlineStack,
   Select,
@@ -201,9 +202,7 @@ export default function Insights() {
                     <Text as="span" variant="bodySm">{channel.name}</Text>
                     <Text as="span" variant="bodySm" fontWeight="semibold">{formatNumber(channel.sessions)} · {formatPercent(channel.percent)}</Text>
                   </InlineStack>
-                  <div style={{ height: 6, borderRadius: 3, background: "var(--p-color-bg-surface-secondary)" }}>
-                    <div style={{ width: `${channel.percent}%`, height: 6, borderRadius: 3, background: "#2C6ECB" }} />
-                  </div>
+                  <ProgressBar progress={Math.min(100, channel.percent)} size="small" />
                 </BlockStack>
               )) : <Text as="p" tone="subdued">No sessions yet.</Text>}
               <Text as="p" variant="bodySm" tone="subdued">Sessions by the site that sent the reader to the post. Orders keep the source of the reading session.</Text>

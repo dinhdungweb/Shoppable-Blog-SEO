@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, isRouteErrorResponse, useActionData, useBlocker, useFetcher, useLoaderData, useNavigate, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
-import { ActionList, Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Popover, Select, Text, TextField, Toast } from "@shopify/polaris";
-import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, CollectionIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, MagicIcon, PlayCircleIcon, ProductIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
+import { Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField, Toast } from "@shopify/polaris";
+import { AlertTriangleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon, CodeIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, MagicIcon, PlayCircleIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
 import { SaveBar, TitleBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
@@ -241,7 +241,6 @@ function CatalogResourceEditor() {
   const [imageAlt, setImageAlt] = useState(resource.imageAlt);
   const [pendingLink, setPendingLink] = useState<LinkSuggestion | null>(null);
   const [linkAnchor, setLinkAnchor] = useState("");
-  const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [aiComposeOpen, setAiComposeOpen] = useState(false);
   const [aiReviewOpen, setAiReviewOpen] = useState(false);
   const [aiMode, setAiMode] = useState<AiCatalogMode>(resource.descriptionHtml.trim() ? "improve" : "write");
@@ -441,8 +440,44 @@ function CatalogResourceEditor() {
   const groups = checklistGroups(currentAudit.issues, { ...resource, title, descriptionHtml, seoTitle, seoDescription, handle, imageAlt, focusKeyword });
   const linkSuggestions = useMemo(() => canInternalLinking ? suggestInternalLinksForDraft({ id: resource.id, title, handle, blogHandle: resource.type === "product" ? "products" : "collections", body: descriptionHtml }, linkTargets.map((item) => ({ id: item.articleId, title: item.articleTitle, handle: item.articleHandle, blogHandle: item.blogHandle, body: "" })), 8) : [], [canInternalLinking, descriptionHtml, handle, linkTargets, resource.id, resource.type, title]);
   const aiQuotaExhausted = currentAiUsage.limited && currentAiUsage.remaining === 0;
-  return <Frame><Page fullWidth backAction={{ content: "Catalog", url: `/app/catalog-seo?view=manager&type=${resource.type}` }}>
-    <TitleBar title={`Edit ${typeLabel.toLowerCase()}`}><button variant="primary" type="submit" form="catalog-resource-form" disabled={!dirty}>Save changes</button></TitleBar>
+  const pageTitle = title || resource.title;
+  return <Frame><Page
+    fullWidth
+    backAction={{ content: "Products & collections", url: `/app/catalog-seo?view=manager&type=${resource.type}` }}
+    title={pageTitle}
+    titleMetadata={
+      <InlineStack gap="100" blockAlign="center">
+        <Badge>{typeLabel}</Badge>
+        {resource.type === "product" && details.status && <Badge tone={details.status === "ACTIVE" ? "success" : undefined}>{details.status.charAt(0) + details.status.slice(1).toLowerCase()}</Badge>}
+        {currentAiUsage.limited && <Badge tone={aiQuotaExhausted ? "critical" : "info"}>{`${currentAiUsage.remaining}/${currentAiUsage.limit} AI left`}</Badge>}
+      </InlineStack>
+    }
+    subtitle={[
+      resource.type === "collection" ? `${details.itemCount} products` : "",
+      `${wordCount} words in description`,
+      savedAt ? `Last analyzed ${new Date(savedAt).toLocaleString()}` : "Not analyzed yet",
+    ].filter(Boolean).join(" · ")}
+    primaryAction={{ content: "Save", onAction: () => submitForm(false), disabled: !dirty, loading: navigation.state === "submitting" }}
+    secondaryActions={[
+      { content: `Open in Shopify`, url: adminUrl, target: "_blank" },
+      ...(!aiEnabled
+        ? [{ content: "AI not configured", disabled: true }]
+        : aiQuotaExhausted
+          ? [{ content: "Upgrade AI", onAction: () => navigate("/app/pricing?reason=ai_limit") }]
+          : []),
+    ]}
+    actionGroups={aiEnabled && !aiQuotaExhausted ? [{
+      title: "AI Copilot",
+      icon: MagicIcon,
+      actions: [
+        { content: "Write or rewrite content", disabled: Boolean(aiLoadingTarget), onAction: () => { setAiMode(descriptionHtml.trim() ? "improve" : "write"); setAiError(""); setAiComposeOpen(true); } },
+        { content: "Fix SEO issues", disabled: aiIssueFields.length === 0 || Boolean(aiLoadingTarget), onAction: () => generateAiForFields("improve", aiIssueFields, "seo_issues", "Fix the current SEO issues while preserving accurate resource facts.") },
+        { content: "Optimize search listing", disabled: Boolean(aiLoadingTarget), onAction: () => generateAiForFields("seo", ["seoTitle", "seoDescription"], "search_listing") },
+        { content: "Improve image alt text", disabled: !resource.imageUrl || Boolean(aiLoadingTarget), onAction: () => generateAiForFields("improve", ["imageAlt"], "image_alt") },
+      ],
+    }] : []}
+  >
+    <TitleBar title={pageTitle} />
     {/* App Bridge save bar: Shopify admin asks for confirmation before leaving while it is open. */}
     <SaveBar id="catalog-save-bar" open={dirty}>
       <button variant="primary" onClick={() => submitForm(false)} loading={navigation.state === "submitting" ? "" : undefined}>Save</button>
@@ -481,99 +516,7 @@ function CatalogResourceEditor() {
       )}
       <input type="hidden" name="descriptionHtml" value={descriptionHtml} />
       <input type="hidden" name="focusKeyword" value={focusKeyword} /><input type="hidden" name="originalImageAlt" value={resource.imageAlt} /><input type="hidden" name="imageUrl" value={resource.imageUrl} /><input type="hidden" name="mediaId" value={(resource as any).mediaId || ""} />
-      <InlineStack align="space-between" blockAlign="center" gap="300">
-        <BlockStack gap="100">
-          <Text as="h1" variant="headingXl" fontWeight="bold">{title || resource.title}</Text>
-          <Text as="p" tone="subdued">Improve storefront content, search appearance and image signals without leaving the app.</Text>
-        </BlockStack>
-        <InlineStack gap="200" blockAlign="center">
-          {currentAiUsage.limited && (
-            <Badge tone={aiQuotaExhausted ? "critical" : "info"}>
-              {`${currentAiUsage.remaining}/${currentAiUsage.limit} AI left`}
-            </Badge>
-          )}
-          <Popover
-            active={aiCopilotOpen}
-            onClose={() => setAiCopilotOpen(false)}
-            preferredAlignment="right"
-            activator={(
-              <Button
-                icon={MagicIcon}
-                disclosure
-                disabled={!aiEnabled || Boolean(aiLoadingTarget)}
-                onClick={() => {
-                  if (aiQuotaExhausted) {
-                    navigate("/app/pricing?reason=ai_limit");
-                    return;
-                  }
-                  setAiCopilotOpen((open) => !open);
-                }}
-                accessibilityLabel={!aiEnabled
-                  ? "AI Copilot is not configured"
-                  : aiQuotaExhausted
-                    ? "AI limit reached; view upgrade options"
-                    : "Open AI Copilot"}
-              >
-                {!aiEnabled ? "AI not configured" : aiQuotaExhausted ? "Upgrade AI" : "AI Copilot"}
-              </Button>
-            )}
-          >
-            <ActionList
-              sections={[{
-                title: "Create and optimize",
-                items: [
-                  {
-                    content: "Write or rewrite content",
-                    onAction: () => {
-                      setAiCopilotOpen(false);
-                      setAiMode(descriptionHtml.trim() ? "improve" : "write");
-                      setAiError("");
-                      setAiComposeOpen(true);
-                    },
-                  },
-                  {
-                    content: "Fix SEO issues",
-                    disabled: aiIssueFields.length === 0,
-                    onAction: () => {
-                      setAiCopilotOpen(false);
-                      generateAiForFields(
-                        "improve",
-                        aiIssueFields,
-                        "seo_issues",
-                        "Fix the current SEO issues while preserving accurate resource facts.",
-                      );
-                    },
-                  },
-                  {
-                    content: "Optimize search listing",
-                    onAction: () => {
-                      setAiCopilotOpen(false);
-                      generateAiForFields("seo", ["seoTitle", "seoDescription"], "search_listing");
-                    },
-                  },
-                  {
-                    content: "Improve image alt text",
-                    disabled: !resource.imageUrl,
-                    onAction: () => {
-                      setAiCopilotOpen(false);
-                      generateAiForFields("improve", ["imageAlt"], "image_alt");
-                    },
-                  },
-                ],
-              }]}
-            />
-          </Popover>
-          <Button url={adminUrl} target="_blank">Open in Shopify</Button>
-          <Button variant="primary" submit loading={navigation.state === "submitting"} disabled={!dirty}>Save changes</Button>
-        </InlineStack>
-      </InlineStack>
       {actionData && "error" in actionData && actionData.error && !conflict && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
-      <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="300">
-        <EditorMetric label="SEO score" value={`${currentAudit.score}/100`} icon={CheckCircleIcon} tone={scoreTone(currentAudit.score)} />
-        <EditorMetric label="Open issues" value={String(currentAudit.issues.length)} icon={AlertTriangleIcon} tone={currentAudit.issues.length ? "warning" : "success"} />
-        <EditorMetric label="Description" value={`${wordCount} words`} icon={SearchIcon} tone={wordCount >= (resource.type === "product" ? 40 : 30) ? "success" : "warning"} />
-        <EditorMetric label={resource.type === "product" ? "Resource" : "Products"} value={resource.type === "product" ? "Product" : String(details.itemCount)} icon={resource.type === "product" ? ProductIcon : CollectionIcon} tone="info" />
-      </InlineGrid>
       <div className="bp-catalog-editor-main"><main className="bp-catalog-editor-content"><BlockStack gap="400">
         <Card>
           <BlockStack gap="400">
@@ -672,10 +615,9 @@ function CatalogResourceEditor() {
             )}
           </BlockStack>
         </Card>
+      </BlockStack></main><aside className="bp-catalog-editor-sidebar"><BlockStack gap="400">
         <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
         <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="bodySm" tone="subdued">Every passed and failed check remains visible and updates while you edit.</Text></BlockStack><Badge tone={scoreTone(currentAudit.score)}>{`${currentAudit.score}/100`}</Badge></InlineStack><div className="bp-checklist-groups">{groups.map((group) => <ChecklistGroup key={group.label} {...group} />)}</div></BlockStack></Card>
-      </BlockStack></main><aside className="bp-catalog-editor-sidebar"><BlockStack gap="400">
-        <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">SEO score</Text><Text as="p" variant="headingXl" fontWeight="bold">{currentAudit.score}<Text as="span" variant="bodySm" tone="subdued">/100</Text></Text></InlineStack><div className="bp-catalog-score-track"><span style={{ width: `${currentAudit.score}%` }} /></div><Text as="p" variant="bodySm" tone="subdued">{savedAt ? `Last analyzed ${new Date(savedAt).toLocaleString()}` : "Calculated from current Shopify content."}</Text></BlockStack></Card>
         <Card>
           <BlockStack gap="300">
             <div className="bp-icon-heading"><Icon source={ImageIcon} tone="info" /><Text as="h2" variant="headingMd">Image</Text></div>
@@ -704,7 +646,6 @@ function CatalogResourceEditor() {
         <InternalLinkCard allowed={canInternalLinking} planKey={planKey} suggestions={linkSuggestions} onReview={(suggestion) => { setPendingLink(suggestion); setLinkAnchor(suggestion.anchorText); }} />
         <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} settings</Text><Divider />{resource.type === "product" ? <><Select name="status" label="Status" value={status} onChange={setStatus} options={[{ label: "Active", value: "ACTIVE" }, { label: "Draft", value: "DRAFT" }, { label: "Archived", value: "ARCHIVED" }]} /><TextField name="vendor" label="Vendor" value={vendor} onChange={setVendor} autoComplete="off" /><TextField name="productType" label="Product type" value={productType} onChange={setProductType} autoComplete="off" /><TextField name="tags" label="Tags" value={tags} onChange={setTags} autoComplete="off" helpText="Separate tags with commas." /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Variants, pricing, inventory, collection rules and media remain in Shopify to prevent destructive edits.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></Card>
       </BlockStack></aside></div>
-      {dirty && <div className="bp-editor-savebar"><InlineStack align="space-between" blockAlign="center" gap="300"><Text as="p" fontWeight="semibold">You have unsaved changes</Text><InlineStack gap="200"><Button onClick={reset}>Discard</Button><Button variant="primary" submit loading={navigation.state === "submitting"}>Save changes</Button></InlineStack></InlineStack></div>}
     </BlockStack></Form></div>
     <Modal open={Boolean(pendingLink)} onClose={() => setPendingLink(null)} title="Review internal link" primaryAction={{ content: "Insert link", onAction: () => { if (!pendingLink) return; setDescriptionHtml(insertApprovedLink(descriptionHtml, linkAnchor.trim() || pendingLink.anchorText, pendingLink.targetUrl).body); setPendingLink(null); } }} secondaryActions={[{ content: "Cancel", onAction: () => setPendingLink(null) }]}><Modal.Section><BlockStack gap="300"><Text as="p">Link to <strong>{pendingLink?.targetTitle}</strong></Text><TextField label="Anchor text" value={linkAnchor} onChange={setLinkAnchor} autoComplete="off" /><Text as="p" variant="bodySm" tone="subdued">The link is inserted into the description only after you approve and save this resource.</Text></BlockStack></Modal.Section></Modal>
     <Modal
@@ -900,9 +841,6 @@ const aiPreviewStyle = {
   wordBreak: "break-word",
 } as const;
 
-function EditorMetric({ label, value, icon, tone }: { label: string; value: string; icon: React.FunctionComponent<React.SVGProps<SVGSVGElement>>; tone: "success" | "warning" | "critical" | "info" }) {
-  return <Card><BlockStack gap="150"><div className="bp-icon-heading bp-icon-heading--metric"><Icon source={icon} tone={tone} /><Text as="p" variant="bodySm" tone="subdued">{label}</Text></div><Text as="p" variant="headingLg" fontWeight="bold">{value}</Text></BlockStack></Card>;
-}
 
 function FocusKeywordCard({ value, input, setInput, onChange, audit }: { value: string; input: string; setInput: (value: string) => void; onChange: (value: string) => void; audit: ReturnType<typeof auditCatalogResource> }) {
   const keywords = value.split(",").map((item) => item.trim()).filter(Boolean);

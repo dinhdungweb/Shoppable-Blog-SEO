@@ -39,7 +39,6 @@ import {
   AlertCircleIcon,
   ArrowDownIcon,
   ArrowUpIcon,
-  CashDollarIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
@@ -1757,7 +1756,6 @@ function ArticleDetail() {
     stripHtml(seoData?.metaDescription || article.summary || makeMetaDescription(article.title, article.body || "")),
   );
   const [body, setBody] = useState(article.body || "");
-  const [aiCopilotOpen, setAiCopilotOpen] = useState(false);
   const [aiAssistantOpen, setAiAssistantOpen] = useState(Boolean(briefPrefill && !briefPrefill.hasDraft));
   const [aiWritingMode, setAiWritingMode] = useState<AiWritingMode>(article.body ? "improve" : "draft");
   const [aiInstruction, setAiInstruction] = useState(briefPrefill?.instruction || "");
@@ -3051,8 +3049,56 @@ function ArticleDetail() {
   ];
 
   return (
-    <Page fullWidth>
-      <TitleBar title={isNewPost ? "Create post" : "Blog detail"} />
+    <Page
+      fullWidth
+      backAction={{ content: "Posts", onAction: () => navigate("/app/blogs") }}
+      title={title || (isNewPost ? "Create post" : article.title)}
+      titleMetadata={
+        <InlineStack gap="100" blockAlign="center">
+          <Badge tone={isVisible ? "success" : "attention"}>{isVisible ? "Published" : "Draft"}</Badge>
+          {currentAiUsage.limited && <Badge tone={aiQuotaExhausted ? "critical" : "info"}>{`${currentAiUsage.remaining}/${currentAiUsage.limit} AI left`}</Badge>}
+        </InlineStack>
+      }
+      subtitle={[
+        currentBlog?.title || "No blog selected",
+        isNewPost ? "Not saved yet" : formatDateTime(article.publishedAt || article.updatedAt),
+        isNewPost && pendingBriefProducts.length ? `${pendingBriefProducts.length} products ready to link` : `${embeddedProducts.length} products linked`,
+      ].join(" · ")}
+      primaryAction={{
+        content: isNewPost ? "Create post" : "Update post",
+        onAction: () => handleSave(),
+        loading: isSubmitting && (fetcherData?.action === "post_updated" || fetcherData?.action === "post_created"),
+      }}
+      secondaryActions={[
+        { content: "Preview", onAction: () => setPreviewOpen(true) },
+        { content: "Run SEO scan", onAction: handleRunSeoScan, loading: isSubmitting && fetcherData?.action === "seo_analyzed" },
+        ...(!aiEnabled
+          ? [{ content: "AI not configured", disabled: true }]
+          : aiQuotaExhausted
+            ? [{ content: "Upgrade AI", onAction: () => navigate("/app/pricing?reason=ai_limit") }]
+            : []),
+      ]}
+      actionGroups={aiEnabled && !aiQuotaExhausted ? [{
+        title: "AI Copilot",
+        icon: MagicIcon,
+        actions: [
+          { content: "Write or rewrite content", onAction: openAiAssistant },
+          { content: "Fix SEO issues", disabled: isSeoFixGenerating || !seoIssues.some((issue) => issue.severity !== "good"), onAction: () => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all") },
+          { content: "Refresh declining content", disabled: isNewPost || isContentRefreshGenerating, onAction: openContentRefresh },
+          { content: currentFaq ? "Refresh FAQ and schema" : "Generate FAQ and schema", disabled: isFaqGenerating, onAction: openFaqCopilot },
+          { content: "Suggest products", disabled: isNewPost || isAiProductLoading, onAction: () => { setSelectedTab(1); handleSuggestAiProducts(); } },
+          {
+            content: "Review internal links",
+            disabled: !canInternalLinking,
+            onAction: () => {
+              setSelectedTab(0);
+              window.setTimeout(() => document.getElementById("internal-link-assistant")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+            },
+          },
+        ],
+      }] : []}
+    >
+      <TitleBar title={title || (isNewPost ? "Create post" : article.title)} />
       <style>{DETAIL_STYLES}</style>
       {pendingDraft && (
         <div style={{ marginBottom: 16 }}>
@@ -3113,192 +3159,6 @@ function ArticleDetail() {
       </Modal>
 
       <div className="bp-detail-shell">
-        <div className="bp-detail-header">
-          <BlockStack gap="300">
-            <InlineStack gap="200" blockAlign="center">
-              <Button variant="plain" onClick={() => navigate("/app/blogs")}>
-                Blog Manager
-              </Button>
-              <Text as="span" variant="bodySm" tone="subdued">
-                /
-              </Text>
-              <Text as="span" variant="bodySm" fontWeight="semibold">
-                {isNewPost ? "Create post" : article.title}
-              </Text>
-            </InlineStack>
-
-            <BlockStack gap="200">
-              <InlineStack gap="300" blockAlign="center">
-                <Text as="h1" variant="headingXl" fontWeight="bold">
-                  {title || (isNewPost ? "Create post" : article.title)}
-                </Text>
-                <Badge tone={isVisible ? "success" : "attention"}>
-                  {isVisible ? "Published" : "Draft"}
-                </Badge>
-              </InlineStack>
-              <InlineStack gap="300" blockAlign="center">
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {currentBlog?.title || "No blog selected"}
-                </Text>
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {isNewPost ? "Not saved yet" : formatDateTime(article.publishedAt || article.updatedAt)}
-                </Text>
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {isNewPost && pendingBriefProducts.length
-                    ? `${pendingBriefProducts.length} products ready to link`
-                    : `${embeddedProducts.length} products linked`}
-                </Text>
-              </InlineStack>
-            </BlockStack>
-          </BlockStack>
-
-          <InlineStack gap="200" blockAlign="center">
-            {currentAiUsage.limited && (
-              <Badge tone={aiQuotaExhausted ? "critical" : "info"}>
-                {`${currentAiUsage.remaining}/${currentAiUsage.limit} AI left`}
-              </Badge>
-            )}
-            <Popover
-              active={aiCopilotOpen}
-              onClose={() => setAiCopilotOpen(false)}
-              preferredAlignment="right"
-              activator={
-                <Button
-                  icon={MagicIcon}
-                  disclosure
-                  disabled={!aiEnabled}
-                  onClick={() => {
-                    if (aiQuotaExhausted) {
-                      navigate("/app/pricing?reason=ai_limit");
-                      return;
-                    }
-                    setAiCopilotOpen((open) => !open);
-                  }}
-                  accessibilityLabel={
-                    !aiEnabled
-                      ? "AI Copilot is not configured"
-                      : aiQuotaExhausted
-                        ? "AI limit reached; view upgrade options"
-                        : "Open AI Copilot"
-                  }
-                >
-                  {!aiEnabled
-                    ? "AI not configured"
-                    : aiQuotaExhausted
-                      ? "Upgrade AI"
-                      : "AI Copilot"}
-                </Button>
-              }
-            >
-              <ActionList
-                sections={[
-                  {
-                    title: "Create and optimize",
-                    items: [
-                      {
-                        content: "Write or rewrite content",
-                        onAction: () => {
-                          setAiCopilotOpen(false);
-                          openAiAssistant();
-                        },
-                      },
-                      {
-                        content: "Fix SEO issues",
-                        disabled: isSeoFixGenerating || !seoIssues.some((issue) => issue.severity !== "good"),
-                        onAction: () => {
-                          setAiCopilotOpen(false);
-                          handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all");
-                        },
-                      },
-                      {
-                        content: "Refresh declining content",
-                        disabled: isNewPost || isContentRefreshGenerating,
-                        onAction: () => {
-                          setAiCopilotOpen(false);
-                          openContentRefresh();
-                        },
-                      },
-                      {
-                        content: currentFaq ? "Refresh FAQ and schema" : "Generate FAQ and schema",
-                        disabled: isFaqGenerating,
-                        onAction: () => {
-                          setAiCopilotOpen(false);
-                          openFaqCopilot();
-                        },
-                      },
-                    ],
-                  },
-                  {
-                    title: "Products and links",
-                    items: [
-                      {
-                        content: "Suggest products",
-                        disabled: isNewPost || isAiProductLoading,
-                        onAction: () => {
-                          setAiCopilotOpen(false);
-                          setSelectedTab(1);
-                          handleSuggestAiProducts();
-                        },
-                      },
-                      {
-                        content: "Review internal links",
-                        disabled: !canInternalLinking,
-                        onAction: () => {
-                          setAiCopilotOpen(false);
-                          setSelectedTab(0);
-                          window.setTimeout(() => document.getElementById("internal-link-assistant")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-                        },
-                      },
-                    ],
-                  },
-                ]}
-              />
-            </Popover>
-            <Button onClick={() => setPreviewOpen(true)}>Preview</Button>
-            <Button loading={isSubmitting && fetcherData?.action === "seo_analyzed"} onClick={handleRunSeoScan}>
-              Run SEO scan
-            </Button>
-            <Button variant="primary" loading={isSubmitting && (fetcherData?.action === "post_updated" || fetcherData?.action === "post_created")} onClick={() => handleSave()}>
-              {isNewPost ? "Create post" : "Update post"}
-            </Button>
-          </InlineStack>
-        </div>
-
-        <InlineGrid columns={{ xs: 1, sm: 2, md: 5 }} gap="400">
-          <MetricCard
-            title="Status"
-            value={isVisible ? "Published" : "Draft"}
-            tone={isVisible ? "success" : "attention"}
-            icon={ViewIcon}
-          />
-          <MetricCard
-            title={`On-page score (${isDirty ? "Draft" : "Saved"})`}
-            value={String(seoScore)}
-            suffix="/100"
-            tone={seoScore >= 80 ? "success" : seoScore >= 60 ? "warning" : "critical"}
-            icon={SortIcon}
-            progress={seoScore}
-          />
-          <MetricCard
-            title="Products linked"
-            value={String(displayedProductCount)}
-            tone="info"
-            icon={LinkIcon}
-          />
-          <MetricCard
-            title="Product clicks"
-            value={String(stats.clicks)}
-            tone="magic"
-            icon={CheckIcon}
-          />
-          <MetricCard
-            title="Revenue"
-            value={formatMoney(stats.revenue)}
-            tone="success"
-            icon={CashDollarIcon}
-          />
-        </InlineGrid>
-
         <div className="bp-detail-tabs">
           <Card padding="0">
             <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} />
@@ -3429,35 +3289,7 @@ function ArticleDetail() {
                   </Card>
                 )}
 
-                {canEditSeo ? (
-                  <SeoSidebar
-                    seoScore={seoScore}
-                    scoreBreakdown={seoBreakdown}
-                    issues={seoIssues}
-                    focusKeyword={focusKeyword}
-                    onChangeFocusKeyword={(val) => {
-                      setFocusKeyword(val);
-                      markDirty();
-                    }}
-                    keywordScores={keywordScores}
-                    onApplyAll={handleApplySeoSuggestions}
-                    onManageProducts={() => setSelectedTab(1)}
-                    onReviewInternalLinks={() => {
-                      document.getElementById("internal-link-assistant")?.scrollIntoView({ behavior: "smooth", block: "center" });
-                    }}
-                    aiEnabled={aiEnabled}
-                    aiLoading={isSeoFixGenerating}
-                    aiLoadingTarget={seoFixLoadingTarget}
-                    undoAvailable={Boolean(seoFixUndo)}
-                    onUndo={handleUndoSeoFix}
-                    onFixIssue={(issue) => handleGenerateSeoFix([issue], issue.type)}
-                    onFixAll={() => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all")}
-                  />
-                ) : (
-                  <Banner tone="info" title="SEO editing tools are available on Plus" action={{ content: "Upgrade to Plus", url: "/app/pricing?reason=blog_seo_tools" }}>
-                    <p>Your Free plan can preview SEO scores for recent posts. Upgrade to review issues and apply improvements.</p>
-                  </Banner>
-                )}
+
               </BlockStack>
             )}
 
@@ -3494,6 +3326,35 @@ function ArticleDetail() {
 
           {selectedTab === 0 && (
             <aside className="bp-detail-sidebar">
+                {canEditSeo ? (
+                  <SeoSidebar
+                    seoScore={seoScore}
+                    scoreBreakdown={seoBreakdown}
+                    issues={seoIssues}
+                    focusKeyword={focusKeyword}
+                    onChangeFocusKeyword={(val) => {
+                      setFocusKeyword(val);
+                      markDirty();
+                    }}
+                    keywordScores={keywordScores}
+                    onApplyAll={handleApplySeoSuggestions}
+                    onManageProducts={() => setSelectedTab(1)}
+                    onReviewInternalLinks={() => {
+                      document.getElementById("internal-link-assistant")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }}
+                    aiEnabled={aiEnabled}
+                    aiLoading={isSeoFixGenerating}
+                    aiLoadingTarget={seoFixLoadingTarget}
+                    undoAvailable={Boolean(seoFixUndo)}
+                    onUndo={handleUndoSeoFix}
+                    onFixIssue={(issue) => handleGenerateSeoFix([issue], issue.type)}
+                    onFixAll={() => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all")}
+                  />
+                ) : (
+                  <Banner tone="info" title="SEO editing tools are available on Plus" action={{ content: "Upgrade to Plus", url: "/app/pricing?reason=blog_seo_tools" }}>
+                    <p>Your Free plan can preview SEO scores for recent posts. Upgrade to review issues and apply improvements.</p>
+                  </Banner>
+                )}
               <PublishingCard
                 article={{ ...article, isPublished: isVisible, blog: currentBlog, author: { name: authorName } }}
                 livePostUrl={postPreviewUrl}
@@ -4294,49 +4155,6 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
   return debounced;
 }
 
-function MetricCard({
-  title,
-  value,
-  suffix,
-  tone,
-  icon,
-  progress,
-}: {
-  title: string;
-  value: string;
-  suffix?: string;
-  tone: "success" | "attention" | "info" | "magic" | "warning" | "critical";
-  icon: any;
-  progress?: number;
-}) {
-  return (
-    <Card padding="400">
-      <BlockStack gap="300">
-        <InlineStack align="space-between" blockAlign="start">
-          <BlockStack gap="100">
-            <Text as="span" variant="bodySm" tone="subdued">
-              {title}
-            </Text>
-            <InlineStack gap="100" blockAlign="baseline">
-              <Text as="span" variant="headingLg" fontWeight="bold" tone={tone as any}>
-                {value}
-              </Text>
-              {suffix && (
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {suffix}
-                </Text>
-              )}
-            </InlineStack>
-          </BlockStack>
-          <span className={`bp-metric-icon bp-metric-icon--${tone}`}>
-            <Icon source={icon} tone={tone as any} />
-          </span>
-        </InlineStack>
-        {typeof progress === "number" && <ProgressBar progress={progress} size="small" tone={progress >= 80 ? "success" : "critical"} />}
-      </BlockStack>
-    </Card>
-  );
-}
 
 function ShopifyContentEditor({
   title,
@@ -8374,8 +8192,6 @@ const DETAIL_STYLES = `
   display: flex;
   flex-direction: column;
   gap: 16px;
-  position: sticky;
-  top: 16px;
 }
 
 .bp-internal-link-list {

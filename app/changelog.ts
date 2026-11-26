@@ -24,6 +24,8 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "Improved", text: "Posts and Products & collections use Shopify's standard list controls: views with counts, search as you type, filters and sorting. Click a row to open it." },
       { type: "New", text: "An SEO details column shows each post's score and focus keyword, and each product's score and top issue. Select rows to optimize meta tags or search listings in bulk." },
       { type: "New", text: "SEO Analyzer opens with an overall score and counts of failed checks, warnings, passing posts and quick wins. Each check shows its status, and product and collection checks can be fixed in bulk." },
+      { type: "Improved", text: "The post, product and collection editors show the SEO score, focus keyword and full checklist at the top of the sidebar, next to your content, and use the standard page header with Save, Preview and an AI Copilot menu." },
+      { type: "Fixed", text: "The product and collection editor no longer shows two save bars at once." },
     ],
   },
   {
