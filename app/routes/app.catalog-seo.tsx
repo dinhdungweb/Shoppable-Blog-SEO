@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate, useNavigation, useRevalidator } from "@remix-run/react";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, IndexTable, InlineGrid, InlineStack, Modal, Pagination, Select, Tabs, Text, TextField, Thumbnail, useIndexResourceState } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Box, Button, Card, Divider, Icon, IndexTable, InlineGrid, InlineStack, Modal, Text, Thumbnail, useIndexResourceState, ChoiceList, IndexFilters, useSetIndexFiltersMode } from "@shopify/polaris";
 import { AlertTriangleIcon, CheckCircleIcon, CollectionIcon, NoteIcon, ProductIcon } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import type { CatalogResourceType, CatalogSeoIssue } from "../catalog-seo";
 import catalogSeoStyles from "../styles/catalog-seo.css?url";
+import { CATALOG_BULK_ISSUES } from "../catalog-bulk";
 import { CATALOG_WORKSPACE_TABS, SEO_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { IssueScopeSwitcher } from "../components/IssueScopeSwitcher";
-import { AppPage } from "../components/AppPage";
+import { AppPage, ScoreBadge } from "../components/AppPage";
 
 export const links = () => [{ rel: "stylesheet", href: catalogSeoStyles }];
 
@@ -112,7 +113,8 @@ export default function CatalogSeoPage() {
   const shopify = useAppBridge();
   const handled = useRef<unknown>(null);
   const [search, setSearch] = useState(data.query);
-  const [reviewRow, setReviewRow] = useState<(typeof data.rows)[number] | null>(null);
+  const navigation = useNavigation();
+  const { mode, setMode } = useSetIndexFiltersMode();
   const [reviewIssue, setReviewIssue] = useState<(typeof data.issueGroups)[number] | null>(null);
   const isScanning = fetcher.state !== "idle" || data.job?.status === "queued" || data.job?.status === "running";
   const typeLabel = data.resourceType === "product" ? "Products" : data.resourceType === "page" ? "Pages" : "Collections";
@@ -127,6 +129,13 @@ export default function CatalogSeoPage() {
   }] : undefined;
 
   useEffect(() => { setSearch(data.query); }, [data.query]);
+  // Search as you type, like Shopify's own lists.
+  useEffect(() => {
+    if (data.view !== "manager" || search.trim() === data.query) return;
+    const timer = window.setTimeout(() => goToList({ query: search.trim(), page: 1 }), 400);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
   useEffect(() => {
     if (!isScanning) return;
     const timer = window.setInterval(() => revalidator.revalidate(), 2500);
@@ -163,7 +172,6 @@ export default function CatalogSeoPage() {
     secondaryActions={!manager && data.resourceType !== "page" ? [{ content: "Open in Products & collections", url: `/app/catalog-seo?view=manager&type=${data.resourceType}` }] : []}
   >
     <BlockStack gap="500">
-      {manager && <Tabs tabs={[{ id: "products", content: "Products" }, { id: "collections", content: "Collections" }]} selected={data.resourceType === "product" ? 0 : 1} onSelect={switchManagerType} />}
       {data.view === "issues" && <IssueScopeSwitcher active={data.resourceType === "product" ? "products" : data.resourceType === "page" ? "pages" : "collections"} />}
       {isScanning && <Banner tone="info" title={data.job?.phase || "SEO scan queued"}><p>Products and collections are scanned in the background. This page updates automatically.</p></Banner>}
       {data.job?.status === "failed" && <Banner tone="critical" title="SEO scan failed"><p>The background scan could not be completed. Check the SEO worker log and run the scan again.</p></Banner>}
@@ -174,23 +182,48 @@ export default function CatalogSeoPage() {
         <StatCard label="Need attention" value={String(data.needsAttention)} icon={AlertTriangleIcon} tone={data.needsAttention ? "critical" : "success"} />
         <StatCard label="Total issues" value={String(data.totalIssues)} icon={AlertTriangleIcon} tone={data.totalIssues ? "warning" : "success"} />
       </InlineGrid>
-      {data.view === "issues" && <Card padding="0"><Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO issue report</Text><Text as="p" variant="bodySm" tone="subdued">Issues are grouped so you can fix the highest-impact patterns first.</Text></BlockStack></Box><IndexTable resourceName={{ singular: "issue", plural: "issues" }} itemCount={data.issueGroups.length} selectable={false} headings={[{ title: "Issue" }, { title: "Affected" }, { title: "Impact" }, { title: "Effort" }, { title: "Suggested fix" }, { title: "Action" }]}>{data.issueGroups.map((issue, index) => <IndexTable.Row id={issue.type} key={issue.type} position={index}><IndexTable.Cell><Text as="span" fontWeight="semibold">{issue.label}</Text></IndexTable.Cell><IndexTable.Cell>{issue.count}</IndexTable.Cell><IndexTable.Cell><Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>{issue.impact}</Badge></IndexTable.Cell><IndexTable.Cell><Badge>{issue.effort}</Badge></IndexTable.Cell><IndexTable.Cell><div className="bp-catalog-fix-copy"><Text as="span" variant="bodySm">{issue.fix}</Text></div></IndexTable.Cell><IndexTable.Cell><Button size="micro" onClick={() => setReviewIssue(issue)}>Review</Button></IndexTable.Cell></IndexTable.Row>)}</IndexTable>{!data.issueGroups.length && <Box padding="500"><Banner tone="success" title="No SEO issues found"><p>Run a scan after Shopify content changes to refresh this report.</p></Banner></Box>}</Card>}
+      {data.view === "issues" && <Card padding="0"><Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">SEO issue report</Text><Text as="p" variant="bodySm" tone="subdued">Issues are grouped so you can fix the highest-impact patterns first.</Text></BlockStack></Box><IndexTable resourceName={{ singular: "issue", plural: "issues" }} itemCount={data.issueGroups.length} selectable={false} headings={[{ title: "Issue" }, { title: "Affected" }, { title: "Impact" }, { title: "Effort" }, { title: "Suggested fix" }, { title: "Action" }]}>{data.issueGroups.map((issue, index) => <IndexTable.Row id={issue.type} key={issue.type} position={index}><IndexTable.Cell><Text as="span" fontWeight="semibold">{issue.label}</Text></IndexTable.Cell><IndexTable.Cell>{issue.count}</IndexTable.Cell><IndexTable.Cell><Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>{issue.impact}</Badge></IndexTable.Cell><IndexTable.Cell><Badge>{issue.effort}</Badge></IndexTable.Cell><IndexTable.Cell><div className="bp-catalog-fix-copy"><Text as="span" variant="bodySm">{issue.fix}</Text></div></IndexTable.Cell><IndexTable.Cell><InlineStack gap="150" wrap={false}>{bulkFilterFor(issue.type) && data.resourceType !== "page" && <Button size="micro" variant="primary" url={`/app/optimize/catalog?type=${data.resourceType}&filter=${bulkFilterFor(issue.type)}`}>Fix in bulk</Button>}<Button size="micro" onClick={() => setReviewIssue(issue)}>Review</Button></InlineStack></IndexTable.Cell></IndexTable.Row>)}</IndexTable>{!data.issueGroups.length && <Box padding="500"><Banner tone="success" title="No SEO issues found"><p>Run a scan after Shopify content changes to refresh this report.</p></Banner></Box>}</Card>}
       {data.view === "manager" && <Card padding="0">
-        <Box padding="400"><BlockStack gap="300"><InlineStack align="space-between"><BlockStack gap="050"><Text as="h2" variant="headingMd">{typeLabel}</Text><Text as="p" variant="bodySm" tone="subdued">Lowest scores are shown first · {data.filteredTotal} matching resources.</Text></BlockStack><Badge>{`${data.total} total`}</Badge></InlineStack><div className="bp-catalog-filters"><TextField label={`Search ${typeLabel.toLowerCase()}`} labelHidden value={search} onChange={setSearch} placeholder={`Search ${typeLabel.toLowerCase()}`} autoComplete="off" connectedRight={<Button onClick={() => goToList({ query: search.trim(), page: 1 })}>Search</Button>} /><Select label="Issue status" labelHidden value={data.status} options={[{ label: "All resources", value: "all" }, { label: "Needs attention", value: "attention" }, { label: "All good", value: "good" }]} onChange={(value) => goToList({ status: value, page: 1 })} /></div></BlockStack></Box>
-        <IndexTable resourceName={{ singular: data.resourceType, plural: typeLabel.toLowerCase() }} itemCount={data.rows.length} selectable={bulkSelectable} selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length} onSelectionChange={handleSelectionChange} promotedBulkActions={bulkActions} headings={[{ title: typeLabel.slice(0, -1) }, { title: "SEO score" }, { title: "Issues" }, { title: "Status" }, { title: "Action" }]}>
-          {data.rows.map((row, index) => <IndexTable.Row id={row.id} key={row.id} position={index} selected={selectedResources.includes(row.id)}>
+        <IndexFilters
+          tabs={[
+            { id: "products", content: "Products", isLocked: true, onAction: () => switchManagerType(0) },
+            { id: "collections", content: "Collections", isLocked: true, onAction: () => switchManagerType(1) },
+          ]}
+          selected={data.resourceType === "product" ? 0 : 1}
+          onSelect={switchManagerType}
+          canCreateNewView={false}
+          queryValue={search}
+          queryPlaceholder={`Search ${typeLabel.toLowerCase()}`}
+          onQueryChange={setSearch}
+          onQueryClear={() => setSearch("")}
+          filters={[{
+            key: "seo",
+            label: "SEO status",
+            shortcut: true,
+            filter: (
+              <ChoiceList
+                title="SEO status"
+                titleHidden
+                choices={[{ label: "Needs attention", value: "attention" }, { label: "All good", value: "good" }]}
+                selected={data.status === "all" ? [] : [data.status]}
+                onChange={(value) => goToList({ status: value[0] || "all", page: 1 })}
+              />
+            ),
+          }]}
+          appliedFilters={data.status === "all" ? [] : [{ key: "seo", label: data.status === "attention" ? "Needs attention" : "All good", onRemove: () => goToList({ status: "all", page: 1 }) }]}
+          onClearAll={() => { setSearch(""); goToList({ query: "", status: "all", page: 1 }); }}
+          mode={mode}
+          setMode={setMode}
+          loading={navigation.state === "loading"}
+        />
+        <IndexTable resourceName={{ singular: data.resourceType, plural: typeLabel.toLowerCase() }} itemCount={data.rows.length} selectable={bulkSelectable} selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length} onSelectionChange={handleSelectionChange} promotedBulkActions={bulkActions} pagination={data.totalPages > 1 ? { hasPrevious: data.page > 1, onPrevious: () => goToList({ page: data.page - 1 }), hasNext: data.page < data.totalPages, onNext: () => goToList({ page: data.page + 1 }), label: `Page ${data.page} of ${data.totalPages} · ${data.filteredTotal} ${typeLabel.toLowerCase()}, lowest score first` } : undefined} headings={[{ title: typeLabel.slice(0, -1) }, { title: "SEO details" }, { title: "Status" }]}>
+          {data.rows.map((row, index) => <IndexTable.Row id={row.id} key={row.id} position={index} selected={selectedResources.includes(row.id)} onClick={() => navigate(row.editorUrl)}>
             <IndexTable.Cell><InlineStack gap="300" blockAlign="center" wrap={false}><Thumbnail source={row.imageUrl || PLACEHOLDER_IMAGE} alt={row.imageAlt || row.title} size="small" /><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.title}</Text><Text as="span" variant="bodySm" tone="subdued">{resourcePath(data.resourceType, row.handle)}</Text></BlockStack></InlineStack></IndexTable.Cell>
-            <IndexTable.Cell><Badge tone={scoreTone(row.score)}>{`${row.score}/100`}</Badge></IndexTable.Cell>
-            <IndexTable.Cell>{row.issues.length ? <BlockStack gap="050"><Text as="span" variant="bodySm" fontWeight="semibold">{row.issues[0].label}</Text><Text as="span" variant="bodySm" tone="subdued">{row.issues.length === 1 ? "1 issue" : `${row.issues.length} issues`}</Text></BlockStack> : <Badge tone="success">All good</Badge>}</IndexTable.Cell>
+            <IndexTable.Cell><BlockStack gap="050"><div><ScoreBadge score={row.score} /></div><Text as="span" variant="bodySm" tone="subdued">{row.issues.length ? `${row.issues[0].label}${row.issues.length > 1 ? ` · +${row.issues.length - 1} more` : ""}` : "No issues"}</Text></BlockStack></IndexTable.Cell>
             <IndexTable.Cell>{row.status ? <Badge tone={row.status === "ACTIVE" ? "success" : undefined}>{row.status}</Badge> : <Text as="span" tone="subdued">—</Text>}</IndexTable.Cell>
-            <IndexTable.Cell><InlineStack gap="150" wrap={false}><Button size="micro" onClick={() => setReviewRow(row)}>Review</Button><Button size="micro" url={row.editorUrl}>Edit</Button></InlineStack></IndexTable.Cell>
           </IndexTable.Row>)}
         </IndexTable>
-        {data.totalPages > 1 && <Box padding="400"><InlineStack align="center"><Pagination label={`Page ${data.page} of ${data.totalPages}`} hasPrevious={data.page > 1} onPrevious={() => goToList({ page: data.page - 1 })} hasNext={data.page < data.totalPages} onNext={() => goToList({ page: data.page + 1 })} /></InlineStack></Box>}
       </Card>}
-      <Modal open={Boolean(reviewRow)} onClose={() => setReviewRow(null)} title={reviewRow?.title || "SEO review"} primaryAction={reviewRow ? { content: "Edit", url: reviewRow.editorUrl } : undefined} secondaryActions={[{ content: "Close", onAction: () => setReviewRow(null) }]}>
-        <Modal.Section><BlockStack gap="400">{reviewRow?.issues.length ? reviewRow.issues.map((issue) => <div className="bp-catalog-review-issue" key={issue.type}><InlineStack align="space-between" blockAlign="center"><Text as="h3" fontWeight="semibold">{issue.label}</Text><Badge tone={issue.impact === "High" ? "critical" : issue.impact === "Medium" ? "warning" : "info"}>{issue.impact}</Badge></InlineStack><Text as="p" variant="bodySm" tone="subdued">{issue.message}</Text><Text as="p" variant="bodySm"><strong>Suggested fix:</strong> {issue.fix}</Text></div>) : <Banner tone="success" title="No SEO issues found"><p>This resource passed the current Shopify-compatible checks.</p></Banner>}</BlockStack></Modal.Section>
-      </Modal>
       <Modal open={Boolean(reviewIssue)} onClose={() => setReviewIssue(null)} title={reviewIssue?.label || "Affected resources"} secondaryActions={[{ content: "Close", onAction: () => setReviewIssue(null) }]}><Modal.Section><BlockStack gap="400"><Text as="p">{reviewIssue?.fix}</Text><Divider /><BlockStack gap="300">{reviewIssue?.affected.map((resource) => <InlineStack key={resource.id} align="space-between" blockAlign="center" gap="300"><BlockStack gap="050"><Text as="p" fontWeight="semibold">{resource.title}</Text><Text as="p" variant="bodySm" tone="subdued">{resourcePath(data.resourceType, resource.handle)}</Text></BlockStack><Button size="micro" url={resourceEditUrl(data.resourceType, resource.id)} target={data.resourceType === "page" ? "_top" : undefined}>Edit</Button></InlineStack>)}</BlockStack>{reviewIssue && reviewIssue.count > reviewIssue.affected.length && <Text as="p" variant="bodySm" tone="subdued">Showing {reviewIssue.affected.length} of {reviewIssue.count} affected resources.</Text>}</BlockStack></Modal.Section></Modal>
     </BlockStack>
   </AppPage>;
@@ -202,6 +235,11 @@ function StatCard({ label, value, icon, tone }: { label: string; value: string; 
 
 function parseIssues(value: string | null): CatalogSeoIssue[] {
   try { const parsed = JSON.parse(value || "[]"); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+}
+
+/** The bulk tool filter that fixes this issue type, if any. */
+function bulkFilterFor(type: string) {
+  return (Object.keys(CATALOG_BULK_ISSUES) as Array<keyof typeof CATALOG_BULK_ISSUES>).find((key) => CATALOG_BULK_ISSUES[key].types.includes(type)) || null;
 }
 
 function numericId(id: string) { return id.split("/").pop() || ""; }
@@ -219,4 +257,3 @@ function resourceEditUrl(type: CatalogResourceType, id: string) {
   return `shopify://admin/pages/${numericId(id)}`;
 }
 function impactRank(impact: CatalogSeoIssue["impact"]) { return impact === "High" ? 0 : impact === "Medium" ? 1 : 2; }
-function scoreTone(score: number): "success" | "warning" | "critical" { return score >= 80 ? "success" : score >= 60 ? "warning" : "critical"; }

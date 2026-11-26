@@ -5,6 +5,7 @@ import {
   useLoaderData,
   useNavigate,
   useFetcher,
+  useNavigation,
   useSearchParams,
 } from "@remix-run/react";
 import {
@@ -14,17 +15,13 @@ import {
   Modal,
   Text,
   BlockStack,
-  InlineStack,
   IndexTable,
   useIndexResourceState,
-  Icon,
-  TextField,
-  Select,
+  Box,
+  ChoiceList,
+  IndexFilters,
+  useSetIndexFiltersMode,
 } from "@shopify/polaris";
-import {
-  SearchIcon,
-  EditIcon,
-} from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
@@ -33,7 +30,7 @@ import { CONTENT_WORKSPACE_TABS } from "../components/WorkspaceTabs";
 import { analyticsWindow, formatMoney, groupRows } from "../analytics-core";
 import { canonicalArticleId, getShopLocale, loadLinkedProducts, priceLookup } from "../analytics.server";
 import { convertLegacyMarkers } from "../content-markers.server";
-import { AppPage } from "../components/AppPage";
+import { AppPage, ScoreBadge } from "../components/AppPage";
 
 const BLOG_MANAGER_PAGE_SIZE = 20;
 const METRICS_WINDOW_DAYS = 30;
@@ -213,7 +210,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const [productCounts, seoRows, dailyRows, linkedProducts] = articleIds.length
     ? await Promise.all([
         prisma.articleProduct.groupBy({ by: ["articleId"], where: { shop, articleId: { in: [...articleIds, ...numericIds] }, isActive: true }, _count: { productId: true } }),
-        prisma.articleSEO.findMany({ where: { shop, articleId: { in: articleIds } }, select: { articleId: true, seoScore: true, lastAnalyzedAt: true } }),
+        prisma.articleSEO.findMany({ where: { shop, articleId: { in: articleIds } }, select: { articleId: true, seoScore: true, lastAnalyzedAt: true, focusKeyword: true } }),
         prisma.analyticsDaily.findMany({ where: { shop, date: { gte: metricsStart }, articleId: { in: [...articleIds, ...numericIds] } } }),
         loadLinkedProducts(shop),
       ])
@@ -224,6 +221,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     productCountMap.set(id, (productCountMap.get(id) || 0) + row._count.productId);
   }
   const seoMap = new Map(seoRows.map((row) => [row.articleId, row.lastAnalyzedAt ? row.seoScore : null]));
+  const keywordMap = new Map(seoRows.map((row) => [row.articleId, row.focusKeyword || ""]));
   const metrics = groupRows(
     dailyRows.map((row) => ({ ...row, articleId: canonicalArticleId(row.articleId), revenue: Number(row.revenue) })),
     (row) => row.articleId,
@@ -243,6 +241,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       blogTitle: article.blog?.title || "Default",
       productCount: productCountMap.get(article.id) || 0,
       seoScore: seoMap.has(article.id) ? seoMap.get(article.id)! : null,
+      focusKeyword: keywordMap.get(article.id) || "",
       readers: postMetrics?.views || 0,
       clicks: postMetrics?.clicks || 0,
       revenue: postMetrics?.revenue || 0,
@@ -436,12 +435,6 @@ function parseProductSelection(value: string) {
   return [...unique.values()] as Array<{ id: string }>;
 }
 
-const TabBadge = ({ label, count, isActive, onClick }: { label: string, count?: number | string, isActive?: boolean, onClick?: () => void }) => (
-  <div onClick={onClick} style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: isActive ? '#EBEBEB' : 'transparent', cursor: 'pointer', display: 'flex', gap: '8px', alignItems: 'center', whiteSpace: 'nowrap' }}>
-    <Text as="span" variant="bodyMd" fontWeight={isActive ? 'semibold' : 'regular'}>{label}</Text>
-    {count !== undefined ? <Text as="span" variant="bodySm" tone="subdued">{count}</Text> : null}
-  </div>
-);
 
 type ActionResult = {
   intent?: string;
@@ -454,6 +447,22 @@ type ActionResult = {
   error?: string;
 };
 
+const POST_VIEWS: Array<{ id: BlogManagerStatus; label: string; count?: "needsSeo" | "noProducts" | "mostRead" }> = [
+  { id: "all", label: "All" },
+  { id: "published", label: "Published" },
+  { id: "draft", label: "Draft" },
+  { id: "needs_seo", label: "Needs SEO", count: "needsSeo" },
+  { id: "no_products", label: "No products", count: "noProducts" },
+  { id: "most_read", label: "Most read", count: "mostRead" },
+];
+
+const POST_SORT_OPTIONS: Array<{ label: string; value: `${string} ${"asc" | "desc"}`; directionLabel: string }> = [
+  { label: "Updated", value: "date desc", directionLabel: "Newest first" },
+  { label: "Updated", value: "date asc", directionLabel: "Oldest first" },
+  { label: "Title", value: "title asc", directionLabel: "A–Z" },
+  { label: "Title", value: "title desc", directionLabel: "Z–A" },
+];
+
 export default function BlogManager() {
   const { articles, blogs, tabCounts, filters, pagination, canBulkReview, currency, metricsWindowDays, markersMigrated, error } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<ActionResult>();
@@ -464,6 +473,8 @@ export default function BlogManager() {
   const [searchValue, setSearchValue] = useState(filters.search);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const isDataTab = filters.status === "needs_seo" || filters.status === "no_products" || filters.status === "most_read";
+  const navigation = useNavigation();
+  const { mode, setMode } = useSetIndexFiltersMode();
 
   const getListUrl = useCallback(
     (updates: Record<string, string | null>) => {
@@ -520,7 +531,6 @@ export default function BlogManager() {
     else if (result.intent === "bulk_publish" || result.intent === "bulk_draft") shopify.toast.show(failed.length ? `${result.updated} updated, ${failed.length} failed` : `${result.updated} post(s) updated`, { isError: failed.length > 0 });
   }, [fetcher.state, fetcher.data, shopify]);
 
-  const blogOptions = [{ label: 'All blogs', value: 'all' }, ...blogs.map((blog) => ({ label: blog.title, value: blog.id }))];
   const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } = useIndexResourceState(articles as any);
   const selectedArticlesData = articles.filter((article) => selectedResources.includes(article.id));
   const hasPublishedSelected = selectedArticlesData.some((article) => article.publishedAt);
@@ -571,34 +581,57 @@ export default function BlogManager() {
 
         <Card padding="0">
           <BlockStack gap="0">
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid #EBEBEB', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', flexWrap: 'nowrap' }}>
-                <TabBadge label="All" isActive={filters.status === 'all'} onClick={() => updateFilters({ status: 'all' })} />
-                <TabBadge label="Published" isActive={filters.status === 'published'} onClick={() => updateFilters({ status: 'published' })} />
-                <TabBadge label="Draft" isActive={filters.status === 'draft'} onClick={() => updateFilters({ status: 'draft' })} />
-                <TabBadge label="Needs SEO" count={tabCounts.needsSeo} isActive={filters.status === 'needs_seo'} onClick={() => updateFilters({ status: 'needs_seo' })} />
-                <TabBadge label="No products" count={tabCounts.noProducts} isActive={filters.status === 'no_products'} onClick={() => updateFilters({ status: 'no_products' })} />
-                <TabBadge label={`Most read (${metricsWindowDays}d)`} count={tabCounts.mostRead} isActive={filters.status === 'most_read'} onClick={() => updateFilters({ status: 'most_read' })} />
-              </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <div style={{ width: '250px' }}>
-                  <TextField labelHidden label="Search" prefix={<Icon source={SearchIcon} tone="subdued" />} placeholder="Search posts" value={searchValue} onChange={setSearchValue} autoComplete="off" />
-                </div>
-                <Select labelHidden label="Blog" options={blogOptions} value={filters.blogId} onChange={(value) => updateFilters({ blog: value })} />
-                {!isDataTab && (
-                  <Select labelHidden label="Sort" options={[{ label: 'Newest', value: 'date_desc' }, { label: 'Oldest', value: 'date_asc' }, { label: 'A-Z', value: 'title_asc' }, { label: 'Z-A', value: 'title_desc' }]} value={filters.sort} onChange={(value) => updateFilters({ sort: value })} />
-                )}
-              </div>
-            </div>
+            <IndexFilters
+              tabs={POST_VIEWS.map((view) => ({
+                id: view.id,
+                content: view.id === 'most_read' ? `${view.label} (${metricsWindowDays}d)` : view.label,
+                isLocked: true,
+                badge: view.count ? String(tabCounts[view.count]) : undefined,
+                onAction: () => updateFilters({ status: view.id }),
+              }))}
+              selected={Math.max(0, POST_VIEWS.findIndex((view) => view.id === filters.status))}
+              onSelect={(index) => updateFilters({ status: POST_VIEWS[index]?.id || 'all' })}
+              canCreateNewView={false}
+              queryValue={searchValue}
+              queryPlaceholder="Search posts"
+              onQueryChange={setSearchValue}
+              onQueryClear={() => setSearchValue('')}
+              sortOptions={isDataTab ? undefined : POST_SORT_OPTIONS}
+              sortSelected={[filters.sort.replace('_', ' ')]}
+              onSort={(value) => updateFilters({ sort: (value[0] || 'date desc').replace(' ', '_') })}
+              filters={[{
+                key: 'blog',
+                label: 'Blog',
+                shortcut: true,
+                filter: (
+                  <ChoiceList
+                    title="Blog"
+                    titleHidden
+                    choices={blogs.map((blog) => ({ label: blog.title, value: blog.id }))}
+                    selected={filters.blogId !== 'all' ? [filters.blogId] : []}
+                    onChange={(value) => updateFilters({ blog: value[0] || null })}
+                  />
+                ),
+              }]}
+              appliedFilters={filters.blogId !== 'all' ? [{
+                key: 'blog',
+                label: `Blog: ${blogs.find((blog) => blog.id === filters.blogId)?.title || 'Selected'}`,
+                onRemove: () => updateFilters({ blog: null }),
+              }] : []}
+              onClearAll={() => { setSearchValue(''); updateFilters({ blog: null, search: null }); }}
+              mode={mode}
+              setMode={setMode}
+              loading={navigation.state === 'loading'}
+            />
             {isDataTab && (
-              <div style={{ padding: '8px 16px', borderBottom: '1px solid #EBEBEB' }}>
+              <Box paddingInline="400" paddingBlock="200" borderBlockEndWidth="025" borderColor="border">
                 <Text as="p" variant="bodySm" tone="subdued">
                   {filters.status === "needs_seo" && `Scanned posts with an SEO score below ${NEEDS_SEO_BELOW}, lowest first.`}
                   {filters.status === "no_products" && "Scanned posts without linked products, most recently updated first."}
                   {filters.status === "most_read" && `Posts by readers in the last ${metricsWindowDays} days.`}
                   {" "}Run an SEO scan to include new posts.
                 </Text>
-              </div>
+              </Box>
             )}
 
             <IndexTable
@@ -616,24 +649,23 @@ export default function BlogManager() {
                   : `${articles.length} posts · ${pagination.pageSize} per page`,
               } : undefined}
               promotedBulkActions={[
-                ...(canBulkReview ? [{
-                  content: 'Bulk edit',
-                  onAction: () => navigate(`/app/blogs/bulk_edit?ids=${selectedResources.map((id) => id.split('/').pop()).join(',')}`),
-                }] : []),
+                {
+                  content: canBulkReview ? 'Optimize meta tags' : 'Optimize meta tags (Growth)',
+                  onAction: () => navigate(canBulkReview ? `/app/blogs/bulk_edit?ids=${selectedResources.map((id) => id.split('/').pop()).join(',')}` : '/app/pricing?reason=bulk_edit'),
+                },
                 ...(hasPublishedSelected ? [{ content: 'Set as draft', onAction: () => submitBulk("bulk_draft") }] : []),
                 ...(hasDraftSelected ? [{ content: 'Publish posts', onAction: () => submitBulk("bulk_publish") }] : []),
               ]}
               bulkActions={[{ content: 'Delete posts', onAction: () => setDeleteOpen(true) }]}
               headings={[
-                { title: 'Post title' },
+                { title: 'Post' },
                 { title: 'Status' },
-                { title: 'SEO score' },
+                { title: 'SEO details' },
                 { title: 'Products' },
                 { title: `Readers (${metricsWindowDays}d)`, alignment: 'end' },
                 { title: 'Clicks', alignment: 'end' },
                 { title: 'Revenue', alignment: 'end' },
                 { title: 'Updated' },
-                { title: '', alignment: 'end' },
               ]}
               selectable
             >
@@ -647,12 +679,10 @@ export default function BlogManager() {
                   </IndexTable.Cell>
                   <IndexTable.Cell>{post.publishedAt ? <Badge tone="success">Published</Badge> : <Badge tone="attention">Draft</Badge>}</IndexTable.Cell>
                   <IndexTable.Cell>
-                    {post.seoScore !== null ? (
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        <Text as="span" variant="bodyMd" fontWeight="semibold">{post.seoScore}</Text>
-                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: post.seoScore >= 80 ? '#29845A' : post.seoScore >= 60 ? '#B98900' : '#D82C0D' }} />
-                      </div>
-                    ) : <Text as="span" tone="subdued">Not scanned</Text>}
+                    <BlockStack gap="050">
+                      <div><ScoreBadge score={post.seoScore} /></div>
+                      <Text as="span" variant="bodySm" tone="subdued">{post.focusKeyword ? `Keyword: ${post.focusKeyword}` : 'No focus keyword'}</Text>
+                    </BlockStack>
                   </IndexTable.Cell>
                   <IndexTable.Cell><Text as="span" variant="bodyMd">{post.productCount}</Text></IndexTable.Cell>
                   <IndexTable.Cell><Text as="span" alignment="end" numeric>{post.readers.toLocaleString()}</Text></IndexTable.Cell>
@@ -660,13 +690,6 @@ export default function BlogManager() {
                   <IndexTable.Cell><Text as="span" alignment="end" numeric>{money(post.revenue)}</Text></IndexTable.Cell>
                   <IndexTable.Cell>
                     <Text as="span" variant="bodyMd" tone="subdued">{post.updatedAt ? new Date(post.updatedAt).toLocaleDateString() : '-'}</Text>
-                  </IndexTable.Cell>
-                  <IndexTable.Cell>
-                    <InlineStack align="end">
-                      <div style={{ cursor: 'pointer', padding: '6px', borderRadius: '4px' }} onClick={(event) => { event.stopPropagation(); navigate(`/app/blogs/${encodeURIComponent(post.id)}`); }}>
-                        <Icon source={EditIcon} tone="base" />
-                      </div>
-                    </InlineStack>
                   </IndexTable.Cell>
                 </IndexTable.Row>
               ))}

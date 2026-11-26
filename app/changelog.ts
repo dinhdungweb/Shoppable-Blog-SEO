@@ -21,6 +21,9 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
       { type: "New", text: "Dashboard › Modules shows every feature with its status. Switch tracking, breadcrumbs, table of contents and scheduled scans on or off from one place." },
       { type: "Improved", text: "Settings is now a list of sections, each on its own page with a clear description, Shopify's save bar and a reset to defaults." },
       { type: "Improved", text: "Every page uses the same header with its title, actions and back link, so the main action is always in the same place." },
+      { type: "Improved", text: "Posts and Products & collections use Shopify's standard list controls: views with counts, search as you type, filters and sorting. Click a row to open it." },
+      { type: "New", text: "An SEO details column shows each post's score and focus keyword, and each product's score and top issue. Select rows to optimize meta tags or search listings in bulk." },
+      { type: "New", text: "SEO Analyzer opens with an overall score and counts of failed checks, warnings, passing posts and quick wins. Each check shows its status, and product and collection checks can be fixed in bulk." },
     ],
   },
   {

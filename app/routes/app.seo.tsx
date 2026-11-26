@@ -26,11 +26,10 @@ import {
 } from "@shopify/polaris";
 import {
   AlertTriangleIcon,
-  ChartVerticalFilledIcon,
+  CheckCircleIcon,
+  XCircleIcon,
   ImageIcon,
   MagicIcon,
-  NoteIcon,
-  ShieldCheckMarkIcon,
 } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits, getUnauthenticatedActivePlanName, unauthenticated } from "../shopify.server";
@@ -873,58 +872,16 @@ export default function SEOOptimizer() {
           </Banner>
         )}
 
-        <InlineGrid columns={{ xs: 1, sm: 2, md: 6 }} gap="400">
-          <MetricCard
-            title="Site-adjusted score"
-            value={String(averageScore)}
-            suffix="/100"
-            tone={averageScore >= 80 ? "success" : averageScore >= 60 ? "warning" : "critical"}
-            icon={ShieldCheckMarkIcon}
-            progress={averageScore}
-          />
-          <MetricCard
-            title="On-page score"
-            value={String(averageOnPageScore)}
-            suffix="/100"
-            tone={averageOnPageScore >= 80 ? "success" : averageOnPageScore >= 60 ? "warning" : "critical"}
-            icon={ChartVerticalFilledIcon}
-            progress={averageOnPageScore}
-          />
-          <MetricCard
-            title="High impact issues"
-            value={String(issueStats.High)}
-            tone={issueStats.High ? "critical" : "success"}
-            icon={AlertTriangleIcon}
-            progress={Math.min(100, issueStats.High * 12)}
-          />
-          <MetricCard
-            title="Quick wins"
-            value={String(quickWins)}
-            tone={quickWins ? "warning" : "success"}
-            icon={MagicIcon}
-            progress={Math.min(100, quickWins * 8)}
-          />
-          <MetricCard
-            title="Affected posts"
-            value={String(affectedPosts)}
-            suffix={`/${totalPosts}`}
-            tone={affectedPosts ? "info" : "success"}
-            icon={NoteIcon}
-            progress={totalPosts ? (affectedPosts / totalPosts) * 100 : 0}
-          />
-          <MetricCard
-            title="Saved scans"
-            value={String(scannedPosts)}
-            suffix={`/${totalPosts}`}
-            tone={scannedPosts === totalPosts && totalPosts > 0 ? "success" : "info"}
-            icon={ChartVerticalFilledIcon}
-            progress={totalPosts ? (scannedPosts / totalPosts) * 100 : 0}
-          />
-        </InlineGrid>
-
-        <Text as="p" variant="bodySm" tone="subdued">
-          On-page score measures each saved article by itself. Site-adjusted score also includes orphan content, duplication, and keyword overlap across the store.
-        </Text>
+        <AnalyzerSummary
+          score={averageScore}
+          onPageScore={averageOnPageScore}
+          failed={issueGroups.filter((issue) => issue.impact === "High").length}
+          warnings={issueGroups.filter((issue) => issue.impact !== "High").length}
+          passedPosts={Math.max(0, scannedPosts - affectedPosts)}
+          scannedPosts={scannedPosts}
+          totalPosts={totalPosts}
+          quickWins={quickWins}
+        />
 
         <Layout>
           <Layout.Section>
@@ -939,7 +896,7 @@ export default function SEOOptimizer() {
                       selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
                       onSelectionChange={handleSelectionChange}
                       headings={[
-                        { title: "Issue" },
+                        { title: "Check" },
                         { title: "Affected" },
                         { title: "Impact" },
                         { title: "Effort" },
@@ -952,6 +909,8 @@ export default function SEOOptimizer() {
                       {visibleIssues.map((issue, index) => (
                         <IndexTable.Row id={issue.id} key={issue.id} position={index} selected={selectedResources.includes(issue.id)}>
                           <IndexTable.Cell>
+                            <InlineStack gap="200" blockAlign="center" wrap={false}>
+                            <Icon source={issue.impact === "High" ? XCircleIcon : AlertTriangleIcon} tone={issue.impact === "High" ? "critical" : "caution"} />
                             <div className="bp-seo-issue-cell">
                               <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
                                 {issue.issue}
@@ -960,6 +919,7 @@ export default function SEOOptimizer() {
                                 {issue.examples.slice(0, 2).join(", ")}
                               </Text>
                             </div>
+                            </InlineStack>
                           </IndexTable.Cell>
                           <IndexTable.Cell>{issue.affected}</IndexTable.Cell>
                           <IndexTable.Cell>
@@ -1192,45 +1152,51 @@ export default function SEOOptimizer() {
   );
 }
 
-function MetricCard({
-  title,
-  value,
-  suffix,
-  tone,
-  icon,
-  progress,
-}: {
-  title: string;
-  value: string;
-  suffix?: string;
-  tone: "success" | "warning" | "critical" | "info";
-  icon: any;
-  progress: number;
+/** Rank Math style summary: overall score and how many checks fail or warn. */
+function AnalyzerSummary({ score, onPageScore, failed, warnings, passedPosts, scannedPosts, totalPosts, quickWins }: {
+  score: number; onPageScore: number; failed: number; warnings: number; passedPosts: number; scannedPosts: number; totalPosts: number; quickWins: number;
 }) {
+  const tone = score >= 80 ? "success" : score >= 50 ? "caution" : "critical";
   return (
-    <Card padding="400">
-      <BlockStack gap="300">
-        <InlineStack align="space-between" blockAlign="center" wrap={false}>
-          <InlineStack gap="150" blockAlign="center" wrap={false}>
-            <Icon source={icon} tone={tone as any} />
-            <Text as="span" variant="bodySm" fontWeight="semibold" tone="subdued">
-              {title}
-            </Text>
+    <Card>
+      <InlineGrid columns={{ xs: 1, md: "1fr 2fr" }} gap="600">
+        <BlockStack gap="200">
+          <Text as="h2" variant="headingSm" tone="subdued">Overall SEO score</Text>
+          <InlineStack gap="100" blockAlign="end">
+            <Text as="p" variant="heading3xl" fontWeight="bold" tone={tone}>{scannedPosts ? String(score) : "—"}</Text>
+            <Text as="span" tone="subdued">/ 100</Text>
           </InlineStack>
-        </InlineStack>
-        <InlineStack gap="100" blockAlign="end">
-          <Text as="span" variant="heading2xl" fontWeight="bold">
-            {value}
+          <ProgressBar progress={scannedPosts ? score : 0} size="small" tone={score >= 80 ? "success" : score >= 50 ? "highlight" : "critical"} />
+          <Text as="p" variant="bodySm" tone="subdued">
+            {scannedPosts ? `On-page average ${onPageScore}/100. The overall score also counts orphan posts, duplicates and keyword overlap.` : "Run a scan to score your posts."}
           </Text>
-          {suffix && (
-            <Text as="span" variant="bodyMd" tone="subdued">
-              {suffix}
-            </Text>
-          )}
-        </InlineStack>
-        <ProgressBar progress={Math.max(0, Math.min(100, progress))} tone={tone === "critical" ? "critical" : tone === "warning" ? "primary" : "success"} size="small" />
-      </BlockStack>
+        </BlockStack>
+        <InlineGrid columns={{ xs: 2, sm: 4 }} gap="400">
+          <SummaryStat icon={XCircleIcon} tone="critical" label="Failed checks" value={failed} hint="High-impact problems" />
+          <SummaryStat icon={AlertTriangleIcon} tone="caution" label="Warnings" value={warnings} hint="Worth improving" />
+          <SummaryStat icon={CheckCircleIcon} tone="success" label="Posts passing" value={passedPosts} hint={`of ${scannedPosts} scanned`} />
+          <SummaryStat icon={MagicIcon} tone="magic" label="Quick wins" value={quickWins} hint="Low-effort fixes" />
+        </InlineGrid>
+      </InlineGrid>
+      {scannedPosts < totalPosts && (
+        <Box paddingBlockStart="300">
+          <Text as="p" variant="bodySm" tone="subdued">{`${scannedPosts} of ${totalPosts} posts have been scanned.`}</Text>
+        </Box>
+      )}
     </Card>
+  );
+}
+
+function SummaryStat({ icon, tone, label, value, hint }: { icon: any; tone: "critical" | "caution" | "success" | "magic"; label: string; value: number; hint: string }) {
+  return (
+    <BlockStack gap="100">
+      <InlineStack gap="100" blockAlign="center" wrap={false}>
+        <Icon source={icon} tone={tone} />
+        <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+      </InlineStack>
+      <Text as="p" variant="headingXl" fontWeight="bold">{String(value)}</Text>
+      <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>
+    </BlockStack>
   );
 }
 
