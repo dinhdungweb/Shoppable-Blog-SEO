@@ -1,13 +1,11 @@
 import { useState } from "react";
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json , useLoaderData, useNavigate, useSearchParams } from "react-router";
 import {
   Badge,
   BlockStack,
   Box,
   Button,
-  Card,
   EmptyState,
   IndexTable,
   ProgressBar,
@@ -16,7 +14,7 @@ import {
   Select,
   Text,
 } from "@shopify/polaris";
-import { AlertTriangleIcon, ChartVerticalIcon, ExportIcon, InfoIcon } from "@shopify/polaris-icons";
+import { AlertTriangleIcon, ChartVerticalIcon, InfoIcon } from "@shopify/polaris-icons";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { allowedRanges, loadAnalyticsReport, resolveRange } from "../analytics.server";
@@ -95,7 +93,7 @@ export default function Insights() {
       subtitle="How blog readers become customers: from Google, to the article, to the products you linked, to orders."
       fullWidth
       tabs={{ items: ANALYTICS_WORKSPACE_TABS, activeId: "overview" }}
-      secondaryActions={[{ content: "Export CSV", icon: ExportIcon, onAction: exportCsv, loading: exporting, disabled: !data.totalPosts }]}
+      secondaryActions={[{ content: "Export CSV", icon: "export", onAction: exportCsv, loading: exporting, disabled: !data.totalPosts }]}
     >
       <BlockStack gap="500">
         <InlineStack align="end" blockAlign="center" gap="300">
@@ -133,7 +131,7 @@ export default function Insights() {
         <RevenueNote estimated={metrics.estimatedRevenue} otherCurrencies={metrics.otherCurrencies} currency={currency} />
 
         <InlineGrid columns={{ xs: 1, md: "1fr 2fr" }} gap="400">
-          <Card padding="400">
+          <s-section>
             <BlockStack gap="400">
               <BlockStack gap="050">
                 <Text as="h2" variant="headingMd" fontWeight="bold">Reader funnel</Text>
@@ -156,9 +154,9 @@ export default function Insights() {
                 </Text>
               )}
             </BlockStack>
-          </Card>
+          </s-section>
 
-          <Card padding="400">
+          <s-section>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd" fontWeight="bold">Over time</Text>
@@ -170,11 +168,11 @@ export default function Insights() {
                 </EmptyState>
               )}
             </BlockStack>
-          </Card>
+          </s-section>
         </InlineGrid>
 
         <InlineGrid columns={{ xs: 1, md: "2fr 1fr" }} gap="400">
-          <Card padding="0">
+          <s-section padding="none">
             <Box padding="400"><Text as="h2" variant="headingMd">What to improve</Text></Box>
             {data.insights.length ? (
               <ActionRows>
@@ -195,9 +193,9 @@ export default function Insights() {
             ) : (
               <Box padding="400" paddingBlockStart="0"><Text as="p" tone="subdued">Recommendations appear once posts have enough readers (about 100 per post) to be reliable.</Text></Box>
             )}
-          </Card>
+          </s-section>
 
-          <Card padding="400">
+          <s-section>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd" fontWeight="bold">Where readers come from</Text>
               {data.channels.length ? data.channels.map((channel) => (
@@ -211,10 +209,10 @@ export default function Insights() {
               )) : <Text as="p" tone="subdued">No sessions yet.</Text>}
               <Text as="p" variant="bodySm" tone="subdued">Sessions by the site that sent the reader to the post. Orders keep the source of the reading session.</Text>
             </BlockStack>
-          </Card>
+          </s-section>
         </InlineGrid>
 
-        <Card padding="0">
+        <s-section padding="none">
           <Box padding="400" paddingBlockEnd="200">
             <InlineStack align="space-between" blockAlign="center">
               <Text as="h2" variant="headingMd" fontWeight="bold">Posts</Text>
@@ -267,9 +265,9 @@ export default function Insights() {
               </EmptyState>
             </Box>
           )}
-        </Card>
+        </s-section>
 
-        <Card padding="400">
+        <s-section>
           <BlockStack gap="300">
             <Text as="h2" variant="headingMd" fontWeight="bold">Products sold through blog posts</Text>
             {data.products.length ? (
@@ -289,7 +287,7 @@ export default function Insights() {
               </div>
             ) : <Text as="p" tone="subdued">Products appear after shoppers click them in a blog post.</Text>}
           </BlockStack>
-        </Card>
+        </s-section>
       </BlockStack>
     </AppPage>
   );

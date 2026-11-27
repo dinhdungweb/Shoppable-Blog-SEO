@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json , useFetcher, useLoaderData } from "react-router";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, IndexTable, InlineStack, Select, Text } from "@shopify/polaris";
+import {
+  Badge,
+  Banner,
+  BlockStack,
+  Box,
+  Button,
+  Divider,
+  EmptyState,
+  IndexTable,
+  InlineStack,
+  Select,
+  Text,
+} from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { analyzeContentDecay } from "../content-decay";
 import type { ContentDecayReport, DecayArticle, DecayIssue, DecayProduct } from "../content-decay";
@@ -102,7 +113,7 @@ export default function ContentDecayPage() {
 
   useEffect(() => { setPage(1); }, [filter, report]);
 
-  if (!initial.canContentDecay) return <AppPage title="Keywords & decay" subtitle="See which searches bring traffic, and which posts are losing it." fullWidth tabs={{ items: ANALYTICS_WORKSPACE_TABS, activeId: "keywords" }}><SearchConsoleCard data={initial.searchConsole} mode="keywords" planKey={initial.planKey} /><Card><EmptyState heading="Content decay monitoring is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></Card></AppPage>;
+  if (!initial.canContentDecay) return <AppPage title="Keywords & decay" subtitle="See which searches bring traffic, and which posts are losing it." fullWidth tabs={{ items: ANALYTICS_WORKSPACE_TABS, activeId: "keywords" }}><SearchConsoleCard data={initial.searchConsole} mode="keywords" planKey={initial.planKey} /><s-section><EmptyState heading="Content decay monitoring is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=content_decay&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Upgrade to monitor traffic decline, stale articles, unavailable products and broken outbound links across your Shopify blog.</p></EmptyState></s-section></AppPage>;
 
   return <AppPage
     title="Keywords & decay"
@@ -115,7 +126,7 @@ export default function ContentDecayPage() {
       <SearchConsoleCard data={initial.searchConsole} mode="keywords" planKey={initial.planKey} />
       <Text as="h2" variant="headingLg">Content decay</Text>
       {response?.error && <Banner tone="critical"><p>{response.error}</p></Banner>}
-      {!report ? <Card><EmptyState heading="Check your content health" action={{ content: "Analyze content", onAction: run, loading: analyzing }} image={EMPTY_IMAGE}><p>The analysis is read-only and saved per shop. It never changes an article automatically.</p></EmptyState></Card> : <>
+      {!report ? <s-section><EmptyState heading="Check your content health" action={{ content: "Analyze content", onAction: run, loading: analyzing }} image={EMPTY_IMAGE}><p>The analysis is read-only and saved per shop. It never changes an article automatically.</p></EmptyState></s-section> : <>
         <StatTiles>
           <StatTile label="Articles checked" value={report.articlesAnalyzed} />
           <StatTile label="High priority" value={report.issues.filter((item) => item.severity === "high").length} tone={report.issues.some((item) => item.severity === "high") ? "bad" : "good"} />
@@ -126,7 +137,7 @@ export default function ContentDecayPage() {
         {!report.schemaEnabled && <Banner tone="warning" title="Article schema is disabled"><p>Enable Blog schema in Settings before relying on structured data for Shopify articles. <Button size="micro" url="/app/settings">Open settings</Button></p></Banner>}
         {!report.inventoryDataAvailable && <Banner tone="info" title="Inventory-level checks are limited"><p>The current Shopify installation does not provide inventory quantities. Deleted and inactive products are still checked; out-of-stock checks will run only when inventory access is available.</p></Banner>}
         {report.externalLinksSkipped > 0 && <Banner tone="info"><p>{report.externalLinksSkipped} additional external links were skipped because each manual analysis checks at most {MAX_EXTERNAL_LINKS} unique article links.</p></Banner>}
-        <Card padding="0">
+        <s-section padding="none">
           <Box padding="400"><InlineStack align="space-between" blockAlign="center"><BlockStack gap="100"><Text as="h2" variant="headingMd">Priority queue</Text><Text as="p" variant="bodySm" tone="subdued">Updated {formatDate(analyzedAt)} · Review high-priority rows first. No changes are published automatically.</Text></BlockStack><Box minWidth="230px"><Select label="Issue type" labelHidden value={filter} onChange={setFilter} options={filterOptions(report)} /></Box></InlineStack></Box>
           <Divider />
           {visibleIssues.length ? <IndexTable
@@ -138,7 +149,7 @@ export default function ContentDecayPage() {
           >
             {pagedIssues.map((issue, index) => <IssueRow key={issue.id} issue={issue} index={index} />)}
           </IndexTable> : <Box padding="500"><Text as="p" tone="subdued">No content decay issues match this filter.</Text></Box>}
-        </Card>
+        </s-section>
       </>}
     </BlockStack>
   </AppPage>;

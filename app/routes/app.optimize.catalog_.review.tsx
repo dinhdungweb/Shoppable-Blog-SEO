@@ -1,10 +1,21 @@
 import crypto from "node:crypto";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
-import { Badge, Banner, BlockStack, Button, Card, IndexTable, InlineStack, Layout, Modal, Page, Text, TextField } from "@shopify/polaris";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json, redirect, useFetcher, useLoaderData } from "react-router";
+import {
+  Badge,
+  Banner,
+  BlockStack,
+  Button,
+  IndexTable,
+  InlineStack,
+  Layout,
+  Modal,
+  Text,
+  TextField,
+} from "@shopify/polaris";
+import { AppPage } from "../components/AppPage";
 import { useEffect, useMemo, useState } from "react";
-import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { isNineRouterConfigured } from "../ai-seo.server";
@@ -200,7 +211,6 @@ type Field = "seoTitle" | "seoDescription" | "imageAlt";
 
 export default function CatalogBulkReview() {
   const { resources, missing, aiEnabled, history } = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
   const shopify = useAppBridge();
   const fetcher = useFetcher<typeof action>();
   const aiFetcher = useFetcher<typeof action>();
@@ -250,13 +260,12 @@ export default function CatalogBulkReview() {
   const aiWarning = aiFetcher.data && "warning" in aiFetcher.data ? aiFetcher.data.warning : "";
 
   return (
-    <Page
-      backAction={{ content: "Bulk optimize", onAction: () => navigate("/app/optimize/catalog") }}
+    <AppPage
+      backAction={{ content: "Bulk optimize", url: "/app/optimize/catalog" }}
       title="Review search listings"
       subtitle={`${resources.length} selected · Step 2 of 2: generate, review and apply`}
       primaryAction={{ content: `Preview ${changed.length} change${changed.length === 1 ? "" : "s"}`, onAction: () => setPreview(true), disabled: !changed.length }}
     >
-      <TitleBar title="Review search listings" />
       <Layout><Layout.Section><BlockStack gap="400">
         <Steps active={1} steps={[{ title: "Select", text: "Pick up to 50 products or collections" }, { title: "Generate & review", text: "AI drafts, you edit" }, { title: "Apply", text: "Saved to Shopify, undo anytime" }]} />
         {error && <Banner tone="critical"><p>{error}</p></Banner>}
@@ -271,7 +280,7 @@ export default function CatalogBulkReview() {
             {aiEnabled ? `Generate with AI (${resources.length})` : "AI not configured"}
           </Button>
         </InlineStack>
-        <Card padding="0">
+        <s-section padding="none">
           <IndexTable resourceName={{ singular: "item", plural: "items" }} itemCount={resources.length} selectable={false} headings={[{ title: "Item" }, { title: "SEO title" }, { title: "Meta description" }, { title: "Image alt" }]}>
             {plans.map(({ row, edit, plan }, index) => (
               <IndexTable.Row id={row.id} key={row.id} position={index}>
@@ -293,9 +302,9 @@ export default function CatalogBulkReview() {
               </IndexTable.Row>
             ))}
           </IndexTable>
-        </Card>
+        </s-section>
         {history.length > 0 && (
-          <Card>
+          <s-section>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">Recent changes</Text>
@@ -311,7 +320,7 @@ export default function CatalogBulkReview() {
                 </InlineStack>
               ))}
             </BlockStack>
-          </Card>
+          </s-section>
         )}
       </BlockStack></Layout.Section></Layout>
       <Modal
@@ -334,6 +343,6 @@ export default function CatalogBulkReview() {
           </BlockStack>
         </Modal.Section>
       </Modal>
-    </Page>
+    </AppPage>
   );
 }

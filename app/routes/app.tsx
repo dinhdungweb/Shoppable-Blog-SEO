@@ -1,9 +1,11 @@
 import { useEffect } from "react";
-import type { HeadersFunction, LoaderFunctionArgs } from "@remix-run/node";
-import { Link, Outlet, useLoaderData, useNavigation, useRouteError } from "@remix-run/react";
-import { boundary } from "@shopify/shopify-app-remix/server";
-import { AppProvider } from "@shopify/shopify-app-remix/react";
+import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { Link, Outlet, useLoaderData, useNavigation, useRouteError } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
+import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu, useAppBridge } from "@shopify/app-bridge-react";
+import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
+import polarisTranslations from "@shopify/polaris/locales/en.json";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import rmStyles from "../styles/rm.css?url";
 
@@ -44,7 +46,9 @@ export default function App() {
   const { apiKey, shop } = useLoaderData<typeof loader>();
 
   return (
-    <AppProvider isEmbeddedApp apiKey={apiKey}>
+    <AppProvider apiKey={apiKey}>
+      {/* Polaris React stays until every screen uses Polaris web components. */}
+      <PolarisAppProvider i18n={polarisTranslations}>
       <CrispChatLoader shop={shop} />
       <NavigationLoading />
       <NavMenu>
@@ -59,11 +63,12 @@ export default function App() {
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       <Outlet />
+      </PolarisAppProvider>
     </AppProvider>
   );
 }
 
-// Shopify needs Remix to catch some thrown responses, so that their headers are included in the response.
+// Shopify needs React Router to catch some thrown responses, so that their headers are included in the response.
 export function ErrorBoundary() {
   return boundary.error(useRouteError());
 }

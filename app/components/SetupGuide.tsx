@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { BlockStack, Box, Button, Card, Collapsible, Icon, InlineStack, ProgressBar, Text } from "@shopify/polaris";
+import {
+  BlockStack,
+  Box,
+  Button,
+  Collapsible,
+  Icon,
+  InlineStack,
+  ProgressBar,
+  Text,
+} from "@shopify/polaris";
 import { CheckCircleIcon, ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 
 export type SetupStep = {
@@ -47,7 +56,7 @@ export function SetupGuide({ steps }: { steps: SetupStep[] }) {
   };
 
   return (
-    <Card>
+    <s-section>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="start" wrap={false}>
           <BlockStack gap="100">
@@ -114,6 +123,6 @@ export function SetupGuide({ steps }: { steps: SetupStep[] }) {
           </BlockStack>
         </Collapsible>
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }

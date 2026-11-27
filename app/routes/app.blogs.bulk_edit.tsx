@@ -1,10 +1,20 @@
 import crypto from "node:crypto";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
-import { Banner, BlockStack, Button, Card, IndexTable, InlineStack, Layout, Modal, Page, Text, TextField } from "@shopify/polaris";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json, redirect, useFetcher, useLoaderData } from "react-router";
+
+import {
+  Banner,
+  BlockStack,
+  Button,
+  IndexTable,
+  InlineStack,
+  Layout,
+  Modal,
+  Text,
+  TextField,
+} from "@shopify/polaris";
+import { AppPage } from "../components/AppPage";
 import { useEffect, useMemo, useState } from "react";
-import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { generateAiSeoSuggestion, isNineRouterConfigured } from "../ai-seo.server";
@@ -134,7 +144,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function BulkSeoEdit() {
   const { articles, aiEnabled, history } = useLoaderData<typeof loader>();
-  const navigate = useNavigate();
   const fetcher = useFetcher<typeof action>();
   const aiFetcher = useFetcher<typeof action>();
   const [items, setItems] = useState(articles.map((article) => ({ ...article, metaTitle: article.metaTitle || article.suggestedMetaTitle, metaDescription: article.metaDescription || article.suggestedMetaDescription, imageAlt: article.imageAlt || (article.imageUrl ? article.suggestedImageAlt : "") })));
@@ -154,8 +163,7 @@ export default function BulkSeoEdit() {
   const error = fetcher.data && "error" in fetcher.data ? fetcher.data.error : "";
   const aiError = aiFetcher.data && "error" in aiFetcher.data ? aiFetcher.data.error : "";
   const aiWarning = aiFetcher.data && "warning" in aiFetcher.data ? aiFetcher.data.warning : "";
-  return <Page backAction={{ content: "Meta tags", onAction: () => navigate("/app/optimize") }} title="Review meta tags" subtitle={`${items.length} selected posts · Step 2 of 2: generate, review and apply`} primaryAction={{ content: `Preview ${changed.length} changes`, onAction: () => setPreview(true), disabled: !changed.length }}>
-    <TitleBar title="Review meta tags" />
+  return <AppPage backAction={{ content: "Meta tags", url: "/app/optimize" }} title="Review meta tags" subtitle={`${items.length} selected posts · Step 2 of 2: generate, review and apply`} primaryAction={{ content: `Preview ${changed.length} changes`, onAction: () => setPreview(true), disabled: !changed.length }}>
     <Layout><Layout.Section><BlockStack gap="400">
       <Steps active={1} steps={[{ title: "Select", text: "Pick up to 50 posts" }, { title: "Generate & review", text: "AI drafts, you edit" }, { title: "Apply", text: "Saved to Shopify, undo anytime" }]} />
       {error && <Banner tone="critical"><p>{error}</p></Banner>}
@@ -163,20 +171,20 @@ export default function BulkSeoEdit() {
       {aiWarning && <Banner tone="warning"><p>{aiWarning}</p></Banner>}
       <Banner tone="info" title="Review before publishing"><p>Suggestions are created from existing article content. Nothing is written to Shopify until you confirm the preview.</p></Banner>
       <InlineStack align="end"><Button disabled={!aiEnabled} loading={aiFetcher.state !== "idle"} onClick={() => aiFetcher.submit({ intent: "generate-ai", ids: articles.map((article) => article.id).join(",") }, { method: "post" })}>{aiEnabled ? "Generate with AI" : "AI not configured"}</Button></InlineStack>
-      <Card padding="0"><IndexTable resourceName={{ singular: "article", plural: "articles" }} itemCount={items.length} selectable={false} headings={[{ title: "Article" }, { title: "SEO title" }, { title: "Meta description" }, { title: "Featured image alt" }]}>
+      <s-section padding="none"><IndexTable resourceName={{ singular: "article", plural: "articles" }} itemCount={items.length} selectable={false} headings={[{ title: "Article" }, { title: "SEO title" }, { title: "Meta description" }, { title: "Featured image alt" }]}>
         {items.map((item, index) => <IndexTable.Row id={item.id} key={item.id} position={index}>
           <IndexTable.Cell><div style={{ width: 220 }}><Text as="span" fontWeight="semibold">{item.title}</Text></div></IndexTable.Cell>
           <IndexTable.Cell><div style={{ minWidth: 280 }}><TextField label="SEO title" labelHidden value={item.metaTitle} maxLength={70} showCharacterCount autoComplete="off" onChange={(value) => update(item.id, "metaTitle", value)} /></div></IndexTable.Cell>
           <IndexTable.Cell><div style={{ minWidth: 380 }}><TextField label="Meta description" labelHidden value={item.metaDescription} maxLength={160} showCharacterCount autoComplete="off" onChange={(value) => update(item.id, "metaDescription", value)} /></div></IndexTable.Cell>
           <IndexTable.Cell><div style={{ minWidth: 260 }}><TextField label="Featured image alt" labelHidden value={item.imageAlt} disabled={!item.imageUrl} maxLength={255} autoComplete="off" placeholder={item.imageUrl ? "Describe the image" : "No featured image"} onChange={(value) => update(item.id, "imageAlt", value)} /></div></IndexTable.Cell>
         </IndexTable.Row>)}
-      </IndexTable></Card>
-      {history.length > 0 && <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Recent changes</Text><Button variant="plain" url="/app/optimize/history">View all history</Button></InlineStack>{history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.articleTitle}</Text><Text as="span" tone="subdued" variant="bodySm">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied"} loading={fetcher.state !== "idle" && fetcher.formData?.get("changeId") === row.id} onClick={() => fetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo</Button></InlineStack>)}</BlockStack></Card>}
+      </IndexTable></s-section>
+      {history.length > 0 && <s-section><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Recent changes</Text><Button variant="plain" url="/app/optimize/history">View all history</Button></InlineStack>{history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.articleTitle}</Text><Text as="span" tone="subdued" variant="bodySm">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied"} loading={fetcher.state !== "idle" && fetcher.formData?.get("changeId") === row.id} onClick={() => fetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo</Button></InlineStack>)}</BlockStack></s-section>}
     </BlockStack></Layout.Section></Layout>
     <Modal open={preview} onClose={() => setPreview(false)} title="Confirm SEO changes" primaryAction={{ content: `Apply to ${changed.length} articles`, onAction: apply, loading: fetcher.state !== "idle", disabled: !changed.length }} secondaryActions={[{ content: "Continue editing", onAction: () => setPreview(false) }]}>
       <Modal.Section><BlockStack gap="400">{changed.map((item) => { const before = articles.find((row) => row.id === item.id); return <BlockStack gap="150" key={item.id}><Text as="h3" fontWeight="semibold">{item.title}</Text>{before?.metaTitle !== item.metaTitle && <Text as="p" variant="bodySm" tone="subdued">Title: {before?.metaTitle || "(empty)"} → {item.metaTitle || "(empty)"}</Text>}{before?.metaDescription !== item.metaDescription && <Text as="p" variant="bodySm" tone="subdued">Description: {before?.metaDescription || "(empty)"} → {item.metaDescription || "(empty)"}</Text>}{before?.imageAlt !== item.imageAlt && <Text as="p" variant="bodySm" tone="subdued">Image alt: {before?.imageAlt || "(empty)"} → {item.imageAlt || "(empty)"}</Text>}</BlockStack>; })}</BlockStack></Modal.Section>
     </Modal>
-  </Page>;
+  </AppPage>;
 }
 
 function parseIds(value: string) { return [...new Set(value.split(",").map((id) => id.trim()).filter(Boolean).map((id) => /^\d+$/.test(id) ? `gid://shopify/Article/${id}` : id).filter((id) => /^gid:\/\/shopify\/Article\/\d+$/.test(id)))].slice(0, 50); }

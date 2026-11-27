@@ -1,6 +1,15 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { useState } from "react";
-import { Badge, BlockStack, Box, Button, Card, Icon, InlineStack, Page, Text } from "@shopify/polaris";
+import {
+  Badge,
+  BlockStack,
+  Box,
+  Button,
+  Icon,
+  InlineStack,
+  Text,
+} from "@shopify/polaris";
+import { AppPage } from "../components/AppPage";
 import {
   CalendarIcon,
   CheckCircleIcon,
@@ -10,7 +19,6 @@ import {
   NoteIcon,
   ArrowUpIcon,
 } from "@shopify/polaris-icons";
-import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { CHANGELOG_RELEASES, type ChangelogRelease } from "../changelog";
 
@@ -45,10 +53,9 @@ export default function ChangelogPage() {
   };
 
   return (
-    <Page title="What's new" subtitle="A concise history of new features, improvements and fixes" backAction={{ content: "Settings", url: "/app/settings" }}>
-      <TitleBar title="What's new" />
+    <AppPage title="What's new" subtitle="A concise history of new features, improvements and fixes" backAction={{ content: "Settings", url: "/app/settings" }}>
       <BlockStack gap="500">
-        <Card>
+        <s-section>
           <div className="bp-changelog-hero">
             <BlockStack gap="200">
               <InlineStack gap="200" blockAlign="center">
@@ -66,7 +73,7 @@ export default function ChangelogPage() {
               <SummaryStat icon={CalendarIcon} value={formatShortDate(CHANGELOG_RELEASES[0]?.date)} label="Latest release" />
             </div>
           </div>
-        </Card>
+        </s-section>
 
         <div className="bp-changelog-layout">
           <div className="bp-changelog-list">
@@ -130,7 +137,7 @@ export default function ChangelogPage() {
           </div>
 
           <aside className="bp-changelog-aside">
-            <Card>
+            <s-section>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">How to read updates</Text>
                 <Legend icon={MagicIcon} badge="New" text="New capabilities available in the app." />
@@ -142,11 +149,11 @@ export default function ChangelogPage() {
                   </Text>
                 </Box>
               </BlockStack>
-            </Card>
+            </s-section>
           </aside>
         </div>
       </BlockStack>
-    </Page>
+    </AppPage>
   );
 }
 

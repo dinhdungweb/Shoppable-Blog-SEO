@@ -1,10 +1,8 @@
 import { useState, useEffect } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { unstable_usePrompt, useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json , unstable_usePrompt, useFetcher, useLoaderData, useNavigate } from "react-router";
 import {
   Banner,
-  Card,
   Text,
   BlockStack,
   InlineStack,
@@ -427,21 +425,21 @@ function Settings({ section }: { section: SettingsSectionId }) {
                 title="App status"
                 description="When the app is inactive, products, breadcrumbs and the table of contents are hidden on your storefront and no tracking data is collected. Settings and data are kept."
               >
-                <Card>
+                <s-section>
                   <InlineStack align="space-between" blockAlign="center" gap="300">
                     <Checkbox label="App is active on the storefront" checked={formState.appStatus} onChange={(value) => handleChange('appStatus', value)} />
                     <Badge tone={formState.appStatus ? 'success' : undefined}>{formState.appStatus ? 'Active' : 'Inactive'}</Badge>
                   </InlineStack>
-                </Card>
+                </s-section>
               </Layout.AnnotatedSection>
               <Layout.AnnotatedSection title="Your data" description="How plan changes and uninstalling affect what the app stores.">
-                <Card>
+                <s-section>
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd">Changing plans never deletes settings: features outside your plan stop applying and come back when you upgrade.</Text>
                     <Text as="p" variant="bodyMd">If you uninstall the app, your data is kept for 48 hours so reinstalling restores everything, then it is permanently deleted.</Text>
                     <InlineStack><Button variant="plain" url="/privacy" target="_blank">Privacy policy</Button></InlineStack>
                   </BlockStack>
-                </Card>
+                </s-section>
               </Layout.AnnotatedSection>
             </Layout>
           )}
@@ -453,7 +451,7 @@ function Settings({ section }: { section: SettingsSectionId }) {
             </Banner>
             <InlineGrid columns={{ xs: 1, lg: 'minmax(380px, 1fr) minmax(420px, 1fr)' }} gap="400">
               <BlockStack gap="400">
-                <Card padding="400">
+                <s-section>
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd">Display mode</Text>
                     <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
@@ -521,9 +519,9 @@ function Settings({ section }: { section: SettingsSectionId }) {
                       </BlockStack>
                     )}
                   </BlockStack>
-                </Card>
+                </s-section>
 
-                <Card padding="400">
+                <s-section>
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd" fontWeight="bold">Card style</Text>
                     <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
@@ -592,9 +590,9 @@ function Settings({ section }: { section: SettingsSectionId }) {
                       />
                     </InlineGrid>
                   </BlockStack>
-                </Card>
+                </s-section>
 
-                <Card padding="400">
+                <s-section>
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd" fontWeight="bold">Product actions</Text>
                     <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
@@ -645,12 +643,12 @@ function Settings({ section }: { section: SettingsSectionId }) {
                       />
                     )}
                   </BlockStack>
-                </Card>
+                </s-section>
               </BlockStack>
 
-              <Card padding="400">
+              <s-section>
                 <ShoppableDisplayPreview config={formState} />
-              </Card>
+              </s-section>
             </InlineGrid>
             </BlockStack>
           )}
@@ -679,7 +677,7 @@ function Settings({ section }: { section: SettingsSectionId }) {
                   </Banner>
                 )}
 
-                <Card padding="400">
+                <s-section>
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd">Breadcrumbs</Text>
                     <CustomToggle
@@ -750,10 +748,10 @@ function Settings({ section }: { section: SettingsSectionId }) {
                       <CustomToggle disabled={breadcrumbsSettingsDisabled} checked={formState.breadcrumbsCurrentClickable} label="Make current article clickable" onChange={(value) => handleChange('breadcrumbsCurrentClickable', value)} />
                     </BlockStack>
                   </BlockStack>
-                </Card>
+                </s-section>
 
                 <div id="toc-settings">
-                  <Card padding="400">
+                  <s-section>
                     <BlockStack gap="400">
                       <Text as="h2" variant="headingMd">Table of contents</Text>
                       <CustomToggle
@@ -851,10 +849,10 @@ function Settings({ section }: { section: SettingsSectionId }) {
                         <CustomToggle disabled={tocSettingsDisabled} checked={formState.tocMobileCollapsed} label="Collapse on mobile" onChange={(value) => handleChange('tocMobileCollapsed', value)} />
                       </BlockStack>
                     </BlockStack>
-                  </Card>
+                  </s-section>
                 </div>
 
-                <Card padding="400">
+                <s-section>
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd" fontWeight="bold">Shortcodes</Text>
                     <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
@@ -865,10 +863,10 @@ function Settings({ section }: { section: SettingsSectionId }) {
                       <Snippet label="Collapsible TOC" value="[[SBS_TOC:collapsible]]" />
                     </InlineGrid>
                   </BlockStack>
-                </Card>
+                </s-section>
 
                 {canCustomCss && (
-                  <Card padding="400">
+                  <s-section>
                     <TextField
                       label="Custom content navigation CSS"
                       value={formState.contentNavCustomCss || ''}
@@ -877,17 +875,17 @@ function Settings({ section }: { section: SettingsSectionId }) {
                       multiline={5}
                       helpText="Injected only with breadcrumbs and table of contents."
                     />
-                  </Card>
+                  </s-section>
                 )}
               </BlockStack>
 
-              <Card padding="400">
+              <s-section>
                 <BlockStack gap="400">
                   <Text as="h2" variant="headingMd" fontWeight="bold">Preview</Text>
                   <BreadcrumbPreview config={contentNavigationPreviewConfig} />
                   <TocPreview config={contentNavigationPreviewConfig} />
                 </BlockStack>
-              </Card>
+              </s-section>
             </InlineGrid>
             </BlockStack>
           )}
@@ -917,7 +915,7 @@ function Settings({ section }: { section: SettingsSectionId }) {
                 </InlineGrid>
               </Layout.AnnotatedSection>
               <Layout.AnnotatedSection title="Conversion tracking" description="Credit product clicks, add-to-carts and orders to the post that sent the shopper.">
-                <Card>
+                <s-section>
                   <BlockStack gap="400">
                     <Checkbox
                       label="Track conversions and revenue from blog traffic"
@@ -932,19 +930,19 @@ function Settings({ section }: { section: SettingsSectionId }) {
                       helpText="How long after a product click an add-to-cart or order is credited to that post. Applies to new clicks."
                     />
                   </BlockStack>
-                </Card>
+                </s-section>
               </Layout.AnnotatedSection>
               <Layout.AnnotatedSection title="UTM links" description="Campaign parameters for your own analytics tools.">
-                <Card>
+                <s-section>
                   <Select label="UTM rules" options={['Auto-append to product links', 'Do not append']} value={formState.utmRules} onChange={(v) => handleChange('utmRules', v)} helpText="UTMs are added only when a shopper clicks. Search engines always see clean product links, and conversion tracking works either way." />
-                </Card>
+                </s-section>
               </Layout.AnnotatedSection>
             </Layout>
           )}
 
           {selectedTabId === 'rules' && (
             <BlockStack gap="400">
-              <Card padding="400">
+              <s-section>
                 <BlockStack gap="400">
                   <BlockStack gap="100">
                     <Text as="h2" variant="headingMd" fontWeight="bold">AI writing rules</Text>
@@ -988,9 +986,9 @@ function Settings({ section }: { section: SettingsSectionId }) {
                     helpText={`Separate with commas or new lines. ${parseForbiddenWords(formState.forbiddenWords).length} of 50 used.`}
                   />
                 </BlockStack>
-              </Card>
+              </s-section>
 
-              <Card padding="400">
+              <s-section>
                 <BlockStack gap="400">
                   <BlockStack gap="100">
                     <Text as="h2" variant="headingMd" fontWeight="bold">Meta tag templates</Text>
@@ -1013,14 +1011,14 @@ function Settings({ section }: { section: SettingsSectionId }) {
                     helpText={`Preview: ${renderMetaTemplate(formState.metaDescriptionTemplate || DEFAULT_META_DESCRIPTION_TEMPLATE, META_TEMPLATE_PREVIEW) || '—'}`}
                   />
                 </BlockStack>
-              </Card>
+              </s-section>
             </BlockStack>
           )}
 
           {selectedTabId === 'integrations' && (
             <BlockStack gap="400">
               <SearchConsoleCard data={searchConsole} mode="connection" planKey={planKey} />
-              <Card padding="400">
+              <s-section>
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
                     <Text as="h2" variant="headingMd" fontWeight="bold">AI assistant</Text>
@@ -1038,7 +1036,7 @@ function Settings({ section }: { section: SettingsSectionId }) {
                     <Button variant="plain" url="/app/pricing">Get more AI generations</Button>
                   </InlineStack>
                 </BlockStack>
-              </Card>
+              </s-section>
             </BlockStack>
           )}
 
@@ -1054,7 +1052,7 @@ function Settings({ section }: { section: SettingsSectionId }) {
 
 function TrackingFact({ label, value, ok, hint, action }: { label: string; value: string; ok: boolean; hint?: string; action?: React.ReactNode }) {
   return (
-    <Card padding="300">
+    <s-section>
       <BlockStack gap="100">
         <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
         <InlineStack gap="100" blockAlign="center">
@@ -1064,7 +1062,7 @@ function TrackingFact({ label, value, ok, hint, action }: { label: string; value
         {hint && <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>}
         {action}
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 

@@ -1,4 +1,4 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "react-router";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { loadAnalyticsReport, resolveRange } from "../analytics.server";
 import { toCsv } from "../analytics-insights";

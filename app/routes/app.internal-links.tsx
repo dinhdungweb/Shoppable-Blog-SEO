@@ -1,10 +1,24 @@
 import crypto from "node:crypto";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json , useFetcher, useLoaderData, useRevalidator } from "react-router";
+
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, EmptyState, InlineGrid, InlineStack, Layout, Modal, Tabs, Text } from "@shopify/polaris";
+import {
+  Badge,
+  Banner,
+  BlockStack,
+  Box,
+  Button,
+  Divider,
+  EmptyState,
+  InlineGrid,
+  InlineStack,
+  Layout,
+  Modal,
+  Tabs,
+  Text,
+} from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { analyzeInternalLinks, hasInternalLinkTarget, insertApprovedLink, previewApprovedLink } from "../internal-linking";
 import type { InternalLinkReport, LinkArticle, LinkSuggestion } from "../internal-linking";
@@ -359,7 +373,7 @@ export default function InternalLinksPage() {
   if (!initialData.canInternalLinking) {
     return (
       <AppPage title="Internal links" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "bulk" }} subnav={{ items: BULK_FIX_CHIPS, active: "links", label: "Bulk fix" }}>
-          <Card>
+          <s-section>
             <EmptyState
               heading="Internal Linking Assistant is a Pro feature"
               action={{ content: "Upgrade to Pro", url: `/app/pricing?reason=internal_linking&plan=${initialData.planKey}` }}
@@ -367,7 +381,7 @@ export default function InternalLinksPage() {
             >
               <p>Upgrade to analyze related Shopify articles, broken destinations, repeated anchors and topic clusters, then insert approved links.</p>
             </EmptyState>
-          </Card>
+          </s-section>
       </AppPage>
     );
   }
@@ -382,14 +396,14 @@ export default function InternalLinksPage() {
       secondaryActions={report ? [{ content: initialData.aiEnabled ? "Review with AI" : "AI not configured", onAction: runAiReview, loading: generatingAi, disabled: !initialData.aiEnabled || analyzing }] : []}
     >
       <BlockStack gap="500">
-        {analysisData?.error && <Card><Text as="p" tone="critical">{analysisData.error}</Text></Card>}
+        {analysisData?.error && <s-section><Text as="p" tone="critical">{analysisData.error}</Text></s-section>}
         {aiData?.error && <Banner tone="critical" title="AI review unavailable"><p>{aiData.error}</p></Banner>}
         {!report ? (
-          <Card>
+          <s-section>
             <EmptyState heading="Analyze your Shopify content" action={{ content: "Analyze links", onAction: runAnalysis, loading: analyzing }} image={EMPTY_IMAGE}>
               <p>The analysis is read-only. Links are inserted only after you approve a suggestion.</p>
             </EmptyState>
-          </Card>
+          </s-section>
         ) : <>
           <InlineGrid columns={{ xs: 2, md: 4 }} gap="400">
             <SummaryCard label="Articles analyzed" value={report.articles} tone="info" />
@@ -397,14 +411,14 @@ export default function InternalLinksPage() {
             <SummaryCard label="Orphan articles" value={report.orphanArticles.length} tone={report.orphanArticles.length ? "critical" : "success"} />
             <SummaryCard label="Broken links" value={report.brokenLinks.length} tone={report.brokenLinks.length ? "critical" : "success"} />
           </InlineGrid>
-          <Card padding="0">
+          <s-section padding="none">
             <Tabs tabs={[
               { id: "overview", content: "Overview" },
               { id: "suggestions", content: `Suggestions (${report.suggestions.length})` },
               { id: "issues", content: `Issues (${report.orphanArticles.length + report.brokenLinks.length + report.repeatedAnchors.length})` },
               { id: "clusters", content: `Topic clusters (${report.clusters.length})` },
             ]} selected={selectedTab} onSelect={setSelectedTab} />
-          </Card>
+          </s-section>
 
           {selectedTab === 0 && <Overview report={report} analyzedAt={analyzedAt} onSelectTab={setSelectedTab} />}
           {selectedTab === 1 && <SuggestionsTable
@@ -522,8 +536,8 @@ function Overview({ report, analyzedAt, onSelectTab }: { report: InternalLinkRep
     </Layout.Section>
     <Layout.Section variant="oneThird">
       <BlockStack gap="400">
-        <Card><BlockStack gap="200"><InlineStack align="space-between"><Text as="h2" variant="headingMd">Saved report</Text><Badge tone="success">Available</Badge></InlineStack><Text as="p" variant="bodySm" tone="subdued">Updated {formatAnalyzedAt(analyzedAt)}</Text><Text as="p" variant="bodySm" tone="subdued">This report stays available when you leave or reload the page.</Text></BlockStack></Card>
-        <Card><BlockStack gap="200"><Text as="h2" variant="headingMd">Safe workflow</Text><Text as="p" variant="bodySm">1. Review the source and destination</Text><Text as="p" variant="bodySm">2. Check the suggested anchor</Text><Text as="p" variant="bodySm">3. Confirm in the review dialog</Text></BlockStack></Card>
+        <s-section><BlockStack gap="200"><InlineStack align="space-between"><Text as="h2" variant="headingMd">Saved report</Text><Badge tone="success">Available</Badge></InlineStack><Text as="p" variant="bodySm" tone="subdued">Updated {formatAnalyzedAt(analyzedAt)}</Text><Text as="p" variant="bodySm" tone="subdued">This report stays available when you leave or reload the page.</Text></BlockStack></s-section>
+        <s-section><BlockStack gap="200"><Text as="h2" variant="headingMd">Safe workflow</Text><Text as="p" variant="bodySm">1. Review the source and destination</Text><Text as="p" variant="bodySm">2. Check the suggested anchor</Text><Text as="p" variant="bodySm">3. Confirm in the review dialog</Text></BlockStack></s-section>
       </BlockStack>
     </Layout.Section>
   </Layout>;
@@ -560,7 +574,7 @@ function SuggestionsTable({
     if (allSelected === selectedIds.includes(suggestion.id)) onToggle(suggestion.id);
   });
 
-  return <Card padding="0">
+  return <s-section padding="none">
     <Box padding="400">
       <InlineStack align="space-between" blockAlign="center" gap="300">
         <BlockStack gap="100">
@@ -599,7 +613,7 @@ function SuggestionsTable({
         </tr>;
       })}</tbody>
     </table></div> : <Box padding="500"><Text as="p" tone="subdued">No new related-link suggestions were found.</Text></Box>}
-  </Card>;
+  </s-section>;
 }
 
 function PreviewBlock({ before, after }: { before: string; after: string }) {
@@ -629,7 +643,7 @@ function ChangeHistory({
   onUndo: (changeId: string) => void;
 }) {
   if (!history.length) return null;
-  return <Card>
+  return <s-section>
     <BlockStack gap="300">
       <InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Recent internal link changes</Text><Button variant="plain" url="/app/optimize/history">View all history</Button></InlineStack>
       <Text as="p" variant="bodySm" tone="subdued">Undo is allowed only while the Shopify article still matches the version written by Copilot.</Text>
@@ -648,7 +662,7 @@ function ChangeHistory({
         </InlineStack>;
       })}
     </BlockStack>
-  </Card>;
+  </s-section>;
 }
 
 function previewForAnchor(suggestion: LinkSuggestion, anchorText: string) {
@@ -699,7 +713,7 @@ function ClustersPanel({ report }: { report: InternalLinkReport }) {
 }
 
 function TableSection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
-  return <Card padding="0"><Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">{title}</Text><Text as="p" variant="bodySm" tone="subdued">{description}</Text></BlockStack></Box><Divider /><div style={{ overflowX: "auto" }}>{children}</div></Card>;
+  return <s-section padding="none"><Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">{title}</Text><Text as="p" variant="bodySm" tone="subdued">{description}</Text></BlockStack></Box><Divider /><div style={{ overflowX: "auto" }}>{children}</div></s-section>;
 }
 function EmptyTable({ text }: { text: string }) { return <Box padding="500"><Text as="p" tone="subdued">{text}</Text></Box>; }
 function TableLimit({ shown, total }: { shown: number; total: number }) { return total > shown ? <Box padding="300" borderBlockStartWidth="025" borderColor="border-secondary"><Text as="p" variant="bodySm" tone="subdued">Showing {shown} of {total} rows.</Text></Box> : null; }

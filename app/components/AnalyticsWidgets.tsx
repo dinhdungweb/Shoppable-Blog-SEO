@@ -1,4 +1,11 @@
-import { BlockStack, Box, Card, Icon, InlineStack, Text, Tooltip } from "@shopify/polaris";
+import {
+  BlockStack,
+  Box,
+  Icon,
+  InlineStack,
+  Text,
+  Tooltip,
+} from "@shopify/polaris";
 import { ArrowDownIcon, ArrowUpIcon, ImageIcon, InfoIcon } from "@shopify/polaris-icons";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import { formatMoney } from "../analytics-core";
@@ -45,7 +52,7 @@ export function TrendLabel({ value }: { value: Trend }) {
 
 export function KpiCard({ title, value, change, hint, spark, color = "#4B48E8" }: { title: string; value: string; change: Trend; hint?: string; spark?: number[]; color?: string }) {
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="100">
         <InlineStack gap="100" blockAlign="center" wrap={false}>
           <Text as="p" variant="bodySm" tone="subdued">{title}</Text>
@@ -65,7 +72,7 @@ export function KpiCard({ title, value, change, hint, spark, color = "#4B48E8" }
           </div>
         )}
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 

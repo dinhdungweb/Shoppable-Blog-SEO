@@ -1,8 +1,14 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
-import { BlockStack, Button, Card, InlineGrid, InlineStack, Page, Select, Text } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json , useLoaderData, useNavigate, useSearchParams } from "react-router";
+import {
+  BlockStack,
+  Button,
+  InlineGrid,
+  InlineStack,
+  Select,
+  Text,
+} from "@shopify/polaris";
+import { AppPage } from "../components/AppPage";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { allowedRanges, loadAnalyticsReport, resolveRange } from "../analytics.server";
@@ -66,14 +72,13 @@ export default function ArticleAnalytics() {
   const previousKpis = postKpis(previous);
 
   return (
-    <Page
+    <AppPage
       fullWidth
-      backAction={{ content: "Analytics", onAction: () => navigate(`/app/analytics?range=${report.days}`) }}
+      backAction={{ content: "Analytics", url: `/app/analytics?range=${report.days}` }}
       title={title}
       subtitle={`${blogTitle} · ${report.range.start} → ${report.range.end}`}
       primaryAction={{ content: "Edit post", onAction: () => navigate(articleEditorUrl(articleId)) }}
     >
-      <TitleBar title={title} />
       <BlockStack gap="500">
         <InlineStack align="space-between" blockAlign="center">
           <InlineStack gap="300" blockAlign="center">
@@ -96,7 +101,7 @@ export default function ArticleAnalytics() {
         <RevenueNote estimated={metrics.estimatedRevenue} otherCurrencies={metrics.otherCurrencies} currency={report.currency} />
 
         <InlineGrid columns={{ xs: 1, md: "1fr 2fr" }} gap="400">
-          <Card padding="400">
+          <s-section>
             <BlockStack gap="400">
               <Text as="h2" variant="headingMd" fontWeight="bold">Funnel</Text>
               <Funnel steps={[
@@ -108,17 +113,17 @@ export default function ArticleAnalytics() {
                 { label: "Ordered", value: metrics.purchases },
               ]} />
             </BlockStack>
-          </Card>
-          <Card padding="400">
+          </s-section>
+          <s-section>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd" fontWeight="bold">Over time</Text>
               <EngagementChart data={report.chart} />
             </BlockStack>
-          </Card>
+          </s-section>
         </InlineGrid>
 
         <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
-          <Card padding="400">
+          <s-section>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd" fontWeight="bold">Products in this post</Text>
               {products.length ? products.map((product) => (
@@ -131,8 +136,8 @@ export default function ArticleAnalytics() {
                 </InlineStack>
               )) : <Text as="p" tone="subdued">No product clicks in this period.</Text>}
             </BlockStack>
-          </Card>
-          <Card padding="400">
+          </s-section>
+          <s-section>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd" fontWeight="bold">Traffic sources</Text>
               {report.channels.length ? report.channels.map((channel) => (
@@ -142,8 +147,8 @@ export default function ArticleAnalytics() {
                 </InlineStack>
               )) : <Text as="p" tone="subdued">No sessions yet.</Text>}
             </BlockStack>
-          </Card>
-          <Card padding="400">
+          </s-section>
+          <s-section>
             <BlockStack gap="300">
               <Text as="h2" variant="headingMd" fontWeight="bold">Top Google queries</Text>
               {queries.length ? queries.map((row) => (
@@ -159,10 +164,10 @@ export default function ArticleAnalytics() {
               )}
               {queries.length > 0 && <Text as="p" variant="bodySm" tone="subdued">Clicks / impressions · CTR · average position, last {report.google.windowDays || 28} days.</Text>}
             </BlockStack>
-          </Card>
+          </s-section>
         </InlineGrid>
       </BlockStack>
-    </Page>
+    </AppPage>
   );
 }
 

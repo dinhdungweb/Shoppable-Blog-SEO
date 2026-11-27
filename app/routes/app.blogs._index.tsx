@@ -1,17 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import {
-  useLoaderData,
-  useNavigate,
-  useFetcher,
-  useNavigation,
-  useSearchParams,
-} from "@remix-run/react";
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
+import { data as json , useLoaderData, useNavigate, useFetcher, useNavigation, useSearchParams } from "react-router";
 import {
   Badge,
   Banner,
-  Card,
   Modal,
   Text,
   BlockStack,
@@ -593,7 +585,7 @@ export default function BlogManager() {
           </Banner>
         )}
 
-        <Card padding="0">
+        <s-section padding="none">
           <BlockStack gap="0">
             <IndexFilters
               tabs={POST_VIEWS.map((view) => ({
@@ -709,7 +701,7 @@ export default function BlogManager() {
               ))}
             </IndexTable>
           </BlockStack>
-        </Card>
+        </s-section>
       </BlockStack>
 
       <Modal

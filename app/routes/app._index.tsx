@@ -1,17 +1,14 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json , useFetcher, useLoaderData, useNavigate, useRevalidator } from "react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Banner,
   BlockStack,
   Box,
   Button,
-  Card,
   Divider,
   InlineGrid,
   InlineStack,
-  Page,
   Spinner,
   Text,
   Layout,
@@ -390,18 +387,18 @@ export default function Dashboard() {
 
   if (data?.needsRevalidation) {
     return (
-      <Page>
+      <AppPage title="Loading">
         <Layout>
           <Layout.Section>
-            <Card padding="400">
+            <s-section>
               <BlockStack gap="400" inlineAlign="center">
                 <Spinner size="large" />
                 <Text as="p" variant="bodyMd">Loading your dashboard...</Text>
               </BlockStack>
-            </Card>
+            </s-section>
           </Layout.Section>
         </Layout>
-      </Page>
+      </AppPage>
     );
   }
 
@@ -448,7 +445,7 @@ export default function Dashboard() {
         {moduleFetcher.data?.error && <Banner tone="critical"><p>{moduleFetcher.data.error}</p></Banner>}
 
         <InlineGrid columns={{ xs: 1, md: 2, lg: 3 }} gap="400">
-          <Card>
+          <s-section>
             <InlineStack gap="500" blockAlign="center" wrap={false}>
               <ScoreRing score={storeScore.score} size={124} caption="out of 100" label={storeScore.score === null ? "Store not scanned yet" : `Store SEO score ${storeScore.score} out of 100`} />
               <BlockStack gap="200">
@@ -465,16 +462,16 @@ export default function Dashboard() {
                 {storeScore.score === null && <Button size="slim" onClick={() => navigate("/app/seo")}>Run SEO scan</Button>}
               </BlockStack>
             </InlineStack>
-          </Card>
+          </s-section>
 
-          <Card>
+          <s-section>
             <div className="rm-tiles rm-tiles--2">
               <StatTile tone="bad" label="Failed checks" value={issueSummary.failed} />
               <StatTile tone="warn" label="Warnings" value={issueSummary.warnings} />
               <StatTile tone="good" label="Quick wins" value={issueSummary.quickWins} />
               <StatTile tone="brand" label="Posts scanned" value={<>{issueSummary.scanned} <Text as="span" variant="bodySm">of {formatNumber(counts.totalPosts)}</Text></>} />
             </div>
-          </Card>
+          </s-section>
 
           {nextStep ? (
             <div className="rm-callout rm-callout--dark">
@@ -494,19 +491,19 @@ export default function Dashboard() {
               </BlockStack>
             </div>
           ) : (
-            <Card>
+            <s-section>
               <BlockStack gap="200">
                 <InlineStack gap="200" blockAlign="center"><IconTile icon={CheckIcon} tone="good" /><Text as="h2" variant="headingMd">Setup complete</Text></InlineStack>
                 <Text as="p" variant="bodySm" tone="subdued">The app is installed on your theme, tracking is connected and your store has been scanned.</Text>
               </BlockStack>
-            </Card>
+            </s-section>
           )}
         </InlineGrid>
 
         {showAllSteps && nextStep && <SetupGuide steps={setupSteps} />}
 
         <InlineGrid columns={{ xs: 1, lg: "2fr 1fr" }} gap="400">
-          <Card padding="0">
+          <s-section padding="none">
             <Box padding="400">
               <InlineStack align="space-between" blockAlign="center" gap="300">
                 <BlockStack gap="050">
@@ -542,9 +539,9 @@ export default function Dashboard() {
                 <InlineStack gap="200" blockAlign="center"><IconTile icon={CheckIcon} tone="good" size="sm" /><Text as="p">Nothing urgent. Your store is in good shape.</Text></InlineStack>
               </Box>
             )}
-          </Card>
+          </s-section>
 
-          <Card>
+          <s-section>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">Revenue from content</Text>
@@ -560,10 +557,10 @@ export default function Dashboard() {
               {!counts.everEventCount && <Text as="p" variant="bodySm" tone="subdued">Numbers appear once shoppers read a post with linked products.</Text>}
               <InlineStack><Button variant="plain" onClick={() => navigate("/app/analytics")}>Open Analytics</Button></InlineStack>
             </BlockStack>
-          </Card>
+          </s-section>
         </InlineGrid>
 
-        <Card>
+        <s-section>
           <BlockStack gap="300">
             <BlockStack gap="050">
               <Text as="h2" variant="headingMd">Modules</Text>
@@ -571,7 +568,7 @@ export default function Dashboard() {
             </BlockStack>
             <ModuleGrid modules={modules} planKey={planKey} />
           </BlockStack>
-        </Card>
+        </s-section>
       </BlockStack>
     </AppPage>
   );

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link } from "@remix-run/react";
+import { Link } from "react-router";
 import { Icon } from "@shopify/polaris";
 import type { IconSource } from "@shopify/polaris";
 

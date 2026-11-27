@@ -1,16 +1,75 @@
-import type { ReactNode } from "react";
-import { Badge, Banner, BlockStack, Page } from "@shopify/polaris";
-import type { BadgeProps, PageProps } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { useId, type JSX, type ReactNode } from "react";
+import { Badge, Banner } from "@shopify/polaris";
+import type { BadgeProps } from "@shopify/polaris";
 import { WorkspaceTabs, type WorkspaceTab } from "./WorkspaceTabs";
 import { Chips, type ChipItem } from "./rm";
 
+export type IconName = NonNullable<JSX.IntrinsicElements["s-button"]["icon"]>;
+
+/** A page header action. Rendered as an s-button in the page header (Shopify admin title bar). */
+export type PageAction = {
+  content: string;
+  onAction?: () => void;
+  url?: string;
+  external?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
+  destructive?: boolean;
+  icon?: IconName;
+};
+
+/** A header button that opens a menu of related actions. */
+export type PageActionGroup = { title: string; icon?: IconName; actions: PageAction[] };
+
+function ActionGroupMenu({ group }: { group: PageActionGroup }) {
+  const menuId = `page-actions-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  return (
+    <>
+      <s-button slot="secondary-actions" icon={group.icon} commandFor={menuId}>
+        {group.title}
+      </s-button>
+      <s-menu id={menuId} accessibilityLabel={group.title}>
+        {group.actions.map((action) => (
+          <s-button
+            key={action.content}
+            tone={action.destructive ? "critical" : undefined}
+            icon={action.icon}
+            href={action.url}
+            disabled={action.disabled || undefined}
+            onClick={action.onAction ? () => action.onAction?.() : undefined}
+          >
+            {action.content}
+          </s-button>
+        ))}
+      </s-menu>
+    </>
+  );
+}
+
+function ActionButton({ action, slot, primary }: { action: PageAction; slot: "primary-action" | "secondary-actions"; primary?: boolean }) {
+  return (
+    <s-button
+      slot={slot}
+      variant={primary ? "primary" : "secondary"}
+      tone={action.destructive ? "critical" : undefined}
+      icon={action.icon}
+      href={action.url}
+      target={action.external ? "_blank" : undefined}
+      loading={action.loading || undefined}
+      disabled={action.disabled || undefined}
+      onClick={action.onAction ? () => action.onAction?.() : undefined}
+    >
+      {action.content}
+    </s-button>
+  );
+}
+
 /**
- * The one page frame used by every screen:
- * - Shopify's title bar always shows the page's own title.
- * - Title, subtitle, primary/secondary actions and back link live in the
- *   Polaris page header, never in hand-drawn headings.
- * - An area's tabs (if any) sit directly under the header.
+ * The one page frame used by every screen, built on Polaris web components:
+ * - s-page carries the title, primary/secondary actions and back link, which
+ *   Shopify admin shows in its own title bar.
+ * - Subtitle and status badges sit in a short line at the top of the page.
+ * - An area's tabs (if any) sit directly under that line.
  *
  * Width rule: lists and dashboards use `fullWidth`; detail and settings pages
  * use the default width.
@@ -21,41 +80,56 @@ export function AppPage({
   titleMetadata,
   primaryAction,
   secondaryActions,
+  actionGroups,
   backAction,
   fullWidth,
+  narrow,
   tabs,
   subnav,
+  aside,
   children,
 }: {
   title: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
   titleMetadata?: ReactNode;
-  primaryAction?: PageProps["primaryAction"];
-  secondaryActions?: PageProps["secondaryActions"];
+  primaryAction?: PageAction;
+  secondaryActions?: PageAction[];
+  actionGroups?: PageActionGroup[];
   backAction?: { content: string; url: string };
   fullWidth?: boolean;
+  narrow?: boolean;
   tabs?: { items: WorkspaceTab[]; activeId: string };
   /** A chip row under the tabs for tools inside one tab (e.g. SEO Analyzer › Bulk fixes). */
   subnav?: { items: ChipItem[]; active: string; label: string };
+  /** Sidebar content (only shown at the default width). */
+  aside?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <Page
-      title={title}
-      subtitle={subtitle}
-      titleMetadata={titleMetadata}
-      primaryAction={primaryAction}
-      secondaryActions={secondaryActions}
-      backAction={backAction}
-      fullWidth={fullWidth}
-    >
-      <TitleBar title={title} />
-      <BlockStack gap="500">
+    <s-page heading={title} inlineSize={fullWidth ? "large" : narrow ? "small" : "base"}>
+      {backAction && (
+        <s-link slot="breadcrumb-actions" href={backAction.url}>
+          {backAction.content}
+        </s-link>
+      )}
+      {primaryAction && <ActionButton action={primaryAction} slot="primary-action" primary />}
+      {secondaryActions?.map((action) => (
+        <ActionButton key={action.content} action={action} slot="secondary-actions" />
+      ))}
+      {actionGroups?.map((group) => <ActionGroupMenu key={group.title} group={group} />)}
+      {aside && <div slot="aside">{aside}</div>}
+      <s-stack gap="large">
+        {(subtitle || titleMetadata) && (
+          <s-stack direction="inline" gap="small-200" alignItems="center">
+            {titleMetadata}
+            {subtitle && <s-text color="subdued">{subtitle}</s-text>}
+          </s-stack>
+        )}
         {tabs && <WorkspaceTabs tabs={tabs.items} activeId={tabs.activeId} />}
         {subnav && <Chips items={subnav.items} active={subnav.active} label={subnav.label} />}
         {children}
-      </BlockStack>
-    </Page>
+      </s-stack>
+    </s-page>
   );
 }
 

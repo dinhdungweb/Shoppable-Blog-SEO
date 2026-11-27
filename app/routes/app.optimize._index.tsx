@@ -1,14 +1,13 @@
 import { useMemo, useState } from "react";
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json , useLoaderData, useNavigate } from "react-router";
+
 import {
   Badge,
   Box,
   Banner,
   BlockStack,
   Button,
-  Card,
   EmptyState,
   IndexTable,
   InlineStack,
@@ -115,7 +114,7 @@ export default function MetaTagsOptimizer() {
         )}
 
         {!data.totalArticles ? (
-          <Card>
+          <s-section>
             <EmptyState
               heading="Run an SEO scan first"
               action={{ content: "Open SEO Analyzer", url: "/app/seo" }}
@@ -123,9 +122,9 @@ export default function MetaTagsOptimizer() {
             >
               <p>Meta tag suggestions are built from your latest SEO scan of blog posts.</p>
             </EmptyState>
-          </Card>
+          </s-section>
         ) : (
-          <Card padding="0">
+          <s-section padding="none">
             <BlockStack gap="0">
               <Box padding="400">
                 <BlockStack gap="300">
@@ -176,7 +175,7 @@ export default function MetaTagsOptimizer() {
                 ))}
               </IndexTable>
             </BlockStack>
-          </Card>
+          </s-section>
         )}
     </AppPage>
   );

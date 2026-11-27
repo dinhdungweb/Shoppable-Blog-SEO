@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useFetcher, useSearchParams } from "@remix-run/react";
+import { useFetcher, useSearchParams } from "react-router";
 import {
   Banner,
   BlockStack,
   Box,
   Button,
-  Card,
   Divider,
   Icon,
   InlineGrid,
@@ -126,7 +125,7 @@ export function SearchConsoleCard({ data, mode, planKey }: { data: SearchConsole
 
   if (!data.connected) {
     return (
-      <Card padding="400">
+      <s-section>
         <BlockStack gap="300">
           {callbackBanner}
           {header}
@@ -135,7 +134,7 @@ export function SearchConsoleCard({ data, mode, planKey }: { data: SearchConsole
           </Text>
           <InlineStack><Button variant="primary" loading={busy} onClick={() => submit({ intent: "google_connect" })}>Connect Google</Button></InlineStack>
         </BlockStack>
-      </Card>
+      </s-section>
     );
   }
 
@@ -146,7 +145,7 @@ export function SearchConsoleCard({ data, mode, planKey }: { data: SearchConsole
   const visibleOpportunities = data.opportunities.slice(0, showAll ? data.opportunities.length : 5);
 
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="400">
         {callbackBanner}
         {header}
@@ -215,7 +214,7 @@ export function SearchConsoleCard({ data, mode, planKey }: { data: SearchConsole
           <InlineStack><Button variant="plain" url="/app/content-decay">View keyword opportunities in Analytics</Button></InlineStack>
         )}
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 

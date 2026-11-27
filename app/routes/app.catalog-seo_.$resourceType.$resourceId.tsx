@@ -1,10 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { Form, isRouteErrorResponse, useActionData, useBlocker, useFetcher, useLoaderData, useNavigate, useNavigation, useRouteError, useSearchParams } from "@remix-run/react";
-import { Box, Badge, Banner, BlockStack, Button, Card, Checkbox, Divider, Frame, Icon, InlineGrid, InlineStack, Modal, Page, Select, Text, TextField, Toast } from "@shopify/polaris";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json, redirect, Form, isRouteErrorResponse, useActionData, useBlocker, useFetcher, useLoaderData, useNavigate, useNavigation, useRouteError, useSearchParams } from "react-router";
+import {
+  Box,
+  Badge,
+  Banner,
+  BlockStack,
+  Button,
+  Checkbox,
+  Divider,
+  Frame,
+  Icon,
+  InlineGrid,
+  InlineStack,
+  Modal,
+  Select,
+  Text,
+  TextField,
+  Toast,
+} from "@shopify/polaris";
+import { AppPage } from "../components/AppPage";
 import { ChevronDownIcon, ChevronUpIcon, CodeIcon, DataTableIcon, ImageIcon, LinkIcon, ListBulletedIcon, MagicIcon, PlayCircleIcon, SearchIcon, TextAlignCenterIcon, TextAlignLeftIcon, TextAlignRightIcon, TextBoldIcon, TextItalicIcon, TextUnderlineIcon } from "@shopify/polaris-icons";
-import { SaveBar, TitleBar } from "@shopify/app-bridge-react";
+import { SaveBar } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import { auditCatalogResource, galleryAltCounts, type CatalogResourceInput, type CatalogResourceType, type CatalogSeoIssue } from "../catalog-seo";
@@ -442,7 +459,7 @@ function CatalogResourceEditor() {
   const linkSuggestions = useMemo(() => canInternalLinking ? suggestInternalLinksForDraft({ id: resource.id, title, handle, blogHandle: resource.type === "product" ? "products" : "collections", body: descriptionHtml }, linkTargets.map((item) => ({ id: item.articleId, title: item.articleTitle, handle: item.articleHandle, blogHandle: item.blogHandle, body: "" })), 8) : [], [canInternalLinking, descriptionHtml, handle, linkTargets, resource.id, resource.type, title]);
   const aiQuotaExhausted = currentAiUsage.limited && currentAiUsage.remaining === 0;
   const pageTitle = title || resource.title;
-  return <Frame><Page
+  return <Frame><AppPage
     fullWidth
     backAction={{ content: "Products & collections", url: `/app/catalog-seo?view=manager&type=${resource.type}` }}
     title={pageTitle}
@@ -460,7 +477,7 @@ function CatalogResourceEditor() {
     ].filter(Boolean).join(" · ")}
     primaryAction={{ content: "Save", onAction: () => submitForm(false), disabled: !dirty, loading: navigation.state === "submitting" }}
     secondaryActions={[
-      { content: `Open in Shopify`, url: adminUrl, target: "_blank" },
+      { content: `Open in Shopify`, url: adminUrl, external: true },
       ...(!aiEnabled
         ? [{ content: "AI not configured", disabled: true }]
         : aiQuotaExhausted
@@ -469,7 +486,7 @@ function CatalogResourceEditor() {
     ]}
     actionGroups={aiEnabled && !aiQuotaExhausted ? [{
       title: "AI Copilot",
-      icon: MagicIcon,
+      icon: "magic",
       actions: [
         { content: "Write or rewrite content", disabled: Boolean(aiLoadingTarget), onAction: () => { setAiMode(descriptionHtml.trim() ? "improve" : "write"); setAiError(""); setAiComposeOpen(true); } },
         { content: "Fix SEO issues", disabled: aiIssueFields.length === 0 || Boolean(aiLoadingTarget), onAction: () => generateAiForFields("improve", aiIssueFields, "seo_issues", "Fix the current SEO issues while preserving accurate resource facts.") },
@@ -478,7 +495,6 @@ function CatalogResourceEditor() {
       ],
     }] : []}
   >
-    <TitleBar title={pageTitle} />
     {/* App Bridge save bar: Shopify admin asks for confirmation before leaving while it is open. */}
     <SaveBar id="catalog-save-bar" open={dirty}>
       <button variant="primary" onClick={() => submitForm(false)} loading={navigation.state === "submitting" ? "" : undefined}>Save</button>
@@ -519,7 +535,7 @@ function CatalogResourceEditor() {
       <input type="hidden" name="focusKeyword" value={focusKeyword} /><input type="hidden" name="originalImageAlt" value={resource.imageAlt} /><input type="hidden" name="imageUrl" value={resource.imageUrl} /><input type="hidden" name="mediaId" value={(resource as any).mediaId || ""} />
       {actionData && "error" in actionData && actionData.error && !conflict && <Banner tone="critical" title="Changes were not saved"><p>{actionData.error}</p></Banner>}
       <div className="bp-catalog-editor-main"><main className="bp-catalog-editor-content"><BlockStack gap="400">
-        <Card>
+        <s-section>
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
               <BlockStack gap="100">
@@ -556,8 +572,8 @@ function CatalogResourceEditor() {
               />
             </BlockStack>
           </BlockStack>
-        </Card>
-        <Card>
+        </s-section>
+        <s-section>
           <BlockStack gap="400">
             <div className="bp-icon-heading">
               <Icon source={SearchIcon} tone="info" />
@@ -615,10 +631,10 @@ function CatalogResourceEditor() {
               </BlockStack>
             )}
           </BlockStack>
-        </Card>
+        </s-section>
       </BlockStack></main><aside className="bp-catalog-editor-sidebar"><BlockStack gap="400">
         <FocusKeywordCard value={focusKeyword} input={keywordInput} setInput={setKeywordInput} onChange={setFocusKeyword} audit={currentAudit} />
-        <Card padding="0">
+        <s-section padding="none">
           <Box padding="400">
             <InlineStack gap="400" blockAlign="center" wrap={false}>
               <ScoreRing score={currentAudit.score} size={80} label={`SEO score ${currentAudit.score} out of 100`} />
@@ -634,8 +650,8 @@ function CatalogResourceEditor() {
               <AiButton fullWidth loading={aiLoadingTarget === "seo_issues"} disabled={Boolean(aiLoadingTarget) || aiQuotaExhausted} onClick={() => generateAiForFields("improve", aiIssueFields, "seo_issues", "Fix the current SEO issues while preserving accurate resource facts.")}>Fix with AI</AiButton>
             </Box>
           )}
-        </Card>
-        <Card>
+        </s-section>
+        <s-section>
           <BlockStack gap="300">
             <div className="bp-icon-heading"><Icon source={ImageIcon} tone="info" /><Text as="h2" variant="headingMd">Image</Text></div>
             {resource.imageUrl
@@ -659,9 +675,9 @@ function CatalogResourceEditor() {
             />
             <Button url={adminUrl} target="_blank" fullWidth>Change image in Shopify</Button>
           </BlockStack>
-        </Card>
+        </s-section>
         <InternalLinkCard allowed={canInternalLinking} planKey={planKey} suggestions={linkSuggestions} onReview={(suggestion) => { setPendingLink(suggestion); setLinkAnchor(suggestion.anchorText); }} />
-        <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} settings</Text><Divider />{resource.type === "product" ? <><Select name="status" label="Status" value={status} onChange={setStatus} options={[{ label: "Active", value: "ACTIVE" }, { label: "Draft", value: "DRAFT" }, { label: "Archived", value: "ARCHIVED" }]} /><TextField name="vendor" label="Vendor" value={vendor} onChange={setVendor} autoComplete="off" /><TextField name="productType" label="Product type" value={productType} onChange={setProductType} autoComplete="off" /><TextField name="tags" label="Tags" value={tags} onChange={setTags} autoComplete="off" helpText="Separate tags with commas." /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Variants, pricing, inventory, collection rules and media remain in Shopify to prevent destructive edits.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></Card>
+        <s-section><BlockStack gap="300"><Text as="h2" variant="headingMd">{typeLabel} settings</Text><Divider />{resource.type === "product" ? <><Select name="status" label="Status" value={status} onChange={setStatus} options={[{ label: "Active", value: "ACTIVE" }, { label: "Draft", value: "DRAFT" }, { label: "Archived", value: "ARCHIVED" }]} /><TextField name="vendor" label="Vendor" value={vendor} onChange={setVendor} autoComplete="off" /><TextField name="productType" label="Product type" value={productType} onChange={setProductType} autoComplete="off" /><TextField name="tags" label="Tags" value={tags} onChange={setTags} autoComplete="off" helpText="Separate tags with commas." /></> : <><Detail label="Collection type" value={details.collectionKind} /><Detail label="Products" value={String(details.itemCount)} /><Detail label="URL" value={`/collections/${handle}`} /></>}<Text as="p" variant="bodySm" tone="subdued">Variants, pricing, inventory, collection rules and media remain in Shopify to prevent destructive edits.</Text><Button url={adminUrl} target="_blank" fullWidth>Open full Shopify editor</Button></BlockStack></s-section>
       </BlockStack></aside></div>
     </BlockStack></Form></div>
     <Modal open={Boolean(pendingLink)} onClose={() => setPendingLink(null)} title="Review internal link" primaryAction={{ content: "Insert link", onAction: () => { if (!pendingLink) return; setDescriptionHtml(insertApprovedLink(descriptionHtml, linkAnchor.trim() || pendingLink.anchorText, pendingLink.targetUrl).body); setPendingLink(null); } }} secondaryActions={[{ content: "Cancel", onAction: () => setPendingLink(null) }]}><Modal.Section><BlockStack gap="300"><Text as="p">Link to <strong>{pendingLink?.targetTitle}</strong></Text><TextField label="Anchor text" value={linkAnchor} onChange={setLinkAnchor} autoComplete="off" /><Text as="p" variant="bodySm" tone="subdued">The link is inserted into the description only after you approve and save this resource.</Text></BlockStack></Modal.Section></Modal>
@@ -750,7 +766,7 @@ function CatalogResourceEditor() {
         </BlockStack>
       </Modal.Section>
     </Modal>
-  </Page>
+  </AppPage>
   {savedToastActive && <Toast content={`${typeLabel} updated successfully`} onDismiss={() => setSavedToastActive(false)} duration={4000} />}
   {aiToastError && <Toast content={aiToastError} error onDismiss={() => setAiToastError("")} duration={5000} />}
   </Frame>;
@@ -817,7 +833,7 @@ function AiCatalogReviewField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <Card>
+    <s-section>
       <BlockStack gap="300">
         <Checkbox
           label={AI_CATALOG_FIELD_LABELS[field]}
@@ -839,7 +855,7 @@ function AiCatalogReviewField({
           </BlockStack>
         </InlineGrid>
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
@@ -866,13 +882,13 @@ function FocusKeywordCard({ value, input, setInput, onChange, audit }: { value: 
     if (next && !keywords.some((item) => item.toLowerCase() === next.toLowerCase())) onChange([...keywords, next].join(", "));
     setInput("");
   };
-  return <Card><BlockStack gap="300"><Text as="h2" variant="headingMd">Focus keyword</Text><div onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addKeyword(); } }}><TextField label="Focus keyword" labelHidden value={input} onChange={setInput} autoComplete="off" placeholder="Type keyword and press Enter" connectedRight={<Button onClick={addKeyword} disabled={!input.trim()}>Add</Button>} /></div>{keywords.length > 0 ? <InlineStack gap="200">{keywords.map((keyword) => { const relatedIssues = audit.issues.filter((issue) => issue.type.startsWith("keyword_") || issue.type === "missing_focus_keyword"); return <button type="button" className="bp-keyword-chip" key={keyword} onClick={() => onChange(keywords.filter((item) => item !== keyword).join(", "))} title="Remove keyword"><Badge tone={relatedIssues.length ? "warning" : "success"}>{`${keyword} ×`}</Badge></button>; })}</InlineStack> : <Text as="p" variant="bodySm" tone="subdued">Add the primary phrase shoppers use to find this page. It will activate keyword-specific checks.</Text>}</BlockStack></Card>;
+  return <s-section><BlockStack gap="300"><Text as="h2" variant="headingMd">Focus keyword</Text><div onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addKeyword(); } }}><TextField label="Focus keyword" labelHidden value={input} onChange={setInput} autoComplete="off" placeholder="Type keyword and press Enter" connectedRight={<Button onClick={addKeyword} disabled={!input.trim()}>Add</Button>} /></div>{keywords.length > 0 ? <InlineStack gap="200">{keywords.map((keyword) => { const relatedIssues = audit.issues.filter((issue) => issue.type.startsWith("keyword_") || issue.type === "missing_focus_keyword"); return <button type="button" className="bp-keyword-chip" key={keyword} onClick={() => onChange(keywords.filter((item) => item !== keyword).join(", "))} title="Remove keyword"><Badge tone={relatedIssues.length ? "warning" : "success"}>{`${keyword} ×`}</Badge></button>; })}</InlineStack> : <Text as="p" variant="bodySm" tone="subdued">Add the primary phrase shoppers use to find this page. It will activate keyword-specific checks.</Text>}</BlockStack></s-section>;
 }
 
 function InternalLinkCard({ allowed, planKey, suggestions, onReview }: { allowed: boolean; planKey: string; suggestions: LinkSuggestion[]; onReview: (suggestion: LinkSuggestion) => void }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? suggestions : suggestions.slice(0, 3);
-  return <Card><BlockStack gap="300"><div className="bp-card-heading"><div className="bp-icon-heading"><Icon source={LinkIcon} tone="info" /><Text as="h2" variant="headingMd">Internal link assistant</Text></div>{allowed && <Badge tone="info">{`${suggestions.length} suggestions`}</Badge>}</div>{!allowed ? <><Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text><Button url={`/app/pricing?reason=internal_linking&plan=${planKey}`} fullWidth>Upgrade to Pro</Button></> : suggestions.length ? <><Text as="p" variant="bodySm" tone="subdued">Review relevant Shopify articles before inserting a link into this description.</Text><div className="bp-catalog-link-list">{visible.map((suggestion) => <div className="bp-catalog-link-row" key={suggestion.id}><div className="bp-catalog-link-copy"><Text as="p" variant="bodySm" fontWeight="semibold">{suggestion.targetTitle}</Text><Text as="p" variant="bodySm" tone="subdued">Anchor: {suggestion.anchorText}</Text></div><Button size="micro" onClick={() => onReview(suggestion)}>Review</Button></div>)}</div>{suggestions.length > 3 && <Button variant="plain" onClick={() => setExpanded((value) => !value)} icon={expanded ? ChevronUpIcon : ChevronDownIcon}>{expanded ? "Show fewer" : `Show ${suggestions.length - 3} more`}</Button>}</> : <Text as="p" variant="bodySm" tone="subdued">No relevant article suggestion was found for the current title and description.</Text>}</BlockStack></Card>;
+  return <s-section><BlockStack gap="300"><div className="bp-card-heading"><div className="bp-icon-heading"><Icon source={LinkIcon} tone="info" /><Text as="h2" variant="headingMd">Internal link assistant</Text></div>{allowed && <Badge tone="info">{`${suggestions.length} suggestions`}</Badge>}</div>{!allowed ? <><Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text><Button url={`/app/pricing?reason=internal_linking&plan=${planKey}`} fullWidth>Upgrade to Pro</Button></> : suggestions.length ? <><Text as="p" variant="bodySm" tone="subdued">Review relevant Shopify articles before inserting a link into this description.</Text><div className="bp-catalog-link-list">{visible.map((suggestion) => <div className="bp-catalog-link-row" key={suggestion.id}><div className="bp-catalog-link-copy"><Text as="p" variant="bodySm" fontWeight="semibold">{suggestion.targetTitle}</Text><Text as="p" variant="bodySm" tone="subdued">Anchor: {suggestion.anchorText}</Text></div><Button size="micro" onClick={() => onReview(suggestion)}>Review</Button></div>)}</div>{suggestions.length > 3 && <Button variant="plain" onClick={() => setExpanded((value) => !value)} icon={expanded ? ChevronUpIcon : ChevronDownIcon}>{expanded ? "Show fewer" : `Show ${suggestions.length - 3} more`}</Button>}</> : <Text as="p" variant="bodySm" tone="subdued">No relevant article suggestion was found for the current title and description.</Text>}</BlockStack></s-section>;
 }
 
 function RichTextEditor({
@@ -1109,7 +1125,7 @@ function Detail({ label, value }: { label: string; value: string }) { return <In
 export function ErrorBoundary() {
   const error = useRouteError();
   const message = isRouteErrorResponse(error) ? String(error.data || error.statusText) : error instanceof Error ? error.message : "The resource could not be loaded.";
-  return <Page><BlockStack gap="400"><Banner tone="critical" title="Unable to open the SEO editor"><p>{message}</p></Banner><InlineStack gap="200"><Button url="/app/catalog-seo?view=manager&type=product">Back to products</Button><Button url="/app/catalog-seo?view=manager&type=collection">Back to collections</Button></InlineStack></BlockStack></Page>;
+  return <AppPage title="Loading"><BlockStack gap="400"><Banner tone="critical" title="Unable to open the SEO editor"><p>{message}</p></Banner><InlineStack gap="200"><Button url="/app/catalog-seo?view=manager&type=product">Back to products</Button><Button url="/app/catalog-seo?view=manager&type=collection">Back to collections</Button></InlineStack></BlockStack></AppPage>;
 }
 
 function resourceType(value?: string): CatalogResourceType { if (value === "product" || value === "collection") return value; throw new Response("Not found", { status: 404 }); }

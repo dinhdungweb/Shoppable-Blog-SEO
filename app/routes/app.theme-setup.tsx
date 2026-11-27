@@ -1,21 +1,19 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData, useRevalidator } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json , useLoaderData, useRevalidator } from "react-router";
+
 import {
   Badge,
   Banner,
   BlockStack,
   Box,
   Button,
-  Card,
   Divider,
   InlineGrid,
   InlineStack,
   Layout,
-  Page,
   Text,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { AppPage } from "../components/AppPage";
 import { authenticate } from "../shopify.server";
 import { checkThemeSetup } from "../setup-status.server";
 import {
@@ -72,12 +70,11 @@ export default function ThemeSetupPage() {
   const requiredDone = required.filter(Boolean).length;
 
   return (
-    <Page
+    <AppPage
       title="Theme setup"
       subtitle="Install and preview Rankmath SEO blocks on your published theme."
       backAction={{ content: "Settings", url: "/app/settings" }}
     >
-      <TitleBar title="Theme setup" />
       <Layout>
         <Layout.Section>
           <BlockStack gap="500">
@@ -209,7 +206,7 @@ export default function ThemeSetupPage() {
               />
             </SetupStep>
 
-            <Card>
+            <s-section>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">
                   Installing on an unpublished or custom theme
@@ -222,11 +219,11 @@ export default function ThemeSetupPage() {
                   under <strong>Theme settings &gt; App embeds</strong>.
                 </Text>
               </BlockStack>
-            </Card>
+            </s-section>
           </BlockStack>
         </Layout.Section>
       </Layout>
-    </Page>
+    </AppPage>
   );
 }
 
@@ -247,7 +244,7 @@ function SetupStep({
   children: React.ReactNode;
 }) {
   return (
-    <Card>
+    <s-section>
       <BlockStack gap="400">
         <InlineStack gap="300" blockAlign="center">
           <Box
@@ -270,7 +267,7 @@ function SetupStep({
         <Divider />
         {children}
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
@@ -306,7 +303,7 @@ function BlockChoice({
   editorUrl: string;
 }) {
   return (
-    <Card>
+    <s-section>
       <BlockStack gap="300">
         <InlineStack gap="200" blockAlign="center">
           <Text as="h3" variant="headingSm">
@@ -321,6 +318,6 @@ function BlockChoice({
           {installed ? "Open in theme editor" : action}
         </Button>
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }

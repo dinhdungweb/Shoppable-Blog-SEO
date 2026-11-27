@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useRevalidator } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json , useFetcher, useLoaderData, useRevalidator } from "react-router";
+
 import type { Prisma } from "@prisma/client";
 import {
   Badge,
@@ -10,7 +10,6 @@ import {
   BlockStack,
   Box,
   Button,
-  Card,
   Checkbox,
   Divider,
   EmptyState,
@@ -471,7 +470,7 @@ export default function ImageSeoPage() {
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   if (!initial.canUse) {
-    return <AppPage title="Image alt text" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "bulk" }} subnav={{ items: BULK_FIX_CHIPS, active: "images", label: "Bulk fix" }}><Card><EmptyState heading="Bulk image alt text is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></Card></AppPage>;
+    return <AppPage title="Image alt text" tabs={{ items: SEO_WORKSPACE_TABS, activeId: "bulk" }} subnav={{ items: BULK_FIX_CHIPS, active: "images", label: "Bulk fix" }}><s-section><EmptyState heading="Bulk image alt text is a Growth feature" action={{ content: "Upgrade to Growth", url: `/app/pricing?reason=image_seo&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Review featured and inline image alt text across multiple Shopify articles, then apply selected changes with batch Undo.</p></EmptyState></s-section></AppPage>;
   }
 
   const toggle = (id: string, checked: boolean) => setSelectedIds((current) => checked ? [...new Set([...current, id])] : current.filter((value) => value !== id));
@@ -522,7 +521,7 @@ export default function ImageSeoPage() {
         <Summary label="Decorative alt" value={issueCounts.decorative_alt} tone="warning" />
       </InlineGrid>
 
-      {!candidates.length ? <Card><EmptyState heading="No supported alt-text issues found" image={EMPTY_IMAGE}><p>Featured and inline images currently pass the missing, keyword-stuffing and decorative-alt checks.</p></EmptyState></Card> : <Card padding="0">
+      {!candidates.length ? <s-section><EmptyState heading="No supported alt-text issues found" image={EMPTY_IMAGE}><p>Featured and inline images currently pass the missing, keyword-stuffing and decorative-alt checks.</p></EmptyState></s-section> : <s-section padding="none">
         <Box padding="400">
           <InlineGrid columns={{ xs: 1, md: 3 }} gap="300">
             <TextField label="Search images" labelHidden value={query} onChange={setQuery} autoComplete="off" placeholder="Search article, URL or alt text" />
@@ -559,11 +558,11 @@ export default function ImageSeoPage() {
         </div>
         <Divider />
         <Box padding="300"><InlineStack align="space-between" blockAlign="center"><Text as="span" variant="bodySm" tone="subdued">Page {page} of {totalPages}</Text><InlineStack gap="200"><Button size="micro" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</Button><Button size="micro" disabled={page >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Next</Button></InlineStack></InlineStack></Box>
-      </Card>}
+      </s-section>}
 
-      {reviewed.length > 0 && <Card><InlineStack align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="h2" variant="headingMd">{reviewed.length} reviewed change(s) ready</Text><Text as="p" variant="bodySm" tone="subdued">Preview the exact before/after alt values. Shopify is updated only after confirmation.</Text></BlockStack><Button variant="primary" onClick={() => setPreviewOpen(true)}>Preview selected changes</Button></InlineStack></Card>}
+      {reviewed.length > 0 && <s-section><InlineStack align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="h2" variant="headingMd">{reviewed.length} reviewed change(s) ready</Text><Text as="p" variant="bodySm" tone="subdued">Preview the exact before/after alt values. Shopify is updated only after confirmation.</Text></BlockStack><Button variant="primary" onClick={() => setPreviewOpen(true)}>Preview selected changes</Button></InlineStack></s-section>}
 
-      {initial.history.length > 0 && <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Recent changes</Text><Button variant="plain" url="/app/optimize/history">View all history</Button></InlineStack>{initial.history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.imageCount} image(s) across {row.articleCount} article(s)</Text><Text as="span" variant="bodySm" tone="subdued">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied" || changeFetcher.state !== "idle"} loading={changeFetcher.state !== "idle" && changeFetcher.formData?.get("changeId") === row.id} onClick={() => changeFetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo batch</Button></InlineStack>)}</BlockStack></Card>}
+      {initial.history.length > 0 && <s-section><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">Recent changes</Text><Button variant="plain" url="/app/optimize/history">View all history</Button></InlineStack>{initial.history.map((row) => <InlineStack key={row.id} align="space-between" blockAlign="center"><BlockStack gap="050"><Text as="span" fontWeight="semibold">{row.imageCount} image(s) across {row.articleCount} article(s)</Text><Text as="span" variant="bodySm" tone="subdued">{row.status === "undone" ? "Undone" : `Applied ${new Date(row.appliedAt).toLocaleString()}`}</Text></BlockStack><Button disabled={row.status !== "applied" || changeFetcher.state !== "idle"} loading={changeFetcher.state !== "idle" && changeFetcher.formData?.get("changeId") === row.id} onClick={() => changeFetcher.submit({ intent: "undo", changeId: row.id }, { method: "post" })}>Undo batch</Button></InlineStack>)}</BlockStack></s-section>}
     </BlockStack>
 
     <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="Confirm image alt changes" primaryAction={{ content: `Apply ${reviewed.length} changes`, onAction: apply, loading: changeFetcher.state !== "idle", disabled: !reviewed.length }} secondaryActions={[{ content: "Continue reviewing", onAction: () => setPreviewOpen(false) }]}>

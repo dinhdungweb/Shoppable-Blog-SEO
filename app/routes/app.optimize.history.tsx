@@ -1,11 +1,10 @@
 import { useEffect } from "react";
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json , useFetcher, useLoaderData } from "react-router";
+
 import {
   Banner,
   Button,
-  Card,
   EmptyState,
 } from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -154,13 +153,13 @@ export default function ChangeHistory() {
         {fetcher.data?.error && <Banner tone="critical" title="Could not undo this change"><p>{fetcher.data.error}</p></Banner>}
 
         {!changes.length ? (
-          <Card>
+          <s-section>
             <EmptyState heading="No bulk changes yet" action={{ content: "Optimize meta tags", url: "/app/optimize" }} image={EMPTY_IMAGE}>
               <p>Changes applied with Meta tags, Products &amp; collections, Image alt text and Internal links appear here, each with an Undo button.</p>
             </EmptyState>
-          </Card>
+          </s-section>
         ) : (
-          <Card padding="0">
+          <s-section padding="none">
             {groupByDay(changes).map(([day, items]) => (
               <div key={day}>
                 <GroupLabel>{day}</GroupLabel>
@@ -185,7 +184,7 @@ export default function ChangeHistory() {
                 </ActionRows>
               </div>
             ))}
-          </Card>
+          </s-section>
         )}
     </AppPage>
   );

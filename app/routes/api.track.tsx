@@ -1,5 +1,5 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { json } from "../http";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { isbot } from "isbot";

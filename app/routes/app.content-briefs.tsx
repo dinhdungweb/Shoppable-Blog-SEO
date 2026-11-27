@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json , useFetcher, useLoaderData, useNavigate, useRevalidator } from "react-router";
 import { Prisma } from "@prisma/client";
 import {
   Badge,
@@ -9,7 +8,6 @@ import {
   BlockStack,
   Box,
   Button,
-  Card,
   Divider,
   EmptyState,
   FormLayout,
@@ -306,7 +304,7 @@ export default function ContentBriefsPage() {
   const activeSection = String(fetcher.formData?.get("section") || "");
 
   if (!initial.canUse) {
-    return <AppPage title="Content briefs" tabs={{ items: CONTENT_WORKSPACE_TABS, activeId: "briefs" }}><Card><EmptyState heading="AI Content Brief is a Pro feature" action={{ content: "Upgrade plan", url: `/app/pricing?reason=content_brief&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Build keyword clusters, outlines, internal-link plans and product-placement ideas before drafting an article.</p></EmptyState></Card></AppPage>;
+    return <AppPage title="Content briefs" tabs={{ items: CONTENT_WORKSPACE_TABS, activeId: "briefs" }}><s-section><EmptyState heading="AI Content Brief is a Pro feature" action={{ content: "Upgrade plan", url: `/app/pricing?reason=content_brief&plan=${initial.planKey}` }} image={EMPTY_IMAGE}><p>Build keyword clusters, outlines, internal-link plans and product-placement ideas before drafting an article.</p></EmptyState></s-section></AppPage>;
   }
 
   const generate = () => fetcher.submit(
@@ -333,7 +331,7 @@ export default function ContentBriefsPage() {
 
       <InlineGrid columns={{ xs: 1, lg: "1fr 2fr" }} gap="500">
         <BlockStack gap="400">
-          <Card>
+          <s-section>
             <BlockStack gap="400">
               <BlockStack gap="100"><Text as="h2" variant="headingMd">Create a new brief</Text><Text as="p" tone="subdued">Shopify articles, products and synced Search Console rows are used as the source set. AI-supplied resource IDs are verified before saving.</Text></BlockStack>
               <FormLayout>
@@ -345,16 +343,16 @@ export default function ContentBriefsPage() {
                 <Button variant="primary" fullWidth loading={busy && activeIntent === "generate"} disabled={busy || !initial.aiEnabled || (!topic.trim() && !seedKeyword.trim())} onClick={generate}>Generate content brief</Button>
               </FormLayout>
             </BlockStack>
-          </Card>
+          </s-section>
 
-          <Card padding="0">
+          <s-section padding="none">
             <Box padding="400"><Text as="h2" variant="headingMd">Saved briefs</Text></Box>
             <Divider />
             {briefs.length ? <BlockStack gap="0">{briefs.map((item) => <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} style={briefButtonStyle(item.id === selected?.id)}><span><strong>{item.title}</strong><small>{item.seedKeyword || "No primary keyword"} · {formatDate(item.updatedAt)}</small></span><Badge tone={item.hasDraft ? "success" : "info"}>{item.hasDraft ? "Draft ready" : "Brief"}</Badge></button>)}</BlockStack> : <Box padding="500"><Text as="p" tone="subdued">No saved briefs yet.</Text></Box>}
-          </Card>
+          </s-section>
         </BlockStack>
 
-        {!selected ? <Card><EmptyState heading="Create your first content brief" action={{ content: "Generate brief", onAction: generate, disabled: !initial.aiEnabled || (!topic.trim() && !seedKeyword.trim()) }} image={EMPTY_IMAGE}><p>Start with a topic or seed keyword. Nothing is published automatically.</p></EmptyState></Card> : <BriefWorkspace brief={selected} busy={busy} activeSection={activeSection} regenerate={(section) => submitBriefAction("regenerate_section", { section })} generateDraft={() => submitBriefAction("generate_draft")} remove={() => { if (window.confirm("Delete this saved content brief? This cannot be undone.")) submitBriefAction("delete"); }} />}
+        {!selected ? <s-section><EmptyState heading="Create your first content brief" action={{ content: "Generate brief", onAction: generate, disabled: !initial.aiEnabled || (!topic.trim() && !seedKeyword.trim()) }} image={EMPTY_IMAGE}><p>Start with a topic or seed keyword. Nothing is published automatically.</p></EmptyState></s-section> : <BriefWorkspace brief={selected} busy={busy} activeSection={activeSection} regenerate={(section) => submitBriefAction("regenerate_section", { section })} generateDraft={() => submitBriefAction("generate_draft")} remove={() => { if (window.confirm("Delete this saved content brief? This cannot be undone.")) submitBriefAction("delete"); }} />}
       </InlineGrid>
     </BlockStack>
   </AppPage>;
@@ -370,7 +368,7 @@ function BriefWorkspace({ brief: saved, busy, activeSection, regenerate, generat
 }) {
   const brief = saved.brief;
   return <BlockStack gap="400">
-    <Card>
+    <s-section>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="start" gap="300">
           <BlockStack gap="100"><Text as="h2" variant="headingLg">{brief.title}</Text><InlineStack gap="200"><Badge tone="success">{brief.searchIntent}</Badge><Badge tone="info">{brief.primaryKeyword || "Keyword pending"}</Badge>{saved.sourceArticleTitle && <Badge>{`Source: ${saved.sourceArticleTitle}`}</Badge>}{saved.articleId && <Badge tone="success">Written</Badge>}</InlineStack>{saved.articleId && <InlineStack><Button variant="plain" url={`/app/blogs/${encodeURIComponent(saved.articleId.split("/").pop() || saved.articleId)}`}>Open the post written from this brief</Button></InlineStack>}</BlockStack>
@@ -383,7 +381,7 @@ function BriefWorkspace({ brief: saved, busy, activeSection, regenerate, generat
           <BriefFact label="Content angle" value={brief.contentAngle || "Not specified"} />
         </InlineGrid>
       </BlockStack>
-    </Card>
+    </s-section>
 
     <BriefSection title="Keyword cluster" section="keywords" busy={busy} activeSection={activeSection} regenerate={regenerate}>
       <BlockStack gap="300"><BriefFact label="Primary keyword" value={brief.primaryKeyword || "Not specified"} /><TagList label="Secondary keywords" values={brief.secondaryKeywords} /><TagList label="Entities and subtopics" values={brief.entities} /></BlockStack>
@@ -414,7 +412,7 @@ function BriefSection({ title, section, busy, activeSection, regenerate, childre
   regenerate: (section: ContentBriefSection) => void;
   children: React.ReactNode;
 }) {
-  return <Card><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">{title}</Text><Button size="micro" loading={busy && activeSection === section} disabled={busy} onClick={() => regenerate(section)}>Regenerate section</Button></InlineStack><Divider />{children}</BlockStack></Card>;
+  return <s-section><BlockStack gap="300"><InlineStack align="space-between" blockAlign="center"><Text as="h2" variant="headingMd">{title}</Text><Button size="micro" loading={busy && activeSection === section} disabled={busy} onClick={() => regenerate(section)}>Regenerate section</Button></InlineStack><Divider />{children}</BlockStack></s-section>;
 }
 
 function BriefFact({ label, value }: { label: string; value: string }) {

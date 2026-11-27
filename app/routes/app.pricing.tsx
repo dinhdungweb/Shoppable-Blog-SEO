@@ -1,7 +1,6 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useState } from "react";
-import { json } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { data as json , Form, useActionData, useLoaderData, useNavigation, useSubmit } from "react-router";
 import {
   Badge,
   Banner,
@@ -13,7 +12,6 @@ import {
   InlineGrid,
   InlineStack,
   Text,
-  Card,
   Modal,
 } from "@shopify/polaris";
 import {
@@ -369,7 +367,7 @@ function PricingPlanCard({
 
   return (
     <div className={isFeatured ? "rm-plan rm-plan--featured" : "rm-plan"}>
-    <Card padding="0">
+    <s-section padding="none">
       <div id={plan.key}>
         <Box padding="200" background={isFeatured ? "bg-fill-brand" : "bg-surface-secondary"}>
           <Text as="p" variant="bodySm" fontWeight="semibold" alignment="center" tone={isFeatured ? "text-inverse" : undefined}>
@@ -439,7 +437,7 @@ function PricingPlanCard({
           </Modal.Section>
         </Modal>
       )}
-    </Card>
+    </s-section>
     </div>
   );
 }

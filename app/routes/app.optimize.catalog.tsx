@@ -1,13 +1,11 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json , useLoaderData, useNavigate, useSearchParams } from "react-router";
 import {
   Badge,
   Box,
   Banner,
   BlockStack,
   Button,
-  Card,
   EmptyState,
   IndexTable,
   InlineStack,
@@ -126,13 +124,13 @@ export default function CatalogBulkPicker() {
         )}
 
         {!data.total ? (
-          <Card>
+          <s-section>
             <EmptyState heading="Run an SEO scan first" action={{ content: "Open SEO Analyzer", url: "/app/seo" }} image={EMPTY_IMAGE}>
               <p>Product and collection suggestions are built from your latest catalog scan.</p>
             </EmptyState>
-          </Card>
+          </s-section>
         ) : (
-          <Card padding="0">
+          <s-section padding="none">
             <Box padding="400">
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
@@ -181,7 +179,7 @@ export default function CatalogBulkPicker() {
                 </IndexTable.Row>
               ))}
             </IndexTable>
-          </Card>
+          </s-section>
         )}
     </AppPage>
   );

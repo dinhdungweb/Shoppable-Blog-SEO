@@ -4,9 +4,8 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
 } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { useBlocker, useFetcher, useLoaderData, useNavigate, useRevalidator, useSearchParams } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json, redirect, useBlocker, useFetcher, useLoaderData, useNavigate, useRevalidator, useSearchParams } from "react-router";
 import {
   Badge,
   Banner,
@@ -15,7 +14,6 @@ import {
   Button,
   ButtonGroup,
   Collapsible,
-  Card,
   Checkbox,
   ChoiceList,
   Divider,
@@ -25,7 +23,6 @@ import {
   InlineGrid,
   InlineStack,
   Modal,
-  Page,
   Popover,
   ActionList,
   Select,
@@ -34,6 +31,7 @@ import {
   TextField,
   Thumbnail,
 } from "@shopify/polaris";
+import { AppPage } from "../components/AppPage";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -65,7 +63,7 @@ import {
   ViewIcon,
   XSmallIcon,
 } from "@shopify/polaris-icons";
-import { SaveBar, TitleBar, useAppBridge } from "@shopify/app-bridge-react";
+import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
 import prisma from "../db.server";
 import { formatLimit, PLAN_LIMITS } from "../pricing-plans";
@@ -3048,9 +3046,9 @@ function ArticleDetail() {
   ];
 
   return (
-    <Page
+    <AppPage
       fullWidth
-      backAction={{ content: "Posts", onAction: () => navigate("/app/blogs") }}
+      backAction={{ content: "Posts", url: "/app/blogs" }}
       title={title || (isNewPost ? "Create post" : article.title)}
       titleMetadata={
         <InlineStack gap="100" blockAlign="center">
@@ -3079,7 +3077,7 @@ function ArticleDetail() {
       ]}
       actionGroups={aiEnabled && !aiQuotaExhausted ? [{
         title: "AI Copilot",
-        icon: MagicIcon,
+        icon: "magic",
         actions: [
           { content: "Write or rewrite content", onAction: openAiAssistant },
           { content: "Fix SEO issues", disabled: isSeoFixGenerating || !seoIssues.some((issue) => issue.severity !== "good"), onAction: () => handleGenerateSeoFix(seoIssues.filter((issue) => issue.severity !== "good"), "all") },
@@ -3097,7 +3095,6 @@ function ArticleDetail() {
         ],
       }] : []}
     >
-      <TitleBar title={title || (isNewPost ? "Create post" : article.title)} />
       <style>{DETAIL_STYLES}</style>
       {pendingDraft && (
         <div style={{ marginBottom: 16 }}>
@@ -3159,9 +3156,9 @@ function ArticleDetail() {
 
       <div className="bp-detail-shell">
         <div className="bp-detail-tabs">
-          <Card padding="0">
+          <s-section padding="none">
             <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab} />
-          </Card>
+          </s-section>
         </div>
 
         <div className={`bp-detail-main${selectedTab === 0 ? "" : " bp-detail-main--full"}`}>
@@ -3169,7 +3166,7 @@ function ArticleDetail() {
             {selectedTab === 0 && (
               <BlockStack gap="600">
                 {contentRefreshUndo && (
-                  <Card padding="300">
+                  <s-section>
                     <InlineStack align="space-between" blockAlign="center" gap="300">
                       <BlockStack gap="050">
                         <Text as="span" variant="bodyMd" fontWeight="semibold">AI content refresh is in this draft</Text>
@@ -3177,7 +3174,7 @@ function ArticleDetail() {
                       </BlockStack>
                       <Button size="micro" onClick={handleUndoContentRefresh}>Undo refresh</Button>
                     </InlineStack>
-                  </Card>
+                  </s-section>
                 )}
 
                 <ShopifyContentEditor
@@ -3239,7 +3236,7 @@ function ArticleDetail() {
                 </div>
 
                 {isEditingSnippet && (
-                  <Card padding="400">
+                  <s-section>
                     <BlockStack gap="400">
                       <Text as="h3" variant="headingMd" fontWeight="bold">
                         SEO Metadata
@@ -3285,7 +3282,7 @@ function ArticleDetail() {
                         helpText="Leave blank to use the article excerpt."
                       />
                     </BlockStack>
-                  </Card>
+                  </s-section>
                 )}
 
 
@@ -3391,13 +3388,13 @@ function ArticleDetail() {
                   }}
                 />
               </div> : (
-                <Card>
+                <s-section>
                   <BlockStack gap="200">
                     <Text as="h3" variant="headingMd">Internal link assistant</Text>
                     <Text as="p" variant="bodySm" tone="subdued">Available on Pro and Growth plans.</Text>
                     <InlineStack align="end"><Button size="micro" url={`/app/pricing?reason=internal_linking&plan=${planKey}`}>Upgrade to Pro</Button></InlineStack>
                   </BlockStack>
-                </Card>
+                </s-section>
               )}
               <ArticleImageCard
                 article={article}
@@ -3505,7 +3502,7 @@ function ArticleDetail() {
             <BlockStack gap="300">
               <Text as="h3" variant="headingMd">Optional Search Console questions</Text>
               {contentRefresh.queries.length ? contentRefresh.queries.slice(0, 15).map((query) => (
-                <Card key={query.query} padding="300">
+                <s-section key={query.query}>
                   <InlineStack gap="300" blockAlign="start" wrap={false}>
                     <Checkbox
                       label={`Use query ${query.query}`}
@@ -3524,7 +3521,7 @@ function ArticleDetail() {
                       </InlineStack>
                     </BlockStack>
                   </InlineStack>
-                </Card>
+                </s-section>
               )) : (
                 <Text as="p" variant="bodySm" tone="subdued">
                   No matching Search Console queries are available. Copilot will generate questions from the article alone.
@@ -3567,7 +3564,7 @@ function ArticleDetail() {
               maxLength={120}
             />
             {faqItems.map((item, index) => (
-              <Card key={item.id} padding="300">
+              <s-section key={item.id}>
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center" gap="300">
                     <Checkbox
@@ -3627,7 +3624,7 @@ function ArticleDetail() {
                     </BlockStack>
                   </Box>
                 </BlockStack>
-              </Card>
+              </s-section>
             ))}
             {!faqItems.length && <Text as="p" variant="bodyMd" tone="subdued">No FAQ items remain. Generate a new set to continue.</Text>}
           </BlockStack>
@@ -3663,7 +3660,7 @@ function ArticleDetail() {
                 {contentRefresh.analyzedAt && <Text as="span" variant="bodySm" tone="subdued">Analyzed {formatDateTime(contentRefresh.analyzedAt)}</Text>}
               </InlineStack>
               {contentRefresh.signals.length ? contentRefresh.signals.map((signal) => (
-                <Card key={signal.id} padding="300">
+                <s-section key={signal.id}>
                   <InlineStack gap="300" blockAlign="start" wrap={false}>
                     <Checkbox
                       label={`Use ${signal.message}`}
@@ -3682,7 +3679,7 @@ function ArticleDetail() {
                       <Text as="p" variant="bodySm" tone="subdued">{signal.recommendation}</Text>
                     </BlockStack>
                   </InlineStack>
-                </Card>
+                </s-section>
               )) : <Text as="p" variant="bodySm" tone="subdued">No saved decay issues were found for this article.</Text>}
             </BlockStack>
 
@@ -3694,7 +3691,7 @@ function ArticleDetail() {
                 {contentRefresh.searchSyncedAt && <Text as="span" variant="bodySm" tone="subdued">Synced {formatDateTime(contentRefresh.searchSyncedAt)}</Text>}
               </InlineStack>
               {contentRefresh.queries.length ? contentRefresh.queries.map((query) => (
-                <Card key={query.query} padding="300">
+                <s-section key={query.query}>
                   <InlineStack gap="300" blockAlign="start" wrap={false}>
                     <Checkbox
                       label={`Use query ${query.query}`}
@@ -3717,7 +3714,7 @@ function ArticleDetail() {
                       )}
                     </BlockStack>
                   </InlineStack>
-                </Card>
+                </s-section>
               )) : <Text as="p" variant="bodySm" tone="subdued">No synced Search Console queries were found for this article URL.</Text>}
             </BlockStack>
           </BlockStack>
@@ -3749,7 +3746,7 @@ function ArticleDetail() {
             </Box>
 
             {contentRefreshSuggestion?.changes.map((change) => (
-              <Card key={change.field} padding="300">
+              <s-section key={change.field}>
                 <BlockStack gap="300">
                   <Checkbox
                     label={`Apply ${contentRefreshFieldLabel(change.field)}`}
@@ -3768,7 +3765,7 @@ function ArticleDetail() {
                     <SeoFixPreview label="After" field={change.field} value={change.after} changed />
                   </InlineGrid>
                 </BlockStack>
-              </Card>
+              </s-section>
             ))}
 
             {contentRefreshSuggestion && contentRefreshSuggestion.changes.length === 0 && (
@@ -3780,13 +3777,13 @@ function ArticleDetail() {
                 <Divider />
                 <Text as="h3" variant="headingMd">Verification checklist</Text>
                 {contentRefreshSuggestion?.manualActions.map((item) => (
-                  <Card key={item.sourceId} padding="300">
+                  <s-section key={item.sourceId}>
                     <BlockStack gap="100">
                       <Text as="span" variant="bodyMd" fontWeight="semibold">{item.title}</Text>
                       {item.explanation && <Text as="p" variant="bodySm" tone="subdued">{item.explanation}</Text>}
                       <Text as="p" variant="bodySm">{item.action}</Text>
                     </BlockStack>
-                  </Card>
+                  </s-section>
                 ))}
               </BlockStack>
             )}
@@ -3889,7 +3886,7 @@ function ArticleDetail() {
             </Box>
 
             {seoFixSuggestion?.changes.map((change) => (
-              <Card key={change.field} padding="300">
+              <s-section key={change.field}>
                 <BlockStack gap="300">
                   <Checkbox
                     label={`Apply ${seoFixChangeLabel(change)}`}
@@ -3916,7 +3913,7 @@ function ArticleDetail() {
                     />
                   </InlineGrid>
                 </BlockStack>
-              </Card>
+              </s-section>
             ))}
 
             {seoFixSuggestion && seoFixSuggestion.changes.length === 0 && (
@@ -3929,7 +3926,7 @@ function ArticleDetail() {
                 <Text as="h3" variant="headingMd">Manual actions</Text>
                 <Text as="p" variant="bodySm" tone="subdued">Copilot will not invent evidence, links, images, or credentials. Complete these items yourself.</Text>
                 {seoFixSuggestion?.manualActions.map((item) => (
-                  <Card key={item.issueType} padding="300">
+                  <s-section key={item.issueType}>
                     <BlockStack gap="100">
                       <Text as="span" variant="bodyMd" fontWeight="semibold">{seoIssueLabel(item.issueType, seoIssues)}</Text>
                       {item.explanation && <Text as="p" variant="bodySm" tone="subdued">{item.explanation}</Text>}
@@ -3961,7 +3958,7 @@ function ArticleDetail() {
                         </BlockStack>
                       )}
                     </BlockStack>
-                  </Card>
+                  </s-section>
                 ))}
               </BlockStack>
             )}
@@ -3989,7 +3986,7 @@ function ArticleDetail() {
               const product = recommendation.product;
               const checked = selectedAiProductIds.includes(recommendation.productId);
               return (
-                <Card key={recommendation.productId} padding="300">
+                <s-section key={recommendation.productId}>
                   <InlineStack gap="300" blockAlign="start" wrap={false}>
                     <Checkbox
                       label={`Select ${product.title}`}
@@ -4015,7 +4012,7 @@ function ArticleDetail() {
                       </BlockStack>
                     </div>
                   </InlineStack>
-                </Card>
+                </s-section>
               );
             })}
           </BlockStack>
@@ -4141,7 +4138,7 @@ function ArticleDetail() {
         onClose={closeImagePicker}
         onDone={applyPickedImage}
       />
-    </Page>
+    </AppPage>
   );
 }
 
@@ -4192,7 +4189,7 @@ function ShopifyContentEditor({
 }) {
   return (
     <BlockStack gap="400">
-      <Card padding="400">
+      <s-section>
         <BlockStack gap="400">
           <TextField
             label="Title"
@@ -4233,9 +4230,9 @@ function ShopifyContentEditor({
             />
           </BlockStack>
         </BlockStack>
-      </Card>
+      </s-section>
 
-      <Card padding="400">
+      <s-section>
         <BlockStack gap="300">
           <BlockStack gap="100">
             <Text as="h2" variant="headingMd" fontWeight="semibold">
@@ -4256,7 +4253,7 @@ function ShopifyContentEditor({
             aiLoading={aiLoadingTarget === "excerpt_summary"}
           />
         </BlockStack>
-      </Card>
+      </s-section>
     </BlockStack>
   );
 }
@@ -4445,7 +4442,7 @@ function ArticleImageCard({
   onRemoveImage: () => void;
 }) {
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="300">
         <Text as="h2" variant="headingMd" fontWeight="semibold">
           Image
@@ -4479,7 +4476,7 @@ function ArticleImageCard({
           </div>
         )}
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
@@ -5773,7 +5770,7 @@ function ProductsPanel({
         </ButtonGroup>
       </InlineStack>
 
-      <Card padding="400">
+      <s-section>
         <InlineGrid columns={{ xs: 1, md: "minmax(260px, 360px) 1fr" }} gap="400">
           <BlockStack gap="100">
             <Text as="span" variant="bodySm" fontWeight="semibold">
@@ -5808,9 +5805,9 @@ function ProductsPanel({
             </div>
           </BlockStack>
         </InlineGrid>
-      </Card>
+      </s-section>
 
-      <Card padding="0">
+      <s-section padding="none">
         {tableProducts.length > 0 ? (
           <IndexTable
             resourceName={{ singular: "product", plural: "products" }}
@@ -5891,7 +5888,7 @@ function ProductsPanel({
             </EmptyState>
           </Box>
         )}
-      </Card>
+      </s-section>
     </BlockStack>
   );
 }
@@ -5911,21 +5908,21 @@ function PerformancePanel({ products, stats }: { products: any[]; stats: any }) 
       </InlineStack>
 
       <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
-        <Card padding="400">
+        <s-section>
           <MetricNumber label="Impressions" value={String(stats.impressions)} />
-        </Card>
-        <Card padding="400">
+        </s-section>
+        <s-section>
           <MetricNumber label="Clicks" value={String(stats.clicks)} />
-        </Card>
-        <Card padding="400">
+        </s-section>
+        <s-section>
           <MetricNumber label="Product CTR" value={formatPercent(stats.ctr)} />
-        </Card>
-        <Card padding="400">
+        </s-section>
+        <s-section>
           <MetricNumber label="Revenue" value={formatMoney(stats.revenue)} />
-        </Card>
+        </s-section>
       </InlineGrid>
 
-      <Card padding="0">
+      <s-section padding="none">
         <IndexTable
           resourceName={{ singular: "product", plural: "products" }}
           itemCount={products.length}
@@ -5957,7 +5954,7 @@ function PerformancePanel({ products, stats }: { products: any[]; stats: any }) 
             </IndexTable.Row>
           ))}
         </IndexTable>
-      </Card>
+      </s-section>
     </BlockStack>
   );
 }
@@ -5992,7 +5989,7 @@ function HistoryPanel({ article, seoData, products }: { article: any; seoData: a
         </Text>
       </BlockStack>
 
-      <Card padding="0">
+      <s-section padding="none">
         <BlockStack gap="0">
           {history.map((item, index) => (
             <div className="bp-history-row" key={`${item.title}-${index}`}>
@@ -6011,7 +6008,7 @@ function HistoryPanel({ article, seoData, products }: { article: any; seoData: a
             </div>
           ))}
         </BlockStack>
-      </Card>
+      </s-section>
     </BlockStack>
   );
 }
@@ -6101,7 +6098,7 @@ function SeoSidebar({
   const keywords = focusKeyword.split(",").map((k) => k.trim()).filter(Boolean);
 
   return (
-    <Card padding="0">
+    <s-section padding="none">
       <Box padding="400">
         <InlineStack gap="400" blockAlign="center" wrap={false}>
           <ScoreRing score={seoScore} size={80} label={`SEO score ${seoScore} out of 100`} />
@@ -6231,7 +6228,7 @@ function SeoSidebar({
           </InlineStack>
         </BlockStack>
       </Box>
-    </Card>
+    </s-section>
   );
 }
 
@@ -6273,7 +6270,7 @@ function ContentRefreshCard({
   const available = context.signals.length + context.queries.length;
   const hasAnalysis = Boolean(context.analyzedAt);
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="400">
         <InlineStack gap="300" blockAlign="start" wrap={false}>
           <span className="bp-action-icon"><Icon source={MagicIcon} tone="magic" /></span>
@@ -6306,7 +6303,7 @@ function ContentRefreshCard({
           </Button></InlineStack>
         )}
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
@@ -6328,7 +6325,7 @@ function FaqCopilotCard({
   onRemove: () => void;
 }) {
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="300">
         <InlineStack gap="300" blockAlign="start" wrap={false}>
           <span className="bp-action-icon"><Icon source={MagicIcon} tone="magic" /></span>
@@ -6358,7 +6355,7 @@ function FaqCopilotCard({
           </Button>
         </InlineStack>
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
@@ -6482,7 +6479,7 @@ function ProductsSummaryCard({
   onManageProducts: () => void;
 }) {
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="400">
         <Text as="h3" variant="headingMd" fontWeight="bold">
           Products summary
@@ -6524,7 +6521,7 @@ function ProductsSummaryCard({
           </Button>
         </InlineStack>
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
@@ -6539,7 +6536,7 @@ function InternalLinkAssistantCard({
   const visibleSuggestions = expanded ? suggestions : suggestions.slice(0, 3);
 
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="400">
         <InlineStack align="space-between" blockAlign="center" gap="200">
           <InlineStack gap="200" blockAlign="center">
@@ -6593,7 +6590,7 @@ function InternalLinkAssistantCard({
           </Button>
         )}
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
@@ -6629,7 +6626,7 @@ function PostSettingsCard({
   onTemplateChange: (value: string) => void;
 }) {
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="400">
         <Text as="h3" variant="headingMd" fontWeight="bold">
           Post settings
@@ -6676,13 +6673,13 @@ function PostSettingsCard({
           disabled={disabled}
         />
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
 function PublishingCard({ article, livePostUrl, isNewPost }: { article: any; livePostUrl: string; isNewPost?: boolean }) {
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="400">
         <InlineStack align="space-between" blockAlign="center" gap="300" wrap={false}>
           <Text as="h3" variant="headingMd" fontWeight="bold">
@@ -6699,7 +6696,7 @@ function PublishingCard({ article, livePostUrl, isNewPost }: { article: any; liv
           <MetricMeta label="Last updated" value={isNewPost ? "Not saved yet" : formatDateTime(article.updatedAt)} />
         </InlineGrid>
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }
 
@@ -8917,7 +8914,7 @@ function GoogleSnippetPreview({
   };
 
   return (
-    <Card padding="400">
+    <s-section>
       <BlockStack gap="400">
         <Text as="h3" variant="headingMd" fontWeight="bold">
           Preview
@@ -8946,6 +8943,6 @@ function GoogleSnippetPreview({
           </InlineStack>
         )}
       </BlockStack>
-    </Card>
+    </s-section>
   );
 }

@@ -1,9 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate, useNavigation, useRevalidator } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json, redirect, useFetcher, useLoaderData, useNavigate, useNavigation, useRevalidator } from "react-router";
 import type { Prisma } from "@prisma/client";
-import { Badge, Banner, BlockStack, Box, Button, Card, Divider, IndexTable, InlineStack, Modal, Text, Thumbnail, useIndexResourceState, ChoiceList, IndexFilters, useSetIndexFiltersMode } from "@shopify/polaris";
+import {
+  Badge,
+  Banner,
+  BlockStack,
+  Box,
+  Button,
+  Divider,
+  IndexTable,
+  InlineStack,
+  Modal,
+  Text,
+  Thumbnail,
+  useIndexResourceState,
+  ChoiceList,
+  IndexFilters,
+  useSetIndexFiltersMode,
+} from "@shopify/polaris";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "../db.server";
 import { authenticate, getActivePlanAndLimits } from "../shopify.server";
@@ -183,7 +198,7 @@ export default function CatalogSeoPage() {
         <StatTile label="Need attention" value={data.needsAttention} tone={data.needsAttention ? "warn" : "good"} />
         <StatTile label="Total issues" value={data.totalIssues} tone={data.totalIssues ? "bad" : "good"} />
       </StatTiles>
-      {data.view === "issues" && <Card padding="0">
+      {data.view === "issues" && <s-section padding="none">
         <Box padding="400"><BlockStack gap="100"><Text as="h2" variant="headingMd">{`${typeLabel} checks`}</Text><Text as="p" variant="bodySm" tone="subdued">Grouped by problem, highest impact first.</Text></BlockStack></Box>
         {data.issueGroups.length ? (
           <ActionRows>
@@ -206,8 +221,8 @@ export default function CatalogSeoPage() {
         ) : (
           <Box padding="400" paddingBlockStart="0"><Banner tone="success" title="No SEO issues found"><p>Run a scan after Shopify content changes to refresh this report.</p></Banner></Box>
         )}
-      </Card>}
-      {data.view === "manager" && <Card padding="0">
+      </s-section>}
+      {data.view === "manager" && <s-section padding="none">
         <IndexFilters
           tabs={[
             { id: "products", content: "Products", isLocked: true, onAction: () => switchManagerType(0) },
@@ -247,7 +262,7 @@ export default function CatalogSeoPage() {
             <IndexTable.Cell>{row.status ? <Badge tone={row.status === "ACTIVE" ? "success" : undefined}>{row.status}</Badge> : <Text as="span" tone="subdued">—</Text>}</IndexTable.Cell>
           </IndexTable.Row>)}
         </IndexTable>
-      </Card>}
+      </s-section>}
       <Modal open={Boolean(reviewIssue)} onClose={() => setReviewIssue(null)} title={reviewIssue?.label || "Affected resources"} secondaryActions={[{ content: "Close", onAction: () => setReviewIssue(null) }]}><Modal.Section><BlockStack gap="400"><Text as="p">{reviewIssue?.fix}</Text><Divider /><BlockStack gap="300">{reviewIssue?.affected.map((resource) => <InlineStack key={resource.id} align="space-between" blockAlign="center" gap="300"><BlockStack gap="050"><Text as="p" fontWeight="semibold">{resource.title}</Text><Text as="p" variant="bodySm" tone="subdued">{resourcePath(data.resourceType, resource.handle)}</Text></BlockStack><Button size="micro" url={resourceEditUrl(data.resourceType, resource.id)} target={data.resourceType === "page" ? "_top" : undefined}>Edit</Button></InlineStack>)}</BlockStack>{reviewIssue && reviewIssue.count > reviewIssue.affected.length && <Text as="p" variant="bodySm" tone="subdued">Showing {reviewIssue.affected.length} of {reviewIssue.count} affected resources.</Text>}</BlockStack></Modal.Section></Modal>
     </BlockStack>
   </AppPage>;
